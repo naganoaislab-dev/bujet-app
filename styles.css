@@ -1,0 +1,97 @@
+:root {
+  color-scheme: light dark;
+  --background: #f4f7fb;
+  --surface: rgba(255, 255, 255, 0.92);
+  --surface-secondary: #eef2f7;
+  --text: #17202c;
+  --muted: #687383;
+  --border: rgba(23, 32, 44, 0.1);
+  --accent: #1769e0;
+  --accent-pressed: #0e52b6;
+  --accent-text: #ffffff;
+  --online: #1c9b5f;
+  --offline: #d35a45;
+  --shadow: 0 14px 38px rgba(31, 44, 61, 0.09);
+}
+
+* { box-sizing: border-box; }
+
+html {
+  min-height: 100%;
+  background: var(--background);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 85% 0%, rgba(23, 105, 224, 0.12), transparent 32rem),
+    var(--background);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, input { font: inherit; }
+
+.app-shell {
+  width: min(100%, 34rem);
+  margin: 0 auto;
+  padding: calc(2rem + env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) calc(2rem + env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+}
+
+.hero { display: flex; align-items: center; gap: 0.9rem; margin: 0 0 1.5rem; }
+.app-icon { display: grid; place-items: center; width: 3.5rem; height: 3.5rem; flex: none; border-radius: 1rem; color: #fff; background: linear-gradient(145deg, #2684ff, #1256c2); box-shadow: 0 9px 20px rgba(23, 105, 224, 0.25); font-size: 1.5rem; font-weight: 800; }
+.eyebrow { margin: 0 0 0.2rem; color: var(--accent); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em; }
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 0; font-size: clamp(1.7rem, 7vw, 2.15rem); line-height: 1.1; letter-spacing: -0.03em; }
+h2 { margin-bottom: 0.35rem; font-size: 1.12rem; line-height: 1.35; }
+p { color: var(--muted); line-height: 1.55; }
+
+.card { padding: 1.2rem; margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 1.3rem; background: var(--surface); box-shadow: var(--shadow); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+.status-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.8rem; }
+.status-row p, .section-heading p { margin-bottom: 0; font-size: 0.9rem; }
+.network-status { display: inline-flex; align-items: center; gap: 0.4rem; min-height: 2rem; padding: 0.35rem 0.65rem; flex: none; border-radius: 999px; background: var(--surface-secondary); color: var(--muted); font-size: 0.78rem; font-weight: 700; }
+.status-dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: currentColor; }
+.network-status.online { color: var(--online); }
+.network-status.offline { color: var(--offline); }
+.section-heading { margin-bottom: 1rem; }
+.actions { display: grid; gap: 0.7rem; }
+
+.button { width: 100%; min-height: 3.25rem; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 0.9rem; color: var(--text); background: var(--surface-secondary); font-weight: 700; cursor: pointer; touch-action: manipulation; transition: transform 120ms ease, background-color 120ms ease; }
+.button-primary { border-color: transparent; color: var(--accent-text); background: var(--accent); }
+.button:active { transform: scale(0.98); }
+.button-primary:active { background: var(--accent-pressed); }
+.button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 40%, transparent); outline-offset: 2px; }
+.button:disabled { cursor: wait; opacity: 0.6; }
+.button-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+.result { display: block; min-height: 4.5rem; margin-top: 0.25rem; padding: 0.9rem; overflow-wrap: anywhere; border-radius: 0.8rem; color: var(--muted); background: var(--surface-secondary); font-size: 0.82rem; line-height: 1.5; white-space: pre-wrap; }
+.result.error { color: var(--offline); }
+.privacy-note { margin: 1.25rem 0 0; text-align: center; font-size: 0.78rem; }
+
+@media (max-width: 390px) {
+  .status-row { display: block; }
+  .network-status { margin-top: 0.75rem; }
+  .button-grid { grid-template-columns: 1fr; }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #101318;
+    --surface: rgba(29, 34, 42, 0.92);
+    --surface-secondary: #272d36;
+    --text: #f2f5f8;
+    --muted: #a7b0bd;
+    --border: rgba(255, 255, 255, 0.09);
+    --accent: #5c9dff;
+    --accent-pressed: #82b5ff;
+    --accent-text: #07162b;
+    --shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button { transition: none; }
+}
