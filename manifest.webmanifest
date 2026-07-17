@@ -1,14 +1,14 @@
 {
-  "name": "My Local App",
-  "short_name": "Local App",
-  "description": "オフラインで使える、端末内保存対応のローカルWebアプリ",
+  "name": "Budget Minus",
+  "short_name": "Budget Minus",
+  "description": "予算から使えるお金を考える、オフライン対応の家計簿",
   "lang": "ja",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#f4f7fb",
-  "theme_color": "#f4f7fb",
+  "background_color": "#f5f2ec",
+  "theme_color": "#f5f2ec",
   "icons": [
     {
       "src": "icons/icon.svg",

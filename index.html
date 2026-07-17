@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f4f7fb" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#101318" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f5f2ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121613" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="My Local App">
-  <meta name="description" content="オフラインで使える、端末内保存対応のローカルWebアプリ">
-  <title>My Local App</title>
+  <meta name="apple-mobile-web-app-title" content="Budget Minus">
+  <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
+  <title>Budget Minus</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon.svg">
@@ -18,46 +18,176 @@
   <script src="app.js" defer></script>
 </head>
 <body>
-  <main class="app-shell">
-    <header class="hero">
-      <div class="app-icon" aria-hidden="true">M</div>
-      <div>
-        <p class="eyebrow">OFFLINE READY</p>
-        <h1>My Local App</h1>
+  <div class="app-frame">
+    <header class="topbar">
+      <div class="brand-mark" aria-hidden="true">B−</div>
+      <div class="topbar-copy">
+        <p class="eyebrow">BUDGET MINUS</p>
+        <h1 id="screen-title">支出入力</h1>
+      </div>
+      <div id="network-status" class="network-pill" role="status" aria-live="polite">
+        <span class="network-dot" aria-hidden="true"></span>
+        <span>確認中</span>
       </div>
     </header>
 
-    <section class="card" aria-labelledby="ready-title">
-      <div class="status-row">
+    <main id="view-host" class="view-host" tabindex="-1" aria-live="polite"></main>
+
+    <nav class="bottom-nav" aria-label="メインメニュー">
+      <button type="button" class="nav-button active" data-view="entry" aria-current="page">
+        <span class="nav-icon" aria-hidden="true">＋</span><span>入力</span>
+      </button>
+      <button type="button" class="nav-button" data-view="overview">
+        <span class="nav-icon" aria-hidden="true">▥</span><span>状況</span>
+      </button>
+      <button type="button" class="nav-button" data-view="analysis">
+        <span class="nav-icon" aria-hidden="true">◎</span><span>分析</span>
+      </button>
+      <button type="button" class="nav-button" data-view="settings">
+        <span class="nav-icon" aria-hidden="true">⚙</span><span>設定</span>
+      </button>
+      <button type="button" class="nav-button" data-view="data">
+        <span class="nav-icon" aria-hidden="true">⇅</span><span>データ</span>
+      </button>
+    </nav>
+  </div>
+
+  <dialog id="calculator-dialog" class="sheet-dialog calculator-dialog">
+    <form method="dialog" class="sheet-card">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="dialog-heading">
         <div>
-          <h2 id="ready-title">アプリの準備ができました</h2>
-          <p>データはこのiPhone内に保存できます。</p>
+          <p id="calculator-kind" class="eyebrow">支出を入力</p>
+          <h2 id="calculator-category">食費</h2>
         </div>
-        <div id="network-status" class="network-status" role="status" aria-live="polite">
-          <span class="status-dot" aria-hidden="true"></span>
-          <span>確認中</span>
+        <button type="button" class="icon-button" data-close="calculator-dialog" aria-label="閉じる">×</button>
+      </div>
+      <output id="calculator-expression" class="calculator-expression" aria-live="polite"></output>
+      <output id="calculator-display" class="calculator-display" aria-live="polite">¥0</output>
+      <div id="calculator-keys" class="calculator-keys">
+        <button type="button" data-calc="clear" class="calc-key utility">AC</button>
+        <button type="button" data-calc="backspace" class="calc-key utility" aria-label="一文字削除">⌫</button>
+        <button type="button" data-calc="divide" class="calc-key operator">÷</button>
+        <button type="button" data-calc="multiply" class="calc-key operator">×</button>
+        <button type="button" data-calc="7" class="calc-key">7</button>
+        <button type="button" data-calc="8" class="calc-key">8</button>
+        <button type="button" data-calc="9" class="calc-key">9</button>
+        <button type="button" data-calc="subtract" class="calc-key operator">−</button>
+        <button type="button" data-calc="4" class="calc-key">4</button>
+        <button type="button" data-calc="5" class="calc-key">5</button>
+        <button type="button" data-calc="6" class="calc-key">6</button>
+        <button type="button" data-calc="add" class="calc-key operator">＋</button>
+        <button type="button" data-calc="1" class="calc-key">1</button>
+        <button type="button" data-calc="2" class="calc-key">2</button>
+        <button type="button" data-calc="3" class="calc-key">3</button>
+        <button type="button" data-calc="equals" class="calc-key operator">＝</button>
+        <button type="button" data-calc="0" class="calc-key zero">0</button>
+        <button type="button" data-calc="00" class="calc-key">00</button>
+        <button type="button" id="calculator-ok" class="calc-key confirm">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="memo-dialog" class="sheet-dialog">
+    <form id="memo-form" class="sheet-card">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">あとから探しやすく</p>
+          <h2>メモを追加</h2>
         </div>
       </div>
-    </section>
-
-    <section class="card actions" aria-labelledby="data-title">
-      <div class="section-heading">
-        <h2 id="data-title">ローカルデータ</h2>
-        <p>IndexedDBの動作とJSONバックアップを確認できます。</p>
+      <p id="memo-summary" class="dialog-summary"></p>
+      <label class="field-label" for="memo-input">メモ（任意）</label>
+      <textarea id="memo-input" rows="3" maxlength="120" placeholder="例：駅前スーパー、定期券更新"></textarea>
+      <div class="dialog-actions">
+        <button id="memo-skip" type="button" class="button secondary">メモなしで保存</button>
+        <button type="submit" class="button primary">保存</button>
       </div>
+    </form>
+  </dialog>
 
-      <button id="save-button" class="button button-primary" type="button">テストデータを保存</button>
-      <button id="load-button" class="button" type="button">保存したテストデータを読込</button>
-      <div class="button-grid">
-        <button id="export-button" class="button" type="button">JSONエクスポート</button>
-        <button id="import-button" class="button" type="button">JSONインポート</button>
+  <dialog id="transaction-dialog" class="sheet-dialog">
+    <form id="transaction-form" class="sheet-card">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="dialog-heading">
+        <div><p class="eyebrow">記録を修正</p><h2>明細を編集</h2></div>
+        <button type="button" class="icon-button" data-close="transaction-dialog" aria-label="閉じる">×</button>
       </div>
-      <input id="import-file" type="file" accept="application/json,.json" hidden>
+      <input id="transaction-id" type="hidden">
+      <label class="field-label" for="transaction-category">種別</label>
+      <select id="transaction-category" required></select>
+      <div class="form-grid two-columns">
+        <label><span class="field-label">金額</span><input id="transaction-amount" type="number" inputmode="numeric" min="1" step="1" required></label>
+        <label><span class="field-label">日付</span><input id="transaction-date" type="date" required></label>
+      </div>
+      <label class="field-label" for="transaction-memo">メモ</label>
+      <textarea id="transaction-memo" rows="3" maxlength="120"></textarea>
+      <div class="dialog-actions three-actions">
+        <button id="transaction-delete" type="button" class="button danger">削除</button>
+        <button type="button" class="button secondary" data-close="transaction-dialog">キャンセル</button>
+        <button type="submit" class="button primary">更新</button>
+      </div>
+    </form>
+  </dialog>
 
-      <output id="result" class="result" aria-live="polite">操作結果がここに表示されます。</output>
-    </section>
+  <dialog id="category-dialog" class="sheet-dialog">
+    <form id="category-form" class="sheet-card">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="dialog-heading">
+        <div><p class="eyebrow">予算の入れ物</p><h2 id="category-dialog-title">種別を追加</h2></div>
+        <button type="button" class="icon-button" data-close="category-dialog" aria-label="閉じる">×</button>
+      </div>
+      <input id="category-id" type="hidden">
+      <label class="field-label" for="category-name">種別名</label>
+      <input id="category-name" type="text" maxlength="20" placeholder="例：食費" required>
+      <label class="field-label" for="category-group">区分</label>
+      <select id="category-group" required>
+        <option value="variable">変動支出</option>
+        <option value="fixed">固定支出</option>
+        <option value="income">収入</option>
+      </select>
+      <label class="field-label" for="category-color">表示色</label>
+      <input id="category-color" type="color" value="#3f7d5b">
+      <div class="dialog-actions three-actions">
+        <button id="category-delete" type="button" class="button danger">削除</button>
+        <button type="button" class="button secondary" data-close="category-dialog">キャンセル</button>
+        <button type="submit" class="button primary">保存</button>
+      </div>
+    </form>
+  </dialog>
 
-    <p class="privacy-note">外部サービスへデータを送信しません。</p>
-  </main>
+  <dialog id="plan-dialog" class="wide-dialog">
+    <form id="plan-form" class="wide-card">
+      <div class="dialog-heading sticky-dialog-heading">
+        <div><p id="plan-kind" class="eyebrow">36ヶ月の計画</p><h2 id="plan-category-name">食費</h2></div>
+        <button type="button" class="icon-button" data-close="plan-dialog" aria-label="閉じる">×</button>
+      </div>
+      <section class="bulk-plan-panel" aria-labelledby="bulk-plan-title">
+        <div class="section-copy">
+          <h3 id="bulk-plan-title">まとめて設定</h3>
+          <p>基準月から一定間隔で金額を入れ、その後に各月を微調整できます。</p>
+        </div>
+        <div class="form-grid plan-controls">
+          <label><span class="field-label">基準月</span><select id="plan-start-month"></select></label>
+          <label><span class="field-label">何ヶ月ごと</span><input id="plan-interval" type="number" min="1" max="36" step="1" inputmode="numeric" value="1"></label>
+          <label><span class="field-label">金額</span><input id="plan-bulk-amount" type="number" min="0" step="100" inputmode="numeric" value="0"></label>
+          <button id="apply-plan-pattern" type="button" class="button secondary">全期間へ反映</button>
+        </div>
+      </section>
+      <div class="plan-editor-head">
+        <div><h3>月ごとの計画</h3><p>棒または金額欄をタップして編集</p></div>
+        <button id="copy-previous-plan" type="button" class="text-button">前月をコピー</button>
+      </div>
+      <div id="monthly-plan-editor" class="monthly-plan-editor" aria-label="月ごとの計画金額"></div>
+      <div class="dialog-actions sticky-dialog-actions">
+        <button type="button" class="button secondary" data-close="plan-dialog">キャンセル</button>
+        <button type="submit" class="button primary">計画を保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <input id="import-file" type="file" accept="text/csv,.csv" hidden>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

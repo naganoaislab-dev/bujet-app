@@ -1,6 +1,8 @@
 "use strict";
 
-const CACHE_VERSION = "my-local-app-v1";
+const SCOPE_KEY = new URL(self.registration.scope).pathname.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "root";
+const CACHE_PREFIX = `budget-minus-${SCOPE_KEY}-`;
+const CACHE_VERSION = `${CACHE_PREFIX}v3`;
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -26,7 +28,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_VERSION).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_VERSION).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
