@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f7fb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#101318" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="My Local App">
+  <meta name="description" content="オフラインで使える、端末内保存対応のローカルWebアプリ">
+  <title>My Local App</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <script src="db.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <div class="app-icon" aria-hidden="true">M</div>
+      <div>
+        <p class="eyebrow">OFFLINE READY</p>
+        <h1>My Local App</h1>
+      </div>
+    </header>
+
+    <section class="card" aria-labelledby="ready-title">
+      <div class="status-row">
+        <div>
+          <h2 id="ready-title">アプリの準備ができました</h2>
+          <p>データはこのiPhone内に保存できます。</p>
+        </div>
+        <div id="network-status" class="network-status" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>確認中</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card actions" aria-labelledby="data-title">
+      <div class="section-heading">
+        <h2 id="data-title">ローカルデータ</h2>
+        <p>IndexedDBの動作とJSONバックアップを確認できます。</p>
+      </div>
+
+      <button id="save-button" class="button button-primary" type="button">テストデータを保存</button>
+      <button id="load-button" class="button" type="button">保存したテストデータを読込</button>
+      <div class="button-grid">
+        <button id="export-button" class="button" type="button">JSONエクスポート</button>
+        <button id="import-button" class="button" type="button">JSONインポート</button>
+      </div>
+      <input id="import-file" type="file" accept="application/json,.json" hidden>
+
+      <output id="result" class="result" aria-live="polite">操作結果がここに表示されます。</output>
+    </section>
+
+    <p class="privacy-note">外部サービスへデータを送信しません。</p>
+  </main>
+</body>
+</html>
