@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="My Local App">
-  <rect width="512" height="512" rx="112" fill="#1769e0"/>
-  <path fill="#fff" d="M118 358V154h56l82 124 82-124h56v204h-58V245l-80 116-80-116v113z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Budget Minus">
+  <rect width="512" height="512" rx="112" fill="#2f7554"/>
+  <path fill="#fff" d="M119 115h117c72 0 117 32 117 88 0 31-15 55-42 69 37 12 57 38 57 75 0 65-51 99-132 99H119V115Zm108 129c38 0 56-12 56-37 0-24-18-35-56-35h-39v72h39Zm7 145c43 0 63-14 63-43s-20-42-63-42h-46v85h46Z"/>
+  <rect x="323" y="182" width="112" height="42" rx="21" fill="#f3c26d"/>
 </svg>
