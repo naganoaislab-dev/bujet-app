@@ -72,7 +72,7 @@ HTTPSで初回アクセス後、Safariの共有メニューから「ホーム画
 
 ## 更新時の注意
 
-- App Shellのファイルを変更したら `sw.js` の `CACHE_VERSION` も更新してください。
+- App Shellのファイルを変更したら、`index.html`・`manifest.webmanifest`・`app.js`・`sw.js` の資産URLに付けた `?v=...` と、`sw.js` の `CACHE_VERSION` を同じ世代へ更新してください。旧Service Workerの制御下でも新旧ファイルが混在しないために必要です。
 - IndexedDBの構造を変更するときは `DB_VERSION` を増やし、既存データを失わない移行処理を追加してください。
 - 金額は円単位の整数、業務日付は端末ローカルの `YYYY-MM-DD` として保存します。
 - 重要なデータは定期的にJSONバックアップしてください。

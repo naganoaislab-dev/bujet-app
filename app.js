@@ -1320,7 +1320,10 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js", document.baseURI), { scope: "./" });
+        await navigator.serviceWorker.register(new URL("sw.js?v=4", document.baseURI), {
+          scope: "./",
+          updateViaCache: "none"
+        });
       } catch (error) {
         console.error("Service Workerの登録に失敗しました。", error);
       }
