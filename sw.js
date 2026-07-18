@@ -2,16 +2,16 @@
 
 const SCOPE_KEY = new URL(self.registration.scope).pathname.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "root";
 const CACHE_PREFIX = `budget-minus-${SCOPE_KEY}-`;
-const CACHE_VERSION = `${CACHE_PREFIX}v4`;
+const CACHE_VERSION = `${CACHE_PREFIX}v6`;
 const LEGACY_CACHE_NAMES = new Set(["my-local-app-v1"]);
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=4",
-  "./app.js?v=4",
-  "./db.js?v=4",
-  "./manifest.webmanifest?v=4",
-  "./icons/icon.svg?v=4"
+  "./styles.css?v=6",
+  "./app.js?v=6",
+  "./db.js?v=6",
+  "./manifest.webmanifest?v=6",
+  "./icons/icon.svg?v=6"
 ];
 
 function scopedUrl(path) {

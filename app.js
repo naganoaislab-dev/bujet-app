@@ -3,6 +3,10 @@
 
   const APP_NAME = "Budget Minus";
   const BACKUP_VERSION = 2;
+  const PLAN_AMOUNT_STEP = 100;
+  const DEFAULT_PLAN_SCALE_MAX = 100000;
+  const MAX_PLAN_SCALE_MAX = 1000000000;
+  const PLAN_DRAG_THRESHOLD = 7;
   const VIEW_TITLES = {
     entry: "支出入力",
     overview: "状況確認",
@@ -21,6 +25,7 @@
   const transactionDialog = document.querySelector("#transaction-dialog");
   const categoryDialog = document.querySelector("#category-dialog");
   const planDialog = document.querySelector("#plan-dialog");
+  const monthlyPlanEditor = document.querySelector("#monthly-plan-editor");
 
   let state;
   let currentView = "entry";
@@ -34,6 +39,8 @@
   let editingPlanCategoryId = null;
   let planDraft = null;
   let planRuleDraft = null;
+  let planScaleDraft = DEFAULT_PLAN_SCALE_MAX;
+  let planPointerGesture = null;
   let toastTimer = null;
   let calculatorContext = null;
   let calculator = createCalculatorState();
@@ -64,6 +71,21 @@
   function toInteger(value, fallback = 0) {
     const number = Number(value);
     return Number.isFinite(number) ? Math.round(number) : fallback;
+  }
+
+  function roundPlanAmount(value) {
+    return Math.max(0, Math.round(toInteger(value) / PLAN_AMOUNT_STEP) * PLAN_AMOUNT_STEP);
+  }
+
+  function normalizePlanScaleMax(value) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount <= 0) return DEFAULT_PLAN_SCALE_MAX;
+    return clamp(Math.round(amount / PLAN_AMOUNT_STEP) * PLAN_AMOUNT_STEP, PLAN_AMOUNT_STEP, MAX_PLAN_SCALE_MAX);
+  }
+
+  function planBarHeight(amount, scaleMaximum = planScaleDraft) {
+    if (amount <= 0) return 0;
+    return clamp((amount / Math.max(PLAN_AMOUNT_STEP, scaleMaximum)) * 100, 0, 100);
   }
 
   function pad(value) {
@@ -832,14 +854,17 @@
     if (!category) return;
     editingPlanCategoryId = categoryId;
     planDraft = {};
-    planRuleDraft = category.planRule ? { ...category.planRule } : null;
-    periodMonths().forEach((month) => { planDraft[month] = planAmount(categoryId, month); });
+    planRuleDraft = category.planRule ? { ...category.planRule, amount: roundPlanAmount(category.planRule.amount) } : null;
+    planScaleDraft = normalizePlanScaleMax(category.planScaleMax);
+    planPointerGesture = null;
+    periodMonths().forEach((month) => { planDraft[month] = roundPlanAmount(planAmount(categoryId, month)); });
     document.querySelector("#plan-category-name").textContent = category.name;
     const planLength = periodMonths().length;
     document.querySelector("#plan-kind").textContent = category.group === "income" ? `収入予定・${planLength}ヶ月` : category.group === "fixed" ? `固定支出・${planLength}ヶ月` : `変動支出・${planLength}ヶ月`;
     document.querySelector("#plan-start-month").innerHTML = monthOptions(planRuleDraft && periodMonths().includes(planRuleDraft.startMonth) ? planRuleDraft.startMonth : periodMonths()[0]);
     document.querySelector("#plan-interval").value = String(planRuleDraft ? planRuleDraft.interval : 1);
     document.querySelector("#plan-bulk-amount").value = planRuleDraft ? planRuleDraft.amount : (planDraft[currentPeriod] ?? category.defaultAmount ?? 0);
+    document.querySelector("#plan-scale-max").value = String(planScaleDraft);
     renderPlanEditor();
     openDialog(planDialog);
   }
@@ -847,17 +872,96 @@
   function renderPlanEditor() {
     const category = categoryById(editingPlanCategoryId);
     if (!category || !planDraft) return;
-    const values = Object.values(planDraft).map((value) => toInteger(value));
-    const maximum = Math.max(1, ...values);
-    document.querySelector("#monthly-plan-editor").innerHTML = periodMonths().map((month) => {
-      const amount = toInteger(planDraft[month]);
-      const height = amount > 0 ? Math.max(2, (amount / maximum) * 100) : 0;
-      return `<label class="month-plan-column ${month === currentPeriod ? "current" : ""}" style="--category-color:${escapeHtml(category.color)}">
+    updatePlanScaleSummary();
+    monthlyPlanEditor.innerHTML = periodMonths().map((month) => {
+      const amount = Math.max(0, toInteger(planDraft[month]));
+      const height = planBarHeight(amount);
+      const overScale = amount > planScaleDraft;
+      const sliderValue = Math.min(amount, planScaleDraft);
+      const valueText = `${formatCurrency(amount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`;
+      return `<article class="month-plan-column ${month === currentPeriod ? "current" : ""} ${overScale ? "over-scale" : ""}" data-plan-column="${month}" style="--category-color:${escapeHtml(category.color)}">
         <span class="month-plan-label">${monthLabel(month, false)}<br>${monthParts(month).year}</span>
-        <span class="month-plan-bar-area"><span class="month-plan-bar" style="--bar-height:${height}%"></span></span>
-        <input class="month-plan-input" data-plan-month="${month}" type="number" min="0" step="100" inputmode="numeric" value="${amount}" aria-label="${monthLabel(month)}の計画金額">
-      </label>`;
+        <div class="month-plan-bar-area" data-plan-slider="${month}" role="slider" tabindex="0" aria-label="${monthLabel(month)}の計画金額" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="${planScaleDraft}" aria-valuenow="${sliderValue}" aria-valuetext="${escapeHtml(valueText)}">
+          <span class="month-plan-overflow"${overScale ? "" : " hidden"}>上限超過</span>
+          <span class="month-plan-bar" style="--bar-height:${height}%"></span>
+        </div>
+        <input class="month-plan-input" data-plan-month="${month}" type="number" min="0" step="any" inputmode="numeric" value="${amount}" aria-label="${monthLabel(month)}の計画金額">
+      </article>`;
     }).join("");
+  }
+
+  function updatePlanScaleSummary() {
+    document.querySelector("#plan-scale-summary").textContent = `上端 ${formatCurrency(planScaleDraft)}`;
+  }
+
+  function updatePlanColumn(month, amount, syncInput = true) {
+    if (!planDraft || !Object.prototype.hasOwnProperty.call(planDraft, month)) return;
+    const normalizedAmount = Math.max(0, toInteger(amount));
+    planDraft[month] = normalizedAmount;
+    const column = monthlyPlanEditor.querySelector(`[data-plan-column="${month}"]`);
+    if (!column) return;
+    const barArea = column.querySelector(".month-plan-bar-area");
+    const bar = column.querySelector(".month-plan-bar");
+    const input = column.querySelector(".month-plan-input");
+    const overflow = column.querySelector(".month-plan-overflow");
+    const overScale = normalizedAmount > planScaleDraft;
+    bar.style.setProperty("--bar-height", `${planBarHeight(normalizedAmount)}%`);
+    barArea.setAttribute("aria-valuemax", String(planScaleDraft));
+    barArea.setAttribute("aria-valuenow", String(Math.min(normalizedAmount, planScaleDraft)));
+    barArea.setAttribute("aria-valuetext", `${formatCurrency(normalizedAmount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`);
+    column.classList.toggle("over-scale", overScale);
+    overflow.hidden = !overScale;
+    if (syncInput) input.value = String(normalizedAmount);
+  }
+
+  function refreshPlanColumns() {
+    updatePlanScaleSummary();
+    Object.entries(planDraft || {}).forEach(([month, amount]) => updatePlanColumn(month, amount, false));
+  }
+
+  function amountForPlanPointer(barArea, clientY) {
+    const bounds = barArea.getBoundingClientRect();
+    if (!bounds.height) return 0;
+    const ratio = clamp((bounds.bottom - clientY) / bounds.height, 0, 1);
+    return clamp(roundPlanAmount(ratio * planScaleDraft), 0, planScaleDraft);
+  }
+
+  function setPlanAmountFromPointer(barArea, clientY) {
+    updatePlanColumn(barArea.dataset.planSlider, amountForPlanPointer(barArea, clientY));
+  }
+
+  function capturePlanPointer(barArea, pointerId) {
+    if (typeof barArea.setPointerCapture !== "function") return;
+    try { barArea.setPointerCapture(pointerId); }
+    catch (error) { console.debug("Pointer capture unavailable", error); }
+  }
+
+  function releasePlanPointer(gesture) {
+    gesture.barArea.classList.remove("is-dragging");
+    if (typeof gesture.barArea.hasPointerCapture !== "function" || typeof gesture.barArea.releasePointerCapture !== "function") return;
+    try {
+      if (gesture.barArea.hasPointerCapture(gesture.pointerId)) gesture.barArea.releasePointerCapture(gesture.pointerId);
+    } catch (error) {
+      console.debug("Pointer release unavailable", error);
+    }
+  }
+
+  function finishPlanPointer(event, cancelled = false) {
+    const gesture = planPointerGesture;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if (cancelled) {
+      if (gesture.mode === "vertical") updatePlanColumn(gesture.month, gesture.originalAmount);
+    } else if (gesture.mode === "vertical" || gesture.mode === "pending") {
+      event.preventDefault();
+      setPlanAmountFromPointer(gesture.barArea, event.clientY);
+    }
+    planPointerGesture = null;
+    releasePlanPointer(gesture);
+  }
+
+  function commitPlanInput(event) {
+    if (!event.target.dataset.planMonth) return;
+    updatePlanColumn(event.target.dataset.planMonth, roundPlanAmount(event.target.value));
   }
 
   function applyPlanPattern() {
@@ -865,7 +969,8 @@
     const startMonth = document.querySelector("#plan-start-month").value;
     const startIndex = months.indexOf(startMonth);
     const interval = clamp(toInteger(document.querySelector("#plan-interval").value, 1), 1, 36);
-    const amount = Math.max(0, toInteger(document.querySelector("#plan-bulk-amount").value));
+    const amount = roundPlanAmount(document.querySelector("#plan-bulk-amount").value);
+    document.querySelector("#plan-bulk-amount").value = String(amount);
     planRuleDraft = { startMonth, interval, amount };
     months.forEach((month, index) => {
       planDraft[month] = index >= startIndex && (index - startIndex) % interval === 0 ? amount : 0;
@@ -903,15 +1008,15 @@
   }
 
   function exportCsv() {
-    const headers = ["recordType", "id", "categoryId", "name", "group", "date", "month", "amount", "memo", "closingDay", "startDate", "endDate", "color", "order", "active", "createdAt", "updatedAt"];
+    const headers = ["recordType", "id", "categoryId", "name", "group", "date", "month", "amount", "memo", "closingDay", "startDate", "endDate", "color", "order", "active", "createdAt", "updatedAt", "planScaleMax"];
     const rows = [headers];
-    rows.push(["settings", "main", "", APP_NAME, "", "", "", "", "", state.settings.closingDay, state.settings.startDate, state.settings.endDate, "", "", "", state.createdAt || "", state.updatedAt || ""]);
+    rows.push(["settings", "main", "", APP_NAME, "", "", "", "", "", state.settings.closingDay, state.settings.startDate, state.settings.endDate, "", "", "", state.createdAt || "", state.updatedAt || "", ""]);
     state.categories.forEach((category) => {
-      rows.push(["category", category.id, "", category.name, category.group, "", "", category.defaultAmount || 0, "", "", "", "", category.color, category.order, category.active !== false, "", ""]);
-      if (category.planRule) rows.push(["rule", `${category.id}|rule`, category.id, "", "", "", category.planRule.startMonth, category.planRule.amount, "", "", "", "", "", category.planRule.interval, "", "", ""]);
+      rows.push(["category", category.id, "", category.name, category.group, "", "", category.defaultAmount || 0, "", "", "", "", category.color, category.order, category.active !== false, "", "", normalizePlanScaleMax(category.planScaleMax)]);
+      if (category.planRule) rows.push(["rule", `${category.id}|rule`, category.id, "", "", "", category.planRule.startMonth, category.planRule.amount, "", "", "", "", "", category.planRule.interval, "", "", "", ""]);
     });
-    periodMonths().forEach((month) => state.categories.forEach((category) => rows.push(["plan", `${category.id}|${month}`, category.id, "", "", "", month, planAmount(category.id, month), "", "", "", "", "", "", "", "", ""])));
-    state.transactions.forEach((transaction) => rows.push(["transaction", transaction.id, transaction.categoryId, "", transaction.direction, transaction.date, "", transaction.amount, transaction.memo || "", "", "", "", "", "", "", transaction.createdAt || "", transaction.updatedAt || ""]));
+    periodMonths().forEach((month) => state.categories.forEach((category) => rows.push(["plan", `${category.id}|${month}`, category.id, "", "", "", month, planAmount(category.id, month), "", "", "", "", "", "", "", "", "", ""])));
+    state.transactions.forEach((transaction) => rows.push(["transaction", transaction.id, transaction.categoryId, "", transaction.direction, transaction.date, "", transaction.amount, transaction.memo || "", "", "", "", "", "", "", transaction.createdAt || "", transaction.updatedAt || "", ""]));
     const content = `\uFEFF${rows.map((row, rowIndex) => row.map((value) => csvEscape(value, rowIndex > 0 && typeof value === "string")).join(",")).join("\r\n")}`;
     downloadBlob(content, "text/csv;charset=utf-8", `budget-minus-${localDateKey()}.csv`);
     showToast("Excel互換CSVを書き出しました");
@@ -981,7 +1086,7 @@
     if (importedClosingDay < 1 || importedClosingDay > 31) throw new Error("CSVの締日が不正です。");
     const imported = {
       id: "main",
-      schemaVersion: 2,
+      schemaVersion: 3,
       settings: { closingDay: importedClosingDay, startDate: importedStartDate, endDate: importedEndDate, currency: "JPY" },
       categories: [],
       plans: {},
@@ -992,7 +1097,7 @@
     records.filter((record) => record.recordType === "category").forEach((record) => {
       if (!isSafeImportedId(record.id) || !["variable", "fixed", "income"].includes(record.group)) throw new Error(`CSV ${record.rowNumber}行目の種別が不正です。`);
       if (imported.categories.some((category) => category.id === record.id)) throw new Error(`CSV ${record.rowNumber}行目の種別IDが重複しています。`);
-      imported.categories.push({ id: record.id, name: cleanImportedText(record.name).trim() || "名称未設定", group: record.group, color: /^#[0-9a-f]{6}$/i.test(record.color) ? record.color : "#3f7d5b", order: toInteger(record.order), active: record.active !== "false", defaultAmount: Math.max(0, toInteger(record.amount)) });
+      imported.categories.push({ id: record.id, name: cleanImportedText(record.name).trim() || "名称未設定", group: record.group, color: /^#[0-9a-f]{6}$/i.test(record.color) ? record.color : "#3f7d5b", order: toInteger(record.order), active: record.active !== "false", defaultAmount: Math.max(0, toInteger(record.amount)), planScaleMax: normalizePlanScaleMax(record.planScaleMax) });
       imported.plans[record.id] = {};
     });
     const categoryIds = new Set(imported.categories.map((category) => category.id));
@@ -1046,6 +1151,7 @@
     const ids = new Set();
     imported.categories.forEach((category) => {
       if (!category || !isSafeImportedId(category.id) || ids.has(String(category.id)) || !["variable", "fixed", "income"].includes(category.group)) throw new Error("バックアップの種別データが不正です。");
+      if (category.planScaleMax !== undefined && (!Number.isFinite(Number(category.planScaleMax)) || Number(category.planScaleMax) <= 0 || Number(category.planScaleMax) > MAX_PLAN_SCALE_MAX)) throw new Error(`${category.name || "種別"}の棒上限額が不正です。`);
       ids.add(String(category.id));
       const categoryPlans = imported.plans[category.id] || {};
       Object.entries(categoryPlans).forEach(([month, amount]) => {
@@ -1238,7 +1344,7 @@
     } else {
       const categoryId = makeId("category");
       const order = Math.max(0, ...state.categories.map((category) => toInteger(category.order))) + 10;
-      state.categories.push({ id: categoryId, name, group, color, order, active: true, defaultAmount: 0 });
+      state.categories.push({ id: categoryId, name, group, color, order, active: true, defaultAmount: 0, planScaleMax: DEFAULT_PLAN_SCALE_MAX });
       state.plans[categoryId] = {};
       periodMonths().forEach((month) => { state.plans[categoryId][month] = 0; });
     }
@@ -1271,27 +1377,98 @@
 
   document.querySelector("#apply-plan-pattern").addEventListener("click", applyPlanPattern);
   document.querySelector("#copy-previous-plan").addEventListener("click", copyPreviousPlan);
-  document.querySelector("#monthly-plan-editor").addEventListener("input", (event) => {
-    if (!event.target.dataset.planMonth) return;
-    planDraft[event.target.dataset.planMonth] = Math.max(0, toInteger(event.target.value));
-    const maximum = Math.max(1, ...Object.values(planDraft).map((value) => toInteger(value)));
-    const bar = event.target.closest(".month-plan-column").querySelector(".month-plan-bar");
-    bar.style.setProperty("--bar-height", `${planDraft[event.target.dataset.planMonth] > 0 ? Math.max(2, (planDraft[event.target.dataset.planMonth] / maximum) * 100) : 0}%`);
+  document.querySelector("#plan-scale-max").addEventListener("input", (event) => {
+    if (!Number.isFinite(Number(event.target.value)) || Number(event.target.value) <= 0) return;
+    planScaleDraft = normalizePlanScaleMax(event.target.value);
+    refreshPlanColumns();
   });
-  document.querySelector("#monthly-plan-editor").addEventListener("click", (event) => {
+  document.querySelector("#plan-scale-max").addEventListener("change", (event) => {
+    planScaleDraft = normalizePlanScaleMax(event.target.value);
+    event.target.value = String(planScaleDraft);
+    refreshPlanColumns();
+  });
+  monthlyPlanEditor.addEventListener("input", (event) => {
+    if (!event.target.dataset.planMonth) return;
+    updatePlanColumn(event.target.dataset.planMonth, Math.max(0, toInteger(event.target.value)), false);
+  });
+  monthlyPlanEditor.addEventListener("change", commitPlanInput);
+  monthlyPlanEditor.addEventListener("focusout", commitPlanInput);
+  monthlyPlanEditor.addEventListener("pointerdown", (event) => {
+    const barArea = event.target.closest(".month-plan-bar-area");
+    if (!barArea || planPointerGesture || (event.pointerType === "mouse" && event.button !== 0)) return;
+    const month = barArea.dataset.planSlider;
+    planPointerGesture = {
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      barArea,
+      month,
+      startX: event.clientX,
+      startY: event.clientY,
+      originalAmount: Math.max(0, toInteger(planDraft[month])),
+      mode: "pending"
+    };
+    if (event.pointerType === "mouse") {
+      event.preventDefault();
+      capturePlanPointer(barArea, event.pointerId);
+    }
+  });
+  monthlyPlanEditor.addEventListener("pointermove", (event) => {
+    const gesture = planPointerGesture;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if (gesture.mode === "pending") {
+      const deltaX = Math.abs(event.clientX - gesture.startX);
+      const deltaY = Math.abs(event.clientY - gesture.startY);
+      if (Math.max(deltaX, deltaY) < PLAN_DRAG_THRESHOLD) return;
+      if (deltaY < deltaX) {
+        gesture.mode = "horizontal";
+        return;
+      }
+      gesture.mode = "vertical";
+      gesture.barArea.classList.add("is-dragging");
+      capturePlanPointer(gesture.barArea, gesture.pointerId);
+    }
+    if (gesture.mode !== "vertical") return;
+    event.preventDefault();
+    setPlanAmountFromPointer(gesture.barArea, event.clientY);
+  });
+  monthlyPlanEditor.addEventListener("pointerup", (event) => finishPlanPointer(event));
+  monthlyPlanEditor.addEventListener("pointercancel", (event) => finishPlanPointer(event, true));
+  monthlyPlanEditor.addEventListener("lostpointercapture", (event) => {
+    const gesture = planPointerGesture;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if (gesture.mode === "vertical") updatePlanColumn(gesture.month, gesture.originalAmount);
+    gesture.barArea.classList.remove("is-dragging");
+    planPointerGesture = null;
+  });
+  monthlyPlanEditor.addEventListener("keydown", (event) => {
     const barArea = event.target.closest(".month-plan-bar-area");
     if (!barArea) return;
-    const input = barArea.closest(".month-plan-column").querySelector(".month-plan-input");
-    input.focus();
-    input.select();
+    const month = barArea.dataset.planSlider;
+    const currentAmount = Math.max(0, toInteger(planDraft[month]));
+    const pageStep = Math.max(PLAN_AMOUNT_STEP, roundPlanAmount(planScaleDraft / 10));
+    let nextAmount;
+    if (event.key === "ArrowUp" || event.key === "ArrowRight") nextAmount = currentAmount + PLAN_AMOUNT_STEP;
+    else if (event.key === "ArrowDown" || event.key === "ArrowLeft") nextAmount = currentAmount - PLAN_AMOUNT_STEP;
+    else if (event.key === "PageUp") nextAmount = currentAmount + pageStep;
+    else if (event.key === "PageDown") nextAmount = currentAmount - pageStep;
+    else if (event.key === "Home") nextAmount = 0;
+    else if (event.key === "End") nextAmount = planScaleDraft;
+    else return;
+    event.preventDefault();
+    updatePlanColumn(month, clamp(roundPlanAmount(nextAmount), 0, MAX_PLAN_SCALE_MAX));
   });
   document.querySelector("#plan-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const category = categoryById(editingPlanCategoryId);
     if (!category || !planDraft) return;
-    state.plans[editingPlanCategoryId] = { ...(state.plans[editingPlanCategoryId] || {}), ...planDraft };
-    category.defaultAmount = toInteger(planDraft[currentPeriod] ?? Object.values(planDraft)[0]);
-    category.planRule = planRuleDraft ? { ...planRuleDraft } : null;
+    planScaleDraft = normalizePlanScaleMax(document.querySelector("#plan-scale-max").value);
+    const normalizedPlanDraft = {};
+    Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = roundPlanAmount(amount); });
+    state.plans[editingPlanCategoryId] = { ...(state.plans[editingPlanCategoryId] || {}), ...normalizedPlanDraft };
+    category.defaultAmount = roundPlanAmount(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]);
+    category.planRule = planRuleDraft ? { ...planRuleDraft, amount: roundPlanAmount(planRuleDraft.amount) } : null;
+    category.planScaleMax = planScaleDraft;
+    planPointerGesture = null;
     closeDialog(planDialog);
     await persist(`${category.name}の計画を保存しました`);
     render();
@@ -1320,7 +1497,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=4", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=6", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
