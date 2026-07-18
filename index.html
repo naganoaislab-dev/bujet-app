@@ -3,19 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f5f2ec" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#121613" media="(prefers-color-scheme: dark)">
+  <meta id="theme-color-light" name="theme-color" content="#dcebe1" media="(prefers-color-scheme: light)">
+  <meta id="theme-color-dark" name="theme-color" content="#205c40" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=13">
-  <link rel="icon" href="icons/icon.svg?v=13" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=13">
-  <link rel="stylesheet" href="styles.css?v=13">
-  <script src="db.js?v=13" defer></script>
-  <script src="app.js?v=13" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=14">
+  <link rel="icon" href="icons/icon.svg?v=14" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=14">
+  <link rel="stylesheet" href="styles.css?v=14">
+  <script src="db.js?v=14" defer></script>
+  <script src="app.js?v=14" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -54,7 +54,7 @@
   </div>
 
   <dialog id="calculator-dialog" class="sheet-dialog calculator-dialog">
-    <form method="dialog" class="sheet-card">
+    <form method="dialog" class="sheet-card calculator-card">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="dialog-heading">
         <div>
@@ -97,6 +97,7 @@
           <p class="eyebrow">あとから探しやすく</p>
           <h2>メモを追加</h2>
         </div>
+        <button type="button" class="icon-button" data-close="memo-dialog" aria-label="閉じる" autofocus>×</button>
       </div>
       <p id="memo-summary" class="dialog-summary"></p>
       <label class="field-label" for="memo-input">メモ（任意）</label>
@@ -204,7 +205,7 @@
       </div>
       <div class="version-summary">
         <span class="version-mark" aria-hidden="true">B−</span>
-        <div><span>アプリバージョン</span><strong id="app-version-name">v0.5.3</strong></div>
+        <div><span>アプリバージョン</span><strong id="app-version-name">v0.5.4</strong></div>
       </div>
       <p class="help-text">端末内のデータだけで動作する、オフライン対応の予算ベース家計簿です。</p>
       <button type="submit" class="button primary">閉じる</button>

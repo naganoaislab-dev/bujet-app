@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.3";
+  const APP_VERSION = "0.5.4";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 500;
@@ -12,6 +12,18 @@
   const DEFAULT_PLAN_SCALE_MAX = 100000;
   const MAX_PLAN_SCALE_MAX = 1000000000;
   const MILLISECONDS_PER_DAY = 86400000;
+  const THEME_PRESETS = Object.freeze([
+    { id: "forest", name: "フォレスト", primary: "#2f7554", strong: "#205c40", soft: "#dcebe1" },
+    { id: "ocean", name: "オーシャン", primary: "#2c7191", strong: "#1e5874", soft: "#daecf3" },
+    { id: "sapphire", name: "サファイア", primary: "#3f63c5", strong: "#2f4d9d", soft: "#e0e7fb" },
+    { id: "violet", name: "バイオレット", primary: "#7657a8", strong: "#59407f", soft: "#ebe3f6" },
+    { id: "plum", name: "プラム", primary: "#996080", strong: "#743f5e", soft: "#f4e1ea" },
+    { id: "rose", name: "ローズ", primary: "#b65672", strong: "#8c3b55", soft: "#f8e0e8" },
+    { id: "coral", name: "コーラル", primary: "#c76547", strong: "#9a4630", soft: "#fae3db" },
+    { id: "amber", name: "アンバー", primary: "#aa711e", strong: "#805316", soft: "#f8e9cc" },
+    { id: "olive", name: "オリーブ", primary: "#6a7d37", strong: "#506026", soft: "#e8eddb" },
+    { id: "slate", name: "スレート", primary: "#566d7e", strong: "#405362", soft: "#e0e9ed" }
+  ]);
   const VIEW_TITLES = {
     entry: "支出入力",
     overview: "状況確認",
@@ -33,6 +45,8 @@
   const planDialog = document.querySelector("#plan-dialog");
   const versionDialog = document.querySelector("#version-dialog");
   const monthlyPlanEditor = document.querySelector("#monthly-plan-editor");
+  const themeColorLight = document.querySelector("#theme-color-light");
+  const themeColorDark = document.querySelector("#theme-color-dark");
 
   let state;
   let currentProject = null;
@@ -74,6 +88,17 @@
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
+  }
+
+  function themePresetFor(themeId) {
+    return THEME_PRESETS.find((preset) => preset.id === themeId) || THEME_PRESETS[0];
+  }
+
+  function applyTheme() {
+    const preset = themePresetFor(state && state.settings && state.settings.themeId);
+    document.documentElement.dataset.theme = preset.id;
+    if (themeColorLight) themeColorLight.content = preset.soft;
+    if (themeColorDark) themeColorDark.content = preset.strong;
   }
 
   function clamp(value, minimum, maximum) {
@@ -430,6 +455,7 @@
     projects = loaded.projects;
     defaultProjectId = loaded.workspace.defaultProjectId;
     state = loaded.state;
+    applyTheme();
     currentPeriod = currentPeriodForToday();
     analysisPeriod = currentPeriod;
     incomeExpanded = false;
@@ -811,6 +837,7 @@
   }
 
   function renderBasicSettings() {
+    const selectedTheme = themePresetFor(state.settings.themeId);
     return `<form id="basic-settings-form" class="card settings-form">
       <div class="section-copy"><p class="section-kicker">PERIOD</p><h2>家計簿の期間</h2><p>締日を超えた支出は翌月分として集計します。存在しない締日は月末に丸めます。</p></div>
       <label><span class="field-label">締日</span><select id="closing-day">${Array.from({ length: 31 }, (_, index) => index + 1).map((day) => `<option value="${day}"${Number(state.settings.closingDay) === day ? " selected" : ""}>${day === 31 ? "月末（31日）" : `${day}日`}</option>`).join("")}</select></label>
@@ -819,6 +846,15 @@
         <label><span class="field-label">終了日</span><input id="end-date" type="date" value="${state.settings.endDate}" required></label>
       </div>
       <p class="help-text">現在は${periodMonths().length}ヶ月分を管理しています。初期設定は開始月から36ヶ月です。</p>
+      <section class="theme-settings" aria-labelledby="theme-settings-title">
+        <div class="section-copy"><p class="section-kicker">THEME</p><h3 id="theme-settings-title">テーマカラー</h3><p>アプリ全体のアクセントカラーを選べます。</p></div>
+        <div class="theme-preset-grid" role="radiogroup" aria-label="テーマカラー">
+          ${THEME_PRESETS.map((preset) => `<label class="theme-preset${preset.id === selectedTheme.id ? " selected" : ""}" style="--preset-color:${preset.primary};--preset-strong:${preset.strong};--preset-soft:${preset.soft}">
+            <input type="radio" name="theme-id" value="${preset.id}"${preset.id === selectedTheme.id ? " checked" : ""}>
+            <span class="theme-preset-swatch" aria-hidden="true"></span><span class="theme-preset-name">${preset.name}</span>
+          </label>`).join("")}
+        </div>
+      </section>
       <button type="submit" class="button primary">基本設定を保存</button>
     </form>`;
   }
@@ -1024,7 +1060,6 @@
     document.querySelector("#memo-summary").textContent = `${category.name}・${formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
     document.querySelector("#memo-input").value = "";
     openDialog(memoDialog);
-    window.setTimeout(() => document.querySelector("#memo-input").focus(), 80);
   }
 
   async function savePendingTransaction(memo) {
@@ -1547,6 +1582,10 @@
     } else if (event.target.id === "project-start-date") {
       const suggestedEndDate = projectEndDateForStart(event.target.value);
       if (suggestedEndDate) document.querySelector("#project-end-date").value = suggestedEndDate;
+    } else if (event.target.name === "theme-id") {
+      const selectedPreset = themePresetFor(event.target.value);
+      document.documentElement.dataset.theme = selectedPreset.id;
+      document.querySelectorAll(".theme-preset").forEach((item) => item.classList.toggle("selected", item.contains(event.target)));
     }
   }
 
@@ -1566,13 +1605,14 @@
     const closingDay = clamp(toInteger(document.querySelector("#closing-day").value, 31), 1, 31);
     const startDate = document.querySelector("#start-date").value;
     const endDate = document.querySelector("#end-date").value;
+    const themeId = themePresetFor(document.querySelector('input[name="theme-id"]:checked')?.value).id;
     if (!startDate || !endDate || parseLocalDate(endDate) < parseLocalDate(startDate)) {
       showToast("終了日は開始日以降にしてください");
       return;
     }
     if (closingDay !== Number(state.settings.closingDay) && state.transactions.length && !window.confirm("締日を変えると、入力済み実績が所属する月も再計算されます。変更しますか？")) return;
     const previousSettings = state.settings;
-    state.settings = { ...state.settings, closingDay, startDate, endDate };
+    state.settings = { ...state.settings, closingDay, startDate, endDate, themeId };
     const months = periodMonths();
     if (months.length > 120) {
       state.settings = previousSettings;
@@ -1587,6 +1627,7 @@
     });
     currentPeriod = currentPeriodForToday();
     analysisPeriod = currentPeriod;
+    applyTheme();
     await persist("基本設定を保存しました");
     render();
   }
@@ -1830,7 +1871,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=13", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=14", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
