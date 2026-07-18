@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.0";
+  const APP_VERSION = "0.5.1";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 500;
@@ -331,13 +331,17 @@
     if (!category || isIncomeCategory(category) || category.dailyBudgetEnabled !== true) return null;
     const today = localDateKey();
     const range = periodRange(month);
-    if (today < range.start || today > range.end || periodForDate(today) !== month) return null;
     const stats = categoryBudgetStats(category.id, month);
-    const daysRemaining = inclusiveDaysBetween(today, range.end);
+    const isCurrentPeriod = today >= range.start && today <= range.end && periodForDate(today) === month;
+    const isFuturePeriod = today < range.start;
+    const calculationStart = isCurrentPeriod ? today : range.start;
+    const daysRemaining = inclusiveDaysBetween(calculationStart, range.end);
     return {
       ...stats,
       daysRemaining,
-      dailyRemaining: Math.floor(stats.monthlyRemaining / daysRemaining)
+      dailyRemaining: Math.floor(stats.monthlyRemaining / daysRemaining),
+      dailyLabel: isCurrentPeriod ? "今日の残り予算" : isFuturePeriod ? "1日あたりの予算" : "1日あたりの予算差",
+      daysLabel: isCurrentPeriod ? `締日まで残り${daysRemaining}日` : isFuturePeriod ? `期間全${daysRemaining}日で配分` : `期間全${daysRemaining}日で比較`
     };
   }
 
@@ -551,9 +555,9 @@
         return `<button type="button" class="budget-card daily-budget-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
           <span class="budget-card-name">${escapeHtml(category.name)}</span>
           <span class="daily-budget-main">
-            <span class="daily-budget-value"><span>今日の残り予算</span><strong class="${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
+            <span class="daily-budget-value"><span>${dailyStats.dailyLabel}</span><strong class="${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
           </span>
-          <span class="daily-budget-days">締日まで残り${dailyStats.daysRemaining}日</span>
+          <span class="daily-budget-days">${dailyStats.daysLabel}</span>
           <span class="daily-budget-sub">
             <span><span>今月の残り予算</span><strong class="${stats.monthlyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.monthlyRemaining)}</strong></span>
             <span><span>これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>
@@ -1775,7 +1779,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=10", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=11", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
