@@ -2,16 +2,16 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
+  const APP_VERSION = "0.4.0";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 500;
   const PLAN_BAR_LARGE_STEP = 1000;
   const PLAN_BAR_MEDIUM_SCALE = 10000;
   const PLAN_BAR_LARGE_SCALE = 100000;
-  const PLAN_DIRECTION_BIAS = 1.2;
   const DEFAULT_PLAN_SCALE_MAX = 100000;
   const MAX_PLAN_SCALE_MAX = 1000000000;
-  const PLAN_DRAG_THRESHOLD = 7;
+  const MILLISECONDS_PER_DAY = 86400000;
   const VIEW_TITLES = {
     entry: "支出入力",
     overview: "状況確認",
@@ -30,6 +30,7 @@
   const transactionDialog = document.querySelector("#transaction-dialog");
   const categoryDialog = document.querySelector("#category-dialog");
   const planDialog = document.querySelector("#plan-dialog");
+  const versionDialog = document.querySelector("#version-dialog");
   const monthlyPlanEditor = document.querySelector("#monthly-plan-editor");
 
   let state;
@@ -46,6 +47,7 @@
   let planRuleDraft = null;
   let planScaleDraft = DEFAULT_PLAN_SCALE_MAX;
   let planPointerGesture = null;
+  let selectedPlanMonth = null;
   let toastTimer = null;
   let calculatorContext = null;
   let calculator = createCalculatorState();
@@ -116,6 +118,15 @@
   function parseLocalDate(value) {
     const [year, month, day] = String(value).split("-").map(Number);
     return new Date(year, month - 1, day);
+  }
+
+  function utcDayNumber(value) {
+    const [year, month, day] = String(value).split("-").map(Number);
+    return Math.floor(Date.UTC(year, month - 1, day) / MILLISECONDS_PER_DAY);
+  }
+
+  function inclusiveDaysBetween(startDate, endDate) {
+    return Math.max(1, utcDayNumber(endDate) - utcDayNumber(startDate) + 1);
   }
 
   function isValidDateKey(value) {
@@ -293,7 +304,23 @@
     const plan = planAmount(categoryId, month);
     const carry = carryAmount(categoryId, month);
     const actual = actualAmount(categoryId, month);
-    return { plan, carry, actual, remaining: plan + carry - actual };
+    const monthlyRemaining = plan - actual;
+    return { plan, carry, actual, monthlyRemaining, remaining: monthlyRemaining + carry };
+  }
+
+  function dailyBudgetStats(category, month) {
+    if (!category || isIncomeCategory(category) || category.dailyBudgetEnabled !== true) return null;
+    const today = localDateKey();
+    const range = periodRange(month);
+    if (today < range.start || today > range.end || periodForDate(today) !== month) return null;
+    const stats = categoryBudgetStats(category.id, month);
+    const daysRemaining = inclusiveDaysBetween(today, range.end);
+    return {
+      ...stats,
+      daysRemaining,
+      dailyRemaining: Math.floor(stats.monthlyRemaining / daysRemaining),
+      dailyRemainingWithCarry: Math.floor(stats.remaining / daysRemaining)
+    };
   }
 
   function aggregateMonth(month) {
@@ -322,6 +349,11 @@
     const amount = toInteger(value);
     if (amount === 0) return formatCurrency(0);
     return `${amount > 0 ? "+" : "−"}${formatCurrency(Math.abs(amount))}`;
+  }
+
+  function remainingAmountLabel(value) {
+    const amount = toInteger(value);
+    return amount < 0 ? `${formatCurrency(Math.abs(amount))} 超過` : formatCurrency(amount);
   }
 
   function makeId(prefix) {
@@ -440,13 +472,28 @@
     if (!categories.length) return '<div class="empty-state">設定画面から種別を追加してください。</div>';
     return categories.map((category) => {
       const stats = categoryBudgetStats(category.id, month);
+      const dailyStats = dailyBudgetStats(category, month);
       const available = Math.max(1, stats.plan + Math.max(0, stats.carry));
       const progress = clamp((stats.actual / available) * 100, 0, 100);
-      const amountLabel = stats.remaining < 0 ? `${formatCurrency(Math.abs(stats.remaining))} 超過` : formatCurrency(stats.remaining);
+      if (dailyStats) {
+        return `<button type="button" class="budget-card daily-budget-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
+          <span class="budget-card-name">${escapeHtml(category.name)}</span>
+          <span class="daily-budget-main">
+            <span class="daily-budget-value"><span>今日の残り予算</span><strong class="${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
+            <span class="daily-budget-value"><span>今日の残り予算（これまでの持ち越し考慮額）</span><strong class="${dailyStats.dailyRemainingWithCarry < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemainingWithCarry)}</strong></span>
+          </span>
+          <span class="daily-budget-days">締日まで残り${dailyStats.daysRemaining}日</span>
+          <span class="daily-budget-sub">
+            <span><span>今月の残り予算</span><strong class="${stats.monthlyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.monthlyRemaining)}</strong></span>
+            <span><span>これまでの持ち越し</span><strong class="${stats.carry < 0 ? "negative" : ""}">${formatSignedCurrency(stats.carry)}</strong></span>
+          </span>
+          <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
+        </button>`;
+      }
       return `<button type="button" class="budget-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
         <span class="budget-card-name">${escapeHtml(category.name)}</span>
         <span class="budget-card-label">今月の残り予算</span>
-        <strong class="budget-card-amount ${stats.remaining < 0 ? "negative" : ""}">${amountLabel}</strong>
+        <strong class="budget-card-amount ${stats.remaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.remaining)}</strong>
         <span class="budget-card-carry"><span>これまでの持ち越し</span><strong class="${stats.carry < 0 ? "negative" : ""}">${formatSignedCurrency(stats.carry)}</strong></span>
         <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
       </button>`;
@@ -688,12 +735,19 @@
 
   function renderCategoryRows(categories) {
     if (!categories.length) return '<div class="empty-state">種別がありません。</div>';
-    return categories.map((category) => `<article class="category-setting-row" style="--category-color:${escapeHtml(category.color)}">
-      <span class="color-dot" aria-hidden="true"></span>
-      <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（非表示）" : ""}</strong><span>${monthLabel(currentPeriod)} ${formatCurrency(planAmount(category.id, currentPeriod))}</span></span>
-      <button type="button" class="row-action" data-plan-category="${escapeHtml(category.id)}">${periodMonths().length}ヶ月</button>
-      <button type="button" class="row-action" data-edit-category="${escapeHtml(category.id)}">編集</button>
-    </article>`).join("");
+    return categories.map((category) => {
+      const dailyToggle = category.group === "income" ? "" : `<label class="category-daily-toggle">
+        <input type="checkbox" data-daily-budget-category="${escapeHtml(category.id)}"${category.dailyBudgetEnabled === true ? " checked" : ""}${category.active === false ? " disabled" : ""}>
+        <span><strong>日毎に予算管理</strong><span>当月の残予算を締日までの日数で割って表示</span></span>
+      </label>`;
+      return `<article class="category-setting-row" style="--category-color:${escapeHtml(category.color)}">
+        <span class="color-dot" aria-hidden="true"></span>
+        <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（非表示）" : ""}</strong><span>${monthLabel(currentPeriod)} ${formatCurrency(planAmount(category.id, currentPeriod))}</span></span>
+        <button type="button" class="row-action" data-plan-category="${escapeHtml(category.id)}">${periodMonths().length}ヶ月</button>
+        <button type="button" class="row-action" data-edit-category="${escapeHtml(category.id)}">編集</button>
+        ${dailyToggle}
+      </article>`;
+    }).join("");
   }
 
   function renderData() {
@@ -869,11 +923,12 @@
   function openPlanEditor(categoryId) {
     const category = categoryById(categoryId);
     if (!category) return;
+    cancelPlanPointerTracking();
     editingPlanCategoryId = categoryId;
     planDraft = {};
     planRuleDraft = category.planRule ? { ...category.planRule, amount: roundPlanAmount(category.planRule.amount) } : null;
     planScaleDraft = normalizePlanScaleMax(category.planScaleMax);
-    planPointerGesture = null;
+    selectedPlanMonth = null;
     periodMonths().forEach((month) => { planDraft[month] = roundPlanAmount(planAmount(categoryId, month)); });
     document.querySelector("#plan-category-name").textContent = category.name;
     const planLength = periodMonths().length;
@@ -896,15 +951,46 @@
       const overScale = amount > planScaleDraft;
       const sliderValue = Math.min(amount, planScaleDraft);
       const valueText = `${formatCurrency(amount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`;
-      return `<article class="month-plan-column ${month === currentPeriod ? "current" : ""} ${overScale ? "over-scale" : ""}" data-plan-column="${month}" style="--category-color:${escapeHtml(category.color)}">
-        <span class="month-plan-label">${monthLabel(month, false)}<br>${monthParts(month).year}</span>
-        <div class="month-plan-bar-area" data-plan-slider="${month}" role="slider" tabindex="0" aria-label="${monthLabel(month)}の計画金額" aria-describedby="plan-scale-step" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="${planScaleDraft}" aria-valuenow="${sliderValue}" aria-valuetext="${escapeHtml(valueText)}">
+      const selected = month === selectedPlanMonth;
+      return `<article class="month-plan-column ${selected ? "selected" : ""} ${overScale ? "over-scale" : ""}" data-plan-column="${month}" style="--category-color:${escapeHtml(category.color)}">
+        <span class="month-plan-label">${monthLabel(month, false)}<br>${monthParts(month).year}<span class="month-plan-selected-indicator"${selected ? "" : " hidden"}>選択中</span></span>
+        <div class="month-plan-bar-area" data-plan-slider="${month}" role="slider" tabindex="0" aria-label="${monthLabel(month)}の計画金額" aria-describedby="plan-scale-step" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="${planScaleDraft}" aria-valuenow="${sliderValue}" aria-valuetext="${escapeHtml(valueText)}"${selected ? ' aria-current="true"' : ""}>
           <span class="month-plan-overflow"${overScale ? "" : " hidden"}>上限超過</span>
           <span class="month-plan-bar" style="--bar-height:${height}%"></span>
         </div>
         <input class="month-plan-input" data-plan-month="${month}" type="number" min="0" step="any" inputmode="numeric" value="${amount}" aria-label="${monthLabel(month)}の計画金額">
       </article>`;
     }).join("");
+    updatePlanSelectionUi();
+  }
+
+  function updatePlanSelectionUi() {
+    const months = periodMonths();
+    const selectedIndex = months.indexOf(selectedPlanMonth);
+    monthlyPlanEditor.querySelectorAll("[data-plan-column]").forEach((column) => {
+      const selected = column.dataset.planColumn === selectedPlanMonth;
+      column.classList.toggle("selected", selected);
+      const indicator = column.querySelector(".month-plan-selected-indicator");
+      if (indicator) indicator.hidden = !selected;
+      const barArea = column.querySelector(".month-plan-bar-area");
+      if (selected) barArea.setAttribute("aria-current", "true");
+      else barArea.removeAttribute("aria-current");
+    });
+    const copyButton = document.querySelector("#copy-next-plan");
+    const canCopy = selectedIndex >= 0 && selectedIndex < months.length - 1;
+    copyButton.disabled = !canCopy;
+    if (selectedIndex < 0) copyButton.title = "棒または金額欄で月を選択してください";
+    else if (!canCopy) copyButton.title = "最後の月から先にはコピーできません";
+    else copyButton.title = `${monthLabel(months[selectedIndex])}を${monthLabel(months[selectedIndex + 1])}へコピー`;
+  }
+
+  function selectPlanMonth(month, scrollIntoView = false) {
+    if (!periodMonths().includes(month)) return;
+    selectedPlanMonth = month;
+    updatePlanSelectionUi();
+    if (!scrollIntoView) return;
+    const column = monthlyPlanEditor.querySelector(`[data-plan-column="${month}"]`);
+    if (column) column.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
   }
 
   function updatePlanScaleSummary() {
@@ -952,9 +1038,14 @@
   }
 
   function capturePlanPointer(barArea, pointerId) {
-    if (typeof barArea.setPointerCapture !== "function") return;
-    try { barArea.setPointerCapture(pointerId); }
-    catch (error) { console.debug("Pointer capture unavailable", error); }
+    if (typeof barArea.setPointerCapture !== "function") return false;
+    try {
+      barArea.setPointerCapture(pointerId);
+      return true;
+    } catch (error) {
+      console.debug("Pointer capture unavailable", error);
+      return false;
+    }
   }
 
   function focusPlanBar(barArea) {
@@ -964,7 +1055,6 @@
 
   function releasePlanPointer(gesture) {
     gesture.barArea.classList.remove("is-dragging", "is-pointer-active");
-    monthlyPlanEditor.classList.remove("is-pointer-scrolling");
     if (typeof gesture.barArea.hasPointerCapture !== "function" || typeof gesture.barArea.releasePointerCapture !== "function") return;
     try {
       if (gesture.barArea.hasPointerCapture(gesture.pointerId)) gesture.barArea.releasePointerCapture(gesture.pointerId);
@@ -973,15 +1063,48 @@
     }
   }
 
+  function addPlanPointerTracking() {
+    window.addEventListener("pointermove", handlePlanPointerMove, { capture: true, passive: false });
+    window.addEventListener("pointerup", handlePlanPointerUp, true);
+    window.addEventListener("pointercancel", handlePlanPointerCancel, true);
+  }
+
+  function removePlanPointerTracking() {
+    window.removeEventListener("pointermove", handlePlanPointerMove, true);
+    window.removeEventListener("pointerup", handlePlanPointerUp, true);
+    window.removeEventListener("pointercancel", handlePlanPointerCancel, true);
+  }
+
+  function handlePlanPointerMove(event) {
+    const gesture = planPointerGesture;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if (event.cancelable) event.preventDefault();
+    setPlanAmountFromPointer(gesture.barArea, event.clientY);
+  }
+
+  function handlePlanPointerUp(event) {
+    finishPlanPointer(event);
+  }
+
+  function handlePlanPointerCancel(event) {
+    finishPlanPointer(event, true);
+  }
+
   function finishPlanPointer(event, cancelled = false) {
     const gesture = planPointerGesture;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
-    const movedDistance = Math.max(Math.abs(event.clientX - gesture.startX), Math.abs(event.clientY - gesture.startY));
-    if (!cancelled && (gesture.mode === "vertical" || (gesture.mode === "pending" && movedDistance < PLAN_DRAG_THRESHOLD))) {
-      event.preventDefault();
-      setPlanAmountFromPointer(gesture.barArea, event.clientY);
-    }
+    if (!cancelled) setPlanAmountFromPointer(gesture.barArea, event.clientY);
+    if (event.cancelable) event.preventDefault();
     planPointerGesture = null;
+    removePlanPointerTracking();
+    releasePlanPointer(gesture);
+  }
+
+  function cancelPlanPointerTracking() {
+    const gesture = planPointerGesture;
+    if (!gesture) return;
+    planPointerGesture = null;
+    removePlanPointerTracking();
     releasePlanPointer(gesture);
   }
 
@@ -1001,18 +1124,21 @@
     months.forEach((month, index) => {
       planDraft[month] = index >= startIndex && (index - startIndex) % interval === 0 ? amount : 0;
     });
+    selectedPlanMonth = startMonth;
     renderPlanEditor();
     showToast("一括パターンを反映しました。保存すると確定します");
   }
 
-  function copyPreviousPlan() {
+  function copyPlanToNextMonth() {
     const months = periodMonths();
-    for (let index = months.length - 1; index > 0; index -= 1) {
-      planDraft[months[index]] = planDraft[months[index - 1]];
-    }
+    const selectedIndex = months.indexOf(selectedPlanMonth);
+    if (selectedIndex < 0 || selectedIndex >= months.length - 1) return;
+    const sourceMonth = months[selectedIndex];
+    const nextMonth = months[selectedIndex + 1];
+    updatePlanColumn(nextMonth, planDraft[sourceMonth]);
     planRuleDraft = null;
-    renderPlanEditor();
-    showToast("各月へ前月の金額をコピーしました");
+    selectPlanMonth(nextMonth, true);
+    showToast(`${monthLabel(sourceMonth)}の金額を${monthLabel(nextMonth)}へコピーしました`);
   }
 
   function downloadBlob(content, type, filename) {
@@ -1034,15 +1160,15 @@
   }
 
   function exportCsv() {
-    const headers = ["recordType", "id", "categoryId", "name", "group", "date", "month", "amount", "memo", "closingDay", "startDate", "endDate", "color", "order", "active", "createdAt", "updatedAt", "planScaleMax"];
+    const headers = ["recordType", "id", "categoryId", "name", "group", "date", "month", "amount", "memo", "closingDay", "startDate", "endDate", "color", "order", "active", "createdAt", "updatedAt", "planScaleMax", "dailyBudgetEnabled"];
     const rows = [headers];
-    rows.push(["settings", "main", "", APP_NAME, "", "", "", "", "", state.settings.closingDay, state.settings.startDate, state.settings.endDate, "", "", "", state.createdAt || "", state.updatedAt || "", ""]);
+    rows.push(["settings", "main", "", APP_NAME, "", "", "", "", "", state.settings.closingDay, state.settings.startDate, state.settings.endDate, "", "", "", state.createdAt || "", state.updatedAt || "", "", ""]);
     state.categories.forEach((category) => {
-      rows.push(["category", category.id, "", category.name, category.group, "", "", category.defaultAmount || 0, "", "", "", "", category.color, category.order, category.active !== false, "", "", normalizePlanScaleMax(category.planScaleMax)]);
-      if (category.planRule) rows.push(["rule", `${category.id}|rule`, category.id, "", "", "", category.planRule.startMonth, category.planRule.amount, "", "", "", "", "", category.planRule.interval, "", "", "", ""]);
+      rows.push(["category", category.id, "", category.name, category.group, "", "", category.defaultAmount || 0, "", "", "", "", category.color, category.order, category.active !== false, "", "", normalizePlanScaleMax(category.planScaleMax), category.dailyBudgetEnabled === true]);
+      if (category.planRule) rows.push(["rule", `${category.id}|rule`, category.id, "", "", "", category.planRule.startMonth, category.planRule.amount, "", "", "", "", "", category.planRule.interval, "", "", "", "", ""]);
     });
-    periodMonths().forEach((month) => state.categories.forEach((category) => rows.push(["plan", `${category.id}|${month}`, category.id, "", "", "", month, planAmount(category.id, month), "", "", "", "", "", "", "", "", "", ""])));
-    state.transactions.forEach((transaction) => rows.push(["transaction", transaction.id, transaction.categoryId, "", transaction.direction, transaction.date, "", transaction.amount, transaction.memo || "", "", "", "", "", "", "", transaction.createdAt || "", transaction.updatedAt || "", ""]));
+    periodMonths().forEach((month) => state.categories.forEach((category) => rows.push(["plan", `${category.id}|${month}`, category.id, "", "", "", month, planAmount(category.id, month), "", "", "", "", "", "", "", "", "", "", ""])));
+    state.transactions.forEach((transaction) => rows.push(["transaction", transaction.id, transaction.categoryId, "", transaction.direction, transaction.date, "", transaction.amount, transaction.memo || "", "", "", "", "", "", "", transaction.createdAt || "", transaction.updatedAt || "", "", ""]));
     const content = `\uFEFF${rows.map((row, rowIndex) => row.map((value) => csvEscape(value, rowIndex > 0 && typeof value === "string")).join(",")).join("\r\n")}`;
     downloadBlob(content, "text/csv;charset=utf-8", `budget-minus-${localDateKey()}.csv`);
     showToast("Excel互換CSVを書き出しました");
@@ -1112,7 +1238,7 @@
     if (importedClosingDay < 1 || importedClosingDay > 31) throw new Error("CSVの締日が不正です。");
     const imported = {
       id: "main",
-      schemaVersion: 3,
+      schemaVersion: 4,
       settings: { closingDay: importedClosingDay, startDate: importedStartDate, endDate: importedEndDate, currency: "JPY" },
       categories: [],
       plans: {},
@@ -1123,7 +1249,10 @@
     records.filter((record) => record.recordType === "category").forEach((record) => {
       if (!isSafeImportedId(record.id) || !["variable", "fixed", "income"].includes(record.group)) throw new Error(`CSV ${record.rowNumber}行目の種別が不正です。`);
       if (imported.categories.some((category) => category.id === record.id)) throw new Error(`CSV ${record.rowNumber}行目の種別IDが重複しています。`);
-      imported.categories.push({ id: record.id, name: cleanImportedText(record.name).trim() || "名称未設定", group: record.group, color: /^#[0-9a-f]{6}$/i.test(record.color) ? record.color : "#3f7d5b", order: toInteger(record.order), active: record.active !== "false", defaultAmount: Math.max(0, toInteger(record.amount)), planScaleMax: normalizePlanScaleMax(record.planScaleMax) });
+      const importedDailySetting = String(record.dailyBudgetEnabled || "").trim().toLowerCase();
+      if (importedDailySetting && !["true", "false"].includes(importedDailySetting)) throw new Error(`CSV ${record.rowNumber}行目の日毎予算設定が不正です。`);
+      const dailyBudgetEnabled = record.group !== "income" && (importedDailySetting ? importedDailySetting === "true" : record.id === "expense-food");
+      imported.categories.push({ id: record.id, name: cleanImportedText(record.name).trim() || "名称未設定", group: record.group, color: /^#[0-9a-f]{6}$/i.test(record.color) ? record.color : "#3f7d5b", order: toInteger(record.order), active: record.active !== "false", defaultAmount: Math.max(0, toInteger(record.amount)), planScaleMax: normalizePlanScaleMax(record.planScaleMax), dailyBudgetEnabled });
       imported.plans[record.id] = {};
     });
     const categoryIds = new Set(imported.categories.map((category) => category.id));
@@ -1178,6 +1307,7 @@
     imported.categories.forEach((category) => {
       if (!category || !isSafeImportedId(category.id) || ids.has(String(category.id)) || !["variable", "fixed", "income"].includes(category.group)) throw new Error("バックアップの種別データが不正です。");
       if (category.planScaleMax !== undefined && (!Number.isFinite(Number(category.planScaleMax)) || Number(category.planScaleMax) <= 0 || Number(category.planScaleMax) > MAX_PLAN_SCALE_MAX)) throw new Error(`${category.name || "種別"}の棒上限額が不正です。`);
+      if (category.dailyBudgetEnabled !== undefined && typeof category.dailyBudgetEnabled !== "boolean") throw new Error(`${category.name || "種別"}の日毎予算設定が不正です。`);
       ids.add(String(category.id));
       const categoryPlans = imported.plans[category.id] || {};
       Object.entries(categoryPlans).forEach(([month, amount]) => {
@@ -1240,8 +1370,21 @@
     }
   }
 
-  function handleViewChange(event) {
-    if (event.target.id === "entry-period" || event.target.id === "overview-period") {
+  async function handleViewChange(event) {
+    const dailyBudgetCategoryId = event.target.dataset.dailyBudgetCategory;
+    if (dailyBudgetCategoryId) {
+      const category = categoryById(dailyBudgetCategoryId);
+      if (!category || isIncomeCategory(category)) return;
+      const previousValue = category.dailyBudgetEnabled === true;
+      category.dailyBudgetEnabled = event.target.checked;
+      try {
+        await persist(`${category.name}の日毎予算管理を${event.target.checked ? "有効" : "無効"}にしました`);
+      } catch (error) {
+        category.dailyBudgetEnabled = previousValue;
+        event.target.checked = previousValue;
+        throw error;
+      }
+    } else if (event.target.id === "entry-period" || event.target.id === "overview-period") {
       currentPeriod = event.target.value;
       allTransactionsShown = false;
       render();
@@ -1292,7 +1435,7 @@
   });
 
   viewHost.addEventListener("click", handleViewClick);
-  viewHost.addEventListener("change", handleViewChange);
+  viewHost.addEventListener("change", (event) => handleViewChange(event).catch((error) => showToast(error instanceof Error ? error.message : "設定を保存できませんでした")));
   viewHost.addEventListener("submit", handleViewSubmit);
 
   document.querySelector("#calculator-keys").addEventListener("click", (event) => {
@@ -1301,9 +1444,16 @@
   });
   document.querySelector("#calculator-ok").addEventListener("click", () => acceptCalculator().catch((error) => showToast(error.message)));
 
+  document.querySelector("#app-version-button").addEventListener("click", () => {
+    document.querySelector("#app-version-name").textContent = `v${APP_VERSION}`;
+    openDialog(versionDialog);
+  });
+
   document.querySelectorAll("[data-close]").forEach((button) => {
     button.addEventListener("click", () => closeDialog(document.querySelector(`#${button.dataset.close}`)));
   });
+  planDialog.addEventListener("cancel", cancelPlanPointerTracking);
+  planDialog.addEventListener("close", cancelPlanPointerTracking);
 
   document.querySelector("#memo-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1367,10 +1517,11 @@
       category.color = color;
       category.active = true;
       category.archivedAt = null;
+      if (group === "income") category.dailyBudgetEnabled = false;
     } else {
       const categoryId = makeId("category");
       const order = Math.max(0, ...state.categories.map((category) => toInteger(category.order))) + 10;
-      state.categories.push({ id: categoryId, name, group, color, order, active: true, defaultAmount: 0, planScaleMax: DEFAULT_PLAN_SCALE_MAX });
+      state.categories.push({ id: categoryId, name, group, color, order, active: true, defaultAmount: 0, planScaleMax: DEFAULT_PLAN_SCALE_MAX, dailyBudgetEnabled: false });
       state.plans[categoryId] = {};
       periodMonths().forEach((month) => { state.plans[categoryId][month] = 0; });
     }
@@ -1402,7 +1553,7 @@
   });
 
   document.querySelector("#apply-plan-pattern").addEventListener("click", applyPlanPattern);
-  document.querySelector("#copy-previous-plan").addEventListener("click", copyPreviousPlan);
+  document.querySelector("#copy-next-plan").addEventListener("click", copyPlanToNextMonth);
   document.querySelector("#plan-scale-max").addEventListener("input", (event) => {
     if (!Number.isFinite(Number(event.target.value)) || Number(event.target.value) <= 0) return;
     planScaleDraft = normalizePlanScaleMax(event.target.value);
@@ -1415,7 +1566,11 @@
   });
   monthlyPlanEditor.addEventListener("input", (event) => {
     if (!event.target.dataset.planMonth) return;
+    selectPlanMonth(event.target.dataset.planMonth);
     updatePlanColumn(event.target.dataset.planMonth, Math.max(0, toInteger(event.target.value)), false);
+  });
+  monthlyPlanEditor.addEventListener("focusin", (event) => {
+    if (event.target.dataset.planMonth) selectPlanMonth(event.target.dataset.planMonth);
   });
   monthlyPlanEditor.addEventListener("change", commitPlanInput);
   monthlyPlanEditor.addEventListener("focusout", commitPlanInput);
@@ -1427,47 +1582,20 @@
       pointerId: event.pointerId,
       pointerType: event.pointerType,
       barArea,
-      month,
-      startX: event.clientX,
-      startY: event.clientY,
-      startScrollLeft: monthlyPlanEditor.scrollLeft,
-      mode: "pending"
+      month
     };
-    event.preventDefault();
-    barArea.classList.add("is-pointer-active");
-    focusPlanBar(barArea);
+    if (event.cancelable) event.preventDefault();
+    selectPlanMonth(month);
+    barArea.classList.add("is-pointer-active", "is-dragging");
+    addPlanPointerTracking();
     capturePlanPointer(barArea, event.pointerId);
+    setPlanAmountFromPointer(barArea, event.clientY);
+    if (event.pointerType !== "touch") focusPlanBar(barArea);
   });
-  monthlyPlanEditor.addEventListener("pointermove", (event) => {
-    const gesture = planPointerGesture;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    if (gesture.mode === "pending") {
-      const deltaX = Math.abs(event.clientX - gesture.startX);
-      const deltaY = Math.abs(event.clientY - gesture.startY);
-      if (Math.max(deltaX, deltaY) < PLAN_DRAG_THRESHOLD) return;
-      if (deltaX > deltaY * PLAN_DIRECTION_BIAS) {
-        gesture.mode = "horizontal";
-        monthlyPlanEditor.classList.add("is-pointer-scrolling");
-      } else if (deltaY > deltaX * PLAN_DIRECTION_BIAS) {
-        gesture.mode = "vertical";
-        gesture.barArea.classList.add("is-dragging");
-      } else return;
-    }
-    if (gesture.mode === "horizontal") {
-      monthlyPlanEditor.scrollLeft = gesture.startScrollLeft - (event.clientX - gesture.startX);
-    } else if (gesture.mode === "vertical") {
-      setPlanAmountFromPointer(gesture.barArea, event.clientY);
-    }
-  });
-  monthlyPlanEditor.addEventListener("pointerup", (event) => finishPlanPointer(event));
-  monthlyPlanEditor.addEventListener("pointercancel", (event) => finishPlanPointer(event, true));
   monthlyPlanEditor.addEventListener("lostpointercapture", (event) => {
     const gesture = planPointerGesture;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
-    gesture.barArea.classList.remove("is-dragging", "is-pointer-active");
-    monthlyPlanEditor.classList.remove("is-pointer-scrolling");
-    planPointerGesture = null;
+    gesture.captureLost = true;
   });
   monthlyPlanEditor.addEventListener("keydown", (event) => {
     const barArea = event.target.closest(".month-plan-bar-area");
@@ -1485,6 +1613,7 @@
     else if (event.key === "End") nextAmount = planScaleDraft;
     else return;
     event.preventDefault();
+    selectPlanMonth(month);
     const maximum = currentAmount > planScaleDraft ? MAX_PLAN_SCALE_MAX : planScaleDraft;
     updatePlanColumn(month, clamp(roundPlanAmount(nextAmount), 0, maximum));
   });
@@ -1499,7 +1628,7 @@
     category.defaultAmount = roundPlanAmount(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]);
     category.planRule = planRuleDraft ? { ...planRuleDraft, amount: roundPlanAmount(planRuleDraft.amount) } : null;
     category.planScaleMax = planScaleDraft;
-    planPointerGesture = null;
+    cancelPlanPointerTracking();
     closeDialog(planDialog);
     await persist(`${category.name}の計画を保存しました`);
     render();
@@ -1528,7 +1657,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=7", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=8", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
