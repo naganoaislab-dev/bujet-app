@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.4";
+  const APP_VERSION = "0.5.5";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 500;
@@ -44,6 +44,7 @@
   const categoryDialog = document.querySelector("#category-dialog");
   const planDialog = document.querySelector("#plan-dialog");
   const versionDialog = document.querySelector("#version-dialog");
+  const resetDialog = document.querySelector("#reset-dialog");
   const monthlyPlanEditor = document.querySelector("#monthly-plan-editor");
   const themeColorLight = document.querySelector("#theme-color-light");
   const themeColorDark = document.querySelector("#theme-color-dark");
@@ -345,12 +346,15 @@
   }
 
   function categoryBudgetStats(categoryId, month) {
-    const plan = planAmount(categoryId, month);
-    const carry = carryAmount(categoryId, month);
+    const configuredPlan = planAmount(categoryId, month);
+    const priorCarry = carryAmount(categoryId, month);
     const actual = actualAmount(categoryId, month);
+    const debtAppliedToPlan = Math.min(configuredPlan, Math.max(0, -priorCarry));
+    const plan = configuredPlan - debtAppliedToPlan;
+    const carry = priorCarry + debtAppliedToPlan;
     const monthlyRemaining = plan - actual;
     const carryRemaining = carry - Math.max(0, actual - plan);
-    return { plan, carry, actual, monthlyRemaining, carryRemaining, remaining: monthlyRemaining + carry };
+    return { configuredPlan, priorCarry, plan, carry, actual, monthlyRemaining, carryRemaining, remaining: monthlyRemaining + carry };
   }
 
   function dailyBudgetStats(category, month) {
@@ -519,6 +523,16 @@
     showToast(message);
   }
 
+  async function resetCurrentProject() {
+    closeDialog(resetDialog);
+    state = await window.BudgetDB.resetProject(currentProject && currentProject.id);
+    syncCurrentProjectPeriod();
+    currentPeriod = currentPeriodForToday();
+    analysisPeriod = currentPeriod;
+    render();
+    showToast("初期データへ戻しました");
+  }
+
   function render() {
     lastRenderedDate = localDateKey();
     screenTitle.textContent = VIEW_TITLES[currentView];
@@ -664,12 +678,19 @@
       item.actualCumulative = actualCumulative;
     });
 
+    const projectEnd = aggregates[aggregates.length - 1] || { plannedCumulative: 0, actualCumulative: 0 };
+    const projectEndTone = projectEnd.actualCumulative < 0 ? "negative" : projectEnd.actualCumulative > 0 ? "positive" : "";
+
     const barMaximum = Math.max(1, ...aggregates.flatMap((item) => [item.expensePlan, item.expenseActual, item.incomePlan, item.incomeActual]));
     const lineMaximum = Math.max(1, ...aggregates.flatMap((item) => [Math.abs(item.plannedNet), Math.abs(item.actualNet), Math.abs(item.plannedCumulative), Math.abs(item.actualCumulative)]));
     const width = aggregates.length * 100;
     const points = (field) => aggregates.map((item, index) => `${index * 100 + 50},${50 - (item[field] / lineMaximum) * 45}`).join(" ");
 
     viewHost.innerHTML = `<div class="view-stack">
+      <section class="card overview-hero" aria-label="プロジェクト終了時の累積収支">
+        <div><p class="section-kicker">PROJECT END</p><h2>プロジェクト終了時の累積収支</h2><p>${projectDateLabel(state.settings.startDate)}〜${projectDateLabel(state.settings.endDate)}の実績累積です。</p></div>
+        <div class="overview-hero-total"><strong class="${projectEndTone}">${formatSignedCurrency(projectEnd.actualCumulative)}</strong><span>計画累積 ${formatSignedCurrency(projectEnd.plannedCumulative)}</span></div>
+      </section>
       <div class="month-switcher"><label class="field-label" for="overview-period">注目する月</label><select id="overview-period">${monthOptions(currentPeriod)}</select></div>
       <section class="summary-grid">
         ${summaryCard("予定収入", selected.incomePlan, `実績 ${formatCurrency(selected.incomeActual)}`)}
@@ -943,7 +964,7 @@
         ${dataAction("戻", "JSONから復元", "完全バックアップを読み込んで全置換", "import-json")}
       </section>
       ${outsideTransactions.length ? `<section class="section"><div class="section-header"><div><p class="section-kicker">OUTSIDE PERIOD</p><h2>管理期間外の実績</h2></div><p class="section-description">${outsideTransactions.length}件</p></div><p class="help-text">期間を短くしたため集計対象外になった実績です。タップして日付を修正または削除できます。</p><div class="transaction-list">${outsideTransactions.sort((a, b) => b.date.localeCompare(a.date)).map(renderTransactionRow).join("")}</div></section>` : ""}
-      <section class="card"><div class="section-copy"><p class="section-kicker">RESET</p><h2>初期データへ戻す</h2><p>すべての設定・計画・実績を削除します。元に戻せません。</p></div><button type="button" class="button danger" data-action="reset-data">すべて初期化</button></section>
+      <section class="card"><div class="section-copy"><p class="section-kicker">RESET</p><h2>初期データへ戻す</h2><p>種別・月別計画・実績を削除し、空の状態に戻します。プロジェクト名と期間は残ります。</p></div><button type="button" class="button danger" data-action="reset-data">すべて初期化</button></section>
     </div>`;
   }
 
@@ -1546,16 +1567,7 @@
     else if (target.dataset.action === "load-project") await loadSelectedProject();
     else if (target.dataset.action === "set-default-project") await setCurrentProjectAsDefault();
     else if (target.dataset.action === "delete-project") await deleteCurrentProject();
-    else if (target.dataset.action === "reset-data") {
-      if (window.confirm("すべての設定・計画・実績を削除し、初期データへ戻しますか？")) {
-        state = await window.BudgetDB.resetProject(currentProject && currentProject.id);
-        syncCurrentProjectPeriod();
-        currentPeriod = currentPeriodForToday();
-        analysisPeriod = currentPeriod;
-        render();
-        showToast("初期データへ戻しました");
-      }
-    }
+    else if (target.dataset.action === "reset-data") openDialog(resetDialog);
   }
 
   async function handleViewChange(event) {
@@ -1670,6 +1682,11 @@
   memoDialog.addEventListener("cancel", (event) => {
     event.preventDefault();
     savePendingTransaction("").catch((error) => showToast(error.message));
+  });
+
+  document.querySelector("#reset-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    resetCurrentProject().catch((error) => showToast(error instanceof Error ? error.message : "初期化できませんでした"));
   });
 
   document.querySelector("#transaction-form").addEventListener("submit", async (event) => {
@@ -1871,7 +1888,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=14", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=15", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });

@@ -153,6 +153,12 @@ p { color: var(--muted); line-height: 1.55; }
 .summary-card .label { display: block; margin-bottom: 0.35rem; color: var(--muted); font-size: 0.72rem; font-weight: 700; }
 .summary-card strong { display: block; overflow: hidden; font-size: clamp(1.05rem, 5vw, 1.35rem); letter-spacing: -0.03em; text-overflow: ellipsis; white-space: nowrap; }
 .summary-card .subvalue { display: block; margin-top: 0.25rem; color: var(--muted); font-size: 0.7rem; }
+.overview-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; border-color: rgba(var(--primary-rgb), 0.24); background: linear-gradient(135deg, var(--primary-soft), var(--surface)); }
+.overview-hero h2, .overview-hero p { margin-bottom: 0; }
+.overview-hero-total { min-width: 0; text-align: right; }
+.overview-hero-total strong, .overview-hero-total span { display: block; }
+.overview-hero-total strong { overflow: hidden; font-size: clamp(1.45rem, 7vw, 2.15rem); letter-spacing: -0.05em; text-overflow: ellipsis; white-space: nowrap; }
+.overview-hero-total span { margin-top: 0.25rem; color: var(--muted); font-size: 0.7rem; font-weight: 700; }
 .positive { color: var(--success) !important; }
 .negative { color: var(--danger) !important; }
 .warning { color: var(--warning) !important; }
