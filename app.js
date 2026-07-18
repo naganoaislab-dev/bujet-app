@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.5";
+  const APP_VERSION = "0.5.8";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 500;
@@ -13,16 +13,16 @@
   const MAX_PLAN_SCALE_MAX = 1000000000;
   const MILLISECONDS_PER_DAY = 86400000;
   const THEME_PRESETS = Object.freeze([
-    { id: "forest", name: "フォレスト", primary: "#2f7554", strong: "#205c40", soft: "#dcebe1" },
-    { id: "ocean", name: "オーシャン", primary: "#2c7191", strong: "#1e5874", soft: "#daecf3" },
-    { id: "sapphire", name: "サファイア", primary: "#3f63c5", strong: "#2f4d9d", soft: "#e0e7fb" },
-    { id: "violet", name: "バイオレット", primary: "#7657a8", strong: "#59407f", soft: "#ebe3f6" },
-    { id: "plum", name: "プラム", primary: "#996080", strong: "#743f5e", soft: "#f4e1ea" },
-    { id: "rose", name: "ローズ", primary: "#b65672", strong: "#8c3b55", soft: "#f8e0e8" },
-    { id: "coral", name: "コーラル", primary: "#c76547", strong: "#9a4630", soft: "#fae3db" },
-    { id: "amber", name: "アンバー", primary: "#aa711e", strong: "#805316", soft: "#f8e9cc" },
-    { id: "olive", name: "オリーブ", primary: "#6a7d37", strong: "#506026", soft: "#e8eddb" },
-    { id: "slate", name: "スレート", primary: "#566d7e", strong: "#405362", soft: "#e0e9ed" }
+    { id: "forest", name: "フォレスト", primary: "#2f7554", strong: "#205c40", soft: "#dcebe1", page: "#f4f8f5", dark: "#101713" },
+    { id: "ocean", name: "オーシャン", primary: "#2c7191", strong: "#1e5874", soft: "#daecf3", page: "#f1f7f9", dark: "#10171a" },
+    { id: "sapphire", name: "サファイア", primary: "#3f63c5", strong: "#2f4d9d", soft: "#e0e7fb", page: "#f3f5fc", dark: "#111522" },
+    { id: "violet", name: "バイオレット", primary: "#7657a8", strong: "#59407f", soft: "#ebe3f6", page: "#f7f4fb", dark: "#18131f" },
+    { id: "plum", name: "プラム", primary: "#996080", strong: "#743f5e", soft: "#f4e1ea", page: "#faf5f7", dark: "#1d1218" },
+    { id: "rose", name: "ローズ", primary: "#b65672", strong: "#8c3b55", soft: "#f8e0e8", page: "#fdf4f6", dark: "#211217" },
+    { id: "coral", name: "コーラル", primary: "#c76547", strong: "#9a4630", soft: "#fae3db", page: "#fdf5f1", dark: "#21150f" },
+    { id: "amber", name: "アンバー", primary: "#aa711e", strong: "#805316", soft: "#f8e9cc", page: "#fdf9ee", dark: "#20180c" },
+    { id: "olive", name: "オリーブ", primary: "#6a7d37", strong: "#506026", soft: "#e8eddb", page: "#f7faef", dark: "#171c0d" },
+    { id: "slate", name: "スレート", primary: "#566d7e", strong: "#405362", soft: "#e0e9ed", page: "#f4f8fa", dark: "#12191d" }
   ]);
   const VIEW_TITLES = {
     entry: "支出入力",
@@ -95,11 +95,14 @@
     return THEME_PRESETS.find((preset) => preset.id === themeId) || THEME_PRESETS[0];
   }
 
-  function applyTheme() {
-    const preset = themePresetFor(state && state.settings && state.settings.themeId);
+  function applyThemePreset(preset) {
     document.documentElement.dataset.theme = preset.id;
-    if (themeColorLight) themeColorLight.content = preset.soft;
-    if (themeColorDark) themeColorDark.content = preset.strong;
+    if (themeColorLight) themeColorLight.content = preset.page;
+    if (themeColorDark) themeColorDark.content = preset.dark;
+  }
+
+  function applyTheme() {
+    applyThemePreset(themePresetFor(state && state.settings && state.settings.themeId));
   }
 
   function clamp(value, minimum, maximum) {
@@ -1596,7 +1599,7 @@
       if (suggestedEndDate) document.querySelector("#project-end-date").value = suggestedEndDate;
     } else if (event.target.name === "theme-id") {
       const selectedPreset = themePresetFor(event.target.value);
-      document.documentElement.dataset.theme = selectedPreset.id;
+      applyThemePreset(selectedPreset);
       document.querySelectorAll(".theme-preset").forEach((item) => item.classList.toggle("selected", item.contains(event.target)));
     }
   }
@@ -1888,7 +1891,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=15", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=18", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
