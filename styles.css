@@ -284,11 +284,13 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .plan-scale-panel p strong { margin-bottom: 0.12rem; color: var(--ink); font-size: 0.76rem; }
 .plan-scale-panel input { min-height: 2.75rem !important; padding: 0.45rem 0.6rem !important; }
 .monthly-plan-editor { display: grid; grid-auto-columns: 6.4rem; grid-auto-flow: column; gap: 0.55rem; padding: 0.4rem 0.15rem 0.8rem; overflow-x: auto; scroll-snap-type: x proximity; overscroll-behavior-inline: contain; }
+.monthly-plan-editor.is-pointer-scrolling { scroll-snap-type: none; }
 .month-plan-column { display: grid; grid-template-rows: auto 14rem auto; grid-template-rows: auto clamp(14rem, 42dvh, 18rem) auto; gap: 0.55rem; padding: 0.65rem 0.5rem; border: 1px solid var(--line); border-radius: 0.85rem; background: var(--surface); scroll-snap-align: start; }
 .month-plan-column.current { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-soft); }
 .month-plan-label { color: var(--muted); font-size: 0.64rem; font-weight: 750; text-align: center; }
-.month-plan-bar-area { position: relative; display: flex; align-items: end; justify-content: center; padding: 0 1.15rem; border: 1px solid transparent; border-radius: 0.65rem; background: var(--surface-2); cursor: ns-resize; touch-action: pan-x; -webkit-user-select: none; user-select: none; }
+.month-plan-bar-area { position: relative; display: flex; align-items: end; justify-content: center; padding: 0 1.15rem; border: 1px solid transparent; border-radius: 0.65rem; background: var(--surface-2); cursor: ns-resize; touch-action: none; -webkit-user-select: none; user-select: none; }
 .month-plan-bar-area:focus-visible { border-color: var(--primary); outline: 3px solid var(--primary-soft); outline-offset: 2px; }
+.month-plan-bar-area.is-pointer-active { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
 .month-plan-bar-area.is-dragging { cursor: grabbing; }
 .month-plan-bar { position: relative; width: 100%; min-height: 2px; height: var(--bar-height); border-radius: 0.35rem 0.35rem 0 0; background: var(--category-color); transition: height 100ms ease; pointer-events: none; }
 .month-plan-bar::before { position: absolute; top: -0.22rem; left: 50%; width: calc(100% + 0.65rem); height: 0.42rem; border: 2px solid var(--surface); border-radius: 99px; background: var(--category-color); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); content: ""; transform: translateX(-50%); }

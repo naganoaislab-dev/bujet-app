@@ -4,6 +4,11 @@
   const APP_NAME = "Budget Minus";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
+  const PLAN_BAR_MEDIUM_STEP = 500;
+  const PLAN_BAR_LARGE_STEP = 1000;
+  const PLAN_BAR_MEDIUM_SCALE = 10000;
+  const PLAN_BAR_LARGE_SCALE = 100000;
+  const PLAN_DIRECTION_BIAS = 1.2;
   const DEFAULT_PLAN_SCALE_MAX = 100000;
   const MAX_PLAN_SCALE_MAX = 1000000000;
   const PLAN_DRAG_THRESHOLD = 7;
@@ -73,8 +78,13 @@
     return Number.isFinite(number) ? Math.round(number) : fallback;
   }
 
+  function roundAmountToStep(value, step) {
+    const normalizedStep = Math.max(1, toInteger(step, 1));
+    return Math.max(0, Math.round(toInteger(value) / normalizedStep) * normalizedStep);
+  }
+
   function roundPlanAmount(value) {
-    return Math.max(0, Math.round(toInteger(value) / PLAN_AMOUNT_STEP) * PLAN_AMOUNT_STEP);
+    return roundAmountToStep(value, PLAN_AMOUNT_STEP);
   }
 
   function normalizePlanScaleMax(value) {
@@ -86,6 +96,13 @@
   function planBarHeight(amount, scaleMaximum = planScaleDraft) {
     if (amount <= 0) return 0;
     return clamp((amount / Math.max(PLAN_AMOUNT_STEP, scaleMaximum)) * 100, 0, 100);
+  }
+
+  function planBarStep(scaleMaximum = planScaleDraft) {
+    const normalizedScale = normalizePlanScaleMax(scaleMaximum);
+    if (normalizedScale > PLAN_BAR_LARGE_SCALE) return PLAN_BAR_LARGE_STEP;
+    if (normalizedScale >= PLAN_BAR_MEDIUM_SCALE) return PLAN_BAR_MEDIUM_STEP;
+    return PLAN_AMOUNT_STEP;
   }
 
   function pad(value) {
@@ -881,7 +898,7 @@
       const valueText = `${formatCurrency(amount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`;
       return `<article class="month-plan-column ${month === currentPeriod ? "current" : ""} ${overScale ? "over-scale" : ""}" data-plan-column="${month}" style="--category-color:${escapeHtml(category.color)}">
         <span class="month-plan-label">${monthLabel(month, false)}<br>${monthParts(month).year}</span>
-        <div class="month-plan-bar-area" data-plan-slider="${month}" role="slider" tabindex="0" aria-label="${monthLabel(month)}の計画金額" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="${planScaleDraft}" aria-valuenow="${sliderValue}" aria-valuetext="${escapeHtml(valueText)}">
+        <div class="month-plan-bar-area" data-plan-slider="${month}" role="slider" tabindex="0" aria-label="${monthLabel(month)}の計画金額" aria-describedby="plan-scale-step" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="${planScaleDraft}" aria-valuenow="${sliderValue}" aria-valuetext="${escapeHtml(valueText)}">
           <span class="month-plan-overflow"${overScale ? "" : " hidden"}>上限超過</span>
           <span class="month-plan-bar" style="--bar-height:${height}%"></span>
         </div>
@@ -892,6 +909,7 @@
 
   function updatePlanScaleSummary() {
     document.querySelector("#plan-scale-summary").textContent = `上端 ${formatCurrency(planScaleDraft)}`;
+    document.querySelector("#plan-scale-step").textContent = `棒は${formatCurrency(planBarStep())}刻み`;
   }
 
   function updatePlanColumn(month, amount, syncInput = true) {
@@ -923,7 +941,10 @@
     const bounds = barArea.getBoundingClientRect();
     if (!bounds.height) return 0;
     const ratio = clamp((bounds.bottom - clientY) / bounds.height, 0, 1);
-    return clamp(roundPlanAmount(ratio * planScaleDraft), 0, planScaleDraft);
+    const step = planBarStep();
+    const rawAmount = ratio * planScaleDraft;
+    if (rawAmount >= planScaleDraft - (step / 2)) return planScaleDraft;
+    return clamp(roundAmountToStep(rawAmount, step), 0, planScaleDraft);
   }
 
   function setPlanAmountFromPointer(barArea, clientY) {
@@ -936,8 +957,14 @@
     catch (error) { console.debug("Pointer capture unavailable", error); }
   }
 
+  function focusPlanBar(barArea) {
+    try { barArea.focus({ preventScroll: true }); }
+    catch (error) { barArea.focus(); }
+  }
+
   function releasePlanPointer(gesture) {
-    gesture.barArea.classList.remove("is-dragging");
+    gesture.barArea.classList.remove("is-dragging", "is-pointer-active");
+    monthlyPlanEditor.classList.remove("is-pointer-scrolling");
     if (typeof gesture.barArea.hasPointerCapture !== "function" || typeof gesture.barArea.releasePointerCapture !== "function") return;
     try {
       if (gesture.barArea.hasPointerCapture(gesture.pointerId)) gesture.barArea.releasePointerCapture(gesture.pointerId);
@@ -949,9 +976,8 @@
   function finishPlanPointer(event, cancelled = false) {
     const gesture = planPointerGesture;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
-    if (cancelled) {
-      if (gesture.mode === "vertical") updatePlanColumn(gesture.month, gesture.originalAmount);
-    } else if (gesture.mode === "vertical" || gesture.mode === "pending") {
+    const movedDistance = Math.max(Math.abs(event.clientX - gesture.startX), Math.abs(event.clientY - gesture.startY));
+    if (!cancelled && (gesture.mode === "vertical" || (gesture.mode === "pending" && movedDistance < PLAN_DRAG_THRESHOLD))) {
       event.preventDefault();
       setPlanAmountFromPointer(gesture.barArea, event.clientY);
     }
@@ -1395,7 +1421,7 @@
   monthlyPlanEditor.addEventListener("focusout", commitPlanInput);
   monthlyPlanEditor.addEventListener("pointerdown", (event) => {
     const barArea = event.target.closest(".month-plan-bar-area");
-    if (!barArea || planPointerGesture || (event.pointerType === "mouse" && event.button !== 0)) return;
+    if (!barArea || planPointerGesture || event.isPrimary === false || (event.pointerType === "mouse" && event.button !== 0)) return;
     const month = barArea.dataset.planSlider;
     planPointerGesture = {
       pointerId: event.pointerId,
@@ -1404,40 +1430,43 @@
       month,
       startX: event.clientX,
       startY: event.clientY,
-      originalAmount: Math.max(0, toInteger(planDraft[month])),
+      startScrollLeft: monthlyPlanEditor.scrollLeft,
       mode: "pending"
     };
-    if (event.pointerType === "mouse") {
-      event.preventDefault();
-      capturePlanPointer(barArea, event.pointerId);
-    }
+    event.preventDefault();
+    barArea.classList.add("is-pointer-active");
+    focusPlanBar(barArea);
+    capturePlanPointer(barArea, event.pointerId);
   });
   monthlyPlanEditor.addEventListener("pointermove", (event) => {
     const gesture = planPointerGesture;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
+    event.preventDefault();
     if (gesture.mode === "pending") {
       const deltaX = Math.abs(event.clientX - gesture.startX);
       const deltaY = Math.abs(event.clientY - gesture.startY);
       if (Math.max(deltaX, deltaY) < PLAN_DRAG_THRESHOLD) return;
-      if (deltaY < deltaX) {
+      if (deltaX > deltaY * PLAN_DIRECTION_BIAS) {
         gesture.mode = "horizontal";
-        return;
-      }
-      gesture.mode = "vertical";
-      gesture.barArea.classList.add("is-dragging");
-      capturePlanPointer(gesture.barArea, gesture.pointerId);
+        monthlyPlanEditor.classList.add("is-pointer-scrolling");
+      } else if (deltaY > deltaX * PLAN_DIRECTION_BIAS) {
+        gesture.mode = "vertical";
+        gesture.barArea.classList.add("is-dragging");
+      } else return;
     }
-    if (gesture.mode !== "vertical") return;
-    event.preventDefault();
-    setPlanAmountFromPointer(gesture.barArea, event.clientY);
+    if (gesture.mode === "horizontal") {
+      monthlyPlanEditor.scrollLeft = gesture.startScrollLeft - (event.clientX - gesture.startX);
+    } else if (gesture.mode === "vertical") {
+      setPlanAmountFromPointer(gesture.barArea, event.clientY);
+    }
   });
   monthlyPlanEditor.addEventListener("pointerup", (event) => finishPlanPointer(event));
   monthlyPlanEditor.addEventListener("pointercancel", (event) => finishPlanPointer(event, true));
   monthlyPlanEditor.addEventListener("lostpointercapture", (event) => {
     const gesture = planPointerGesture;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
-    if (gesture.mode === "vertical") updatePlanColumn(gesture.month, gesture.originalAmount);
-    gesture.barArea.classList.remove("is-dragging");
+    gesture.barArea.classList.remove("is-dragging", "is-pointer-active");
+    monthlyPlanEditor.classList.remove("is-pointer-scrolling");
     planPointerGesture = null;
   });
   monthlyPlanEditor.addEventListener("keydown", (event) => {
@@ -1445,17 +1474,19 @@
     if (!barArea) return;
     const month = barArea.dataset.planSlider;
     const currentAmount = Math.max(0, toInteger(planDraft[month]));
-    const pageStep = Math.max(PLAN_AMOUNT_STEP, roundPlanAmount(planScaleDraft / 10));
+    const barStep = planBarStep();
+    const pageStep = Math.max(barStep, roundAmountToStep(planScaleDraft / 10, barStep));
     let nextAmount;
-    if (event.key === "ArrowUp" || event.key === "ArrowRight") nextAmount = currentAmount + PLAN_AMOUNT_STEP;
-    else if (event.key === "ArrowDown" || event.key === "ArrowLeft") nextAmount = currentAmount - PLAN_AMOUNT_STEP;
+    if (event.key === "ArrowUp" || event.key === "ArrowRight") nextAmount = currentAmount + barStep;
+    else if (event.key === "ArrowDown" || event.key === "ArrowLeft") nextAmount = currentAmount - barStep;
     else if (event.key === "PageUp") nextAmount = currentAmount + pageStep;
     else if (event.key === "PageDown") nextAmount = currentAmount - pageStep;
     else if (event.key === "Home") nextAmount = 0;
     else if (event.key === "End") nextAmount = planScaleDraft;
     else return;
     event.preventDefault();
-    updatePlanColumn(month, clamp(roundPlanAmount(nextAmount), 0, MAX_PLAN_SCALE_MAX));
+    const maximum = currentAmount > planScaleDraft ? MAX_PLAN_SCALE_MAX : planScaleDraft;
+    updatePlanColumn(month, clamp(roundPlanAmount(nextAmount), 0, maximum));
   });
   document.querySelector("#plan-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1497,7 +1528,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=6", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=7", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
