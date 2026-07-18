@@ -106,7 +106,7 @@
     const now = new Date().toISOString();
     return {
       id: String(options.id || LEGACY_STATE_ID),
-      schemaVersion: 5,
+      schemaVersion: 6,
       settings: {
         closingDay: Math.min(31, Math.max(1, Math.round(Number(options.closingDay) || 31))),
         startDate,
@@ -134,11 +134,11 @@
     };
     const now = new Date().toISOString();
     state.transactions = [
-      { id: "sample-income-salary", direction: "income", categoryId: "income-salary", date: sampleDate(7), amount: 280000, memo: "サンプル給与", createdAt: now, updatedAt: now },
-      { id: "sample-food-1", direction: "expense", categoryId: "expense-food", date: sampleDate(3), amount: 2480, memo: "食材", createdAt: now, updatedAt: now },
-      { id: "sample-daily-1", direction: "expense", categoryId: "expense-daily", date: sampleDate(2), amount: 1280, memo: "日用品", createdAt: now, updatedAt: now },
-      { id: "sample-transport-1", direction: "expense", categoryId: "expense-transport", date: sampleDate(1), amount: 680, memo: "交通費", createdAt: now, updatedAt: now },
-      { id: "sample-rent-1", direction: "expense", categoryId: "expense-rent", date: sampleDate(6), amount: 80000, memo: "家賃", createdAt: now, updatedAt: now }
+      { id: "sample-income-salary", direction: "income", categoryId: "income-salary", date: sampleDate(7), enteredOn: sampleDate(7), amount: 280000, memo: "サンプル給与", createdAt: now, updatedAt: now },
+      { id: "sample-food-1", direction: "expense", categoryId: "expense-food", date: sampleDate(3), enteredOn: sampleDate(3), amount: 2480, memo: "食材", createdAt: now, updatedAt: now },
+      { id: "sample-daily-1", direction: "expense", categoryId: "expense-daily", date: sampleDate(2), enteredOn: sampleDate(2), amount: 1280, memo: "日用品", createdAt: now, updatedAt: now },
+      { id: "sample-transport-1", direction: "expense", categoryId: "expense-transport", date: sampleDate(1), enteredOn: sampleDate(1), amount: 680, memo: "交通費", createdAt: now, updatedAt: now },
+      { id: "sample-rent-1", direction: "expense", categoryId: "expense-rent", date: sampleDate(6), enteredOn: sampleDate(6), amount: 80000, memo: "家賃", createdAt: now, updatedAt: now }
     ];
     return state;
   }
@@ -156,7 +156,7 @@
       ...fallback,
       ...value,
       id: normalizedId,
-      schemaVersion: 5,
+      schemaVersion: 6,
       settings: { ...fallback.settings, ...(value.settings || {}) },
       categories: Array.isArray(value.categories) ? value.categories : fallback.categories,
       plans: value.plans && typeof value.plans === "object" ? value.plans : fallback.plans,
@@ -191,16 +191,25 @@
       }
       if (!state.plans[category.id]) state.plans[category.id] = {};
     });
-    state.transactions = state.transactions.filter((transaction) => transaction && typeof transaction === "object").map((transaction, index) => ({
-      id: String(transaction.id || `transaction-${index}`),
-      direction: transaction.direction === "income" ? "income" : "expense",
-      categoryId: String(transaction.categoryId || ""),
-      date: validDateKey(transaction.date) ? transaction.date : dateKey(new Date()),
-      amount: Math.max(1, Math.round(Number(transaction.amount) || 1)),
-      memo: String(transaction.memo || "").slice(0, 500),
-      createdAt: transaction.createdAt || new Date().toISOString(),
-      updatedAt: transaction.updatedAt || new Date().toISOString()
-    }));
+    state.transactions = state.transactions.filter((transaction) => transaction && typeof transaction === "object").map((transaction, index) => {
+      const date = validDateKey(transaction.date) ? transaction.date : dateKey(new Date());
+      const createdAt = transaction.createdAt || new Date().toISOString();
+      const createdDate = new Date(createdAt);
+      const enteredOn = validDateKey(transaction.enteredOn)
+        ? transaction.enteredOn
+        : (Number.isNaN(createdDate.getTime()) ? date : dateKey(createdDate));
+      return {
+        id: String(transaction.id || `transaction-${index}`),
+        direction: transaction.direction === "income" ? "income" : "expense",
+        categoryId: String(transaction.categoryId || ""),
+        date,
+        enteredOn,
+        amount: Math.max(1, Math.round(Number(transaction.amount) || 1)),
+        memo: String(transaction.memo || "").slice(0, 500),
+        createdAt,
+        updatedAt: transaction.updatedAt || new Date().toISOString()
+      };
+    });
     return state;
   }
 
@@ -376,6 +385,39 @@
     return { workspace: nextWorkspace, projects };
   }
 
+  async function renameProject(projectId, nameInput) {
+    const { workspace, projects } = await ensureWorkspace();
+    const id = String(projectId || "");
+    const project = projects.find((item) => item.id === id);
+    const name = String(nameInput || "").trim().slice(0, 40);
+    if (!project) throw new Error("選択したプロジェクトが見つかりません。");
+    if (project.isSample) throw new Error("サンプルプロジェクトの名前は変更できません。");
+    if (!name) throw new Error("プロジェクト名を入力してください。");
+    const renamed = { ...project, name, updatedAt: new Date().toISOString() };
+    await requestFromStore(PROJECT_STORE, "readwrite", (store) => store.put(renamed));
+    return { workspace, projects: sortProjects(projects.map((item) => item.id === id ? renamed : item)), project: renamed };
+  }
+
+  async function deleteProject(projectId) {
+    const { workspace, projects } = await ensureWorkspace();
+    const id = String(projectId || "");
+    const project = projects.find((item) => item.id === id);
+    if (!project) throw new Error("選択したプロジェクトが見つかりません。");
+    if (project.isSample) throw new Error("サンプルプロジェクトは削除できません。");
+    const remaining = projects.filter((item) => item.id !== id);
+    if (!remaining.length) throw new Error("最後のプロジェクトは削除できません。");
+    const fallback = remaining.find((item) => !item.isSample) || remaining[0];
+    const nextDefaultProjectId = workspace.defaultProjectId === id ? fallback.id : workspace.defaultProjectId;
+    const activeProjectId = remaining.some((item) => item.id === nextDefaultProjectId) ? nextDefaultProjectId : fallback.id;
+    const nextWorkspace = { ...workspace, defaultProjectId: activeProjectId, updatedAt: new Date().toISOString() };
+    await requestFromStores([STATE_STORE, PROJECT_STORE, META_STORE], "readwrite", (stores) => {
+      stores[STATE_STORE].delete(project.stateId);
+      stores[PROJECT_STORE].delete(project.id);
+      stores[META_STORE].put(nextWorkspace);
+    });
+    return { workspace: nextWorkspace, projects: sortProjects(remaining), activeProjectId };
+  }
+
   async function saveState(state, projectId) {
     const { workspace, projects } = await ensureWorkspace();
     const id = String(projectId || workspace.defaultProjectId);
@@ -411,6 +453,8 @@
     loadProject,
     createProject,
     setDefaultProject,
+    renameProject,
+    deleteProject,
     saveState,
     resetProject,
     async getState(projectId) {

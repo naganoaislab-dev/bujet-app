@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.2";
+  const APP_VERSION = "0.5.3";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 500;
@@ -334,10 +334,14 @@
     const range = periodRange(month);
     const stats = categoryBudgetStats(category.id, month);
     const daysRemaining = inclusiveDaysBetween(today, range.end);
+    const spentToday = transactionsForMonth(month)
+      .filter((transaction) => transaction.categoryId === category.id && transaction.enteredOn === today)
+      .reduce((sum, transaction) => sum + toInteger(transaction.amount), 0);
+    const dailyStartingBudget = Math.floor((stats.monthlyRemaining + spentToday) / daysRemaining);
     return {
       ...stats,
       daysRemaining,
-      dailyRemaining: Math.floor(stats.monthlyRemaining / daysRemaining),
+      dailyRemaining: dailyStartingBudget - spentToday,
       dailyLabel: "今日の残り予算",
       daysLabel: `締日まで残り${daysRemaining}日`
     };
@@ -456,10 +460,31 @@
     const startDate = document.querySelector("#project-start-date").value;
     const endDate = document.querySelector("#project-end-date").value;
     const created = await window.BudgetDB.createProject({ name, startDate, endDate });
-    applyLoadedProject(created);
+    applyLoadedProject(await window.BudgetDB.loadProject(created.project.id));
     settingsPane = "projects";
     render();
     showToast(`${currentProject.name}を作成して読み込みました`);
+  }
+
+  async function renameCurrentProject() {
+    if (!currentProject || currentProject.isSample) return;
+    const name = document.querySelector("#project-current-name").value;
+    const result = await window.BudgetDB.renameProject(currentProject.id, name);
+    currentProject = result.project;
+    projects = result.projects;
+    render();
+    showToast("プロジェクト名を変更しました");
+  }
+
+  async function deleteCurrentProject() {
+    if (!currentProject || currentProject.isSample) return;
+    const project = currentProject;
+    if (!window.confirm(`「${project.name}」と、その計画・実績をすべて削除します。元に戻せません。削除しますか？`)) return;
+    const result = await window.BudgetDB.deleteProject(project.id);
+    applyLoadedProject(await window.BudgetDB.loadProject(result.activeProjectId));
+    settingsPane = "projects";
+    render();
+    showToast(`${project.name}を削除しました`);
   }
 
   async function persist(message = "保存しました") {
@@ -808,6 +833,7 @@
       return `<option value="${escapeHtml(item.id)}"${item.id === project.id ? " selected" : ""}>${escapeHtml(label)}</option>`;
     }).join("");
     const isDefault = project.id === defaultProjectId;
+    const isSample = project.isSample === true;
     return `<div class="view-stack">
       <section class="card project-current-card">
         <div class="section-copy"><p class="section-kicker">CURRENT PROJECT</p><h2>${escapeHtml(project.name)}${project.isSample ? "（サンプル）" : ""}</h2><p>${projectDateLabel(project.startDate)}〜${projectDateLabel(project.endDate)}・${project.closingDay}日締め</p></div>
@@ -818,6 +844,15 @@
         </div>
         <p class="help-text">既定にすると、次回アプリを開いたときにこのプロジェクトを自動で読み込みます。</p>
       </section>
+      ${isSample ? `<section class="card"><p class="help-text">サンプルプロジェクトはいつでも操作を試せるよう、名前の変更と削除はできません。</p></section>` : `<form id="project-rename-form" class="card settings-form">
+        <div class="section-copy"><p class="section-kicker">PROJECT NAME</p><h2>プロジェクト名を変更</h2></div>
+        <label><span class="field-label">プロジェクト名</span><input id="project-current-name" type="text" maxlength="40" value="${escapeHtml(project.name)}" required></label>
+        <div class="dialog-actions">
+          <button type="submit" class="button primary">名前を保存</button>
+          <button type="button" class="button danger" data-action="delete-project">このプロジェクトを削除</button>
+        </div>
+        <p class="help-text">削除すると、このプロジェクトの計画・実績も端末から削除されます。</p>
+      </form>`}
       <form id="project-create-form" class="card settings-form">
         <div class="section-copy"><p class="section-kicker">NEW PROJECT</p><h2>新しいプロジェクトを作成</h2><p>現在のプロジェクトとは別に、将来の家計簿期間をあらかじめ作成できます。</p></div>
         <label><span class="field-label">プロジェクト名</span><input id="project-name-input" type="text" maxlength="40" placeholder="例：2026年度の家計簿" required></label>
@@ -967,6 +1002,7 @@
       direction: calculatorContext.direction,
       categoryId: calculatorContext.categoryId,
       date: periodMonths().includes(periodForDate(localDateKey())) && currentPeriod === periodForDate(localDateKey()) ? localDateKey() : periodRange(currentPeriod).end,
+      enteredOn: localDateKey(),
       amount,
       memo: "",
       createdAt: new Date().toISOString(),
@@ -1474,6 +1510,7 @@
     else if (target.dataset.action === "import-json") { importFile.dataset.importType = "json"; importFile.accept = "application/json,.json"; importFile.value = ""; importFile.click(); }
     else if (target.dataset.action === "load-project") await loadSelectedProject();
     else if (target.dataset.action === "set-default-project") await setCurrentProjectAsDefault();
+    else if (target.dataset.action === "delete-project") await deleteCurrentProject();
     else if (target.dataset.action === "reset-data") {
       if (window.confirm("すべての設定・計画・実績を削除し、初期データへ戻しますか？")) {
         state = await window.BudgetDB.resetProject(currentProject && currentProject.id);
@@ -1514,6 +1551,11 @@
   }
 
   async function handleViewSubmit(event) {
+    if (event.target.id === "project-rename-form") {
+      event.preventDefault();
+      await renameCurrentProject();
+      return;
+    }
     if (event.target.id === "project-create-form") {
       event.preventDefault();
       await createAndLoadProject();
@@ -1788,7 +1830,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=12", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=13", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
