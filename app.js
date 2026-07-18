@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.1";
+  const APP_VERSION = "0.5.2";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 500;
@@ -55,6 +55,7 @@
   let toastTimer = null;
   let calculatorContext = null;
   let calculator = createCalculatorState();
+  let lastRenderedDate = "";
 
   const currencyFormatter = new Intl.NumberFormat("ja-JP", {
     style: "currency",
@@ -332,16 +333,13 @@
     const today = localDateKey();
     const range = periodRange(month);
     const stats = categoryBudgetStats(category.id, month);
-    const isCurrentPeriod = today >= range.start && today <= range.end && periodForDate(today) === month;
-    const isFuturePeriod = today < range.start;
-    const calculationStart = isCurrentPeriod ? today : range.start;
-    const daysRemaining = inclusiveDaysBetween(calculationStart, range.end);
+    const daysRemaining = inclusiveDaysBetween(today, range.end);
     return {
       ...stats,
       daysRemaining,
       dailyRemaining: Math.floor(stats.monthlyRemaining / daysRemaining),
-      dailyLabel: isCurrentPeriod ? "今日の残り予算" : isFuturePeriod ? "1日あたりの予算" : "1日あたりの予算差",
-      daysLabel: isCurrentPeriod ? `締日まで残り${daysRemaining}日` : isFuturePeriod ? `期間全${daysRemaining}日で配分` : `期間全${daysRemaining}日で比較`
+      dailyLabel: "今日の残り予算",
+      daysLabel: `締日まで残り${daysRemaining}日`
     };
   }
 
@@ -471,6 +469,7 @@
   }
 
   function render() {
+    lastRenderedDate = localDateKey();
     screenTitle.textContent = VIEW_TITLES[currentView];
     if (activeProjectName) activeProjectName.textContent = currentProject ? currentProject.name : "プロジェクトを読み込み中";
     document.querySelectorAll(".nav-button").forEach((button) => {
@@ -985,6 +984,7 @@
       showToast(error instanceof Error ? error.message : "記録を保存できませんでした");
       return;
     }
+    render();
     document.querySelector("#memo-summary").textContent = `${category.name}・${formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
     document.querySelector("#memo-input").value = "";
     openDialog(memoDialog);
@@ -1767,6 +1767,15 @@
 
   window.addEventListener("online", updateNetworkStatus);
   window.addEventListener("offline", updateNetworkStatus);
+  window.addEventListener("focus", refreshForCurrentDeviceDate);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshForCurrentDeviceDate();
+  });
+
+  function refreshForCurrentDeviceDate() {
+    if (!state || localDateKey() === lastRenderedDate) return;
+    render();
+  }
 
   async function initialize() {
     try {
@@ -1779,7 +1788,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=11", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=12", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
