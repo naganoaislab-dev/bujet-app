@@ -3,16 +3,15 @@
 const SCOPE_KEY = new URL(self.registration.scope).pathname.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "root";
 const LEGACY_SCOPED_CACHE_PATTERN = new RegExp(`^budget-minus-${SCOPE_KEY}-v\\d+$`);
 const CACHE_PREFIX = `budget-minus-${SCOPE_KEY}--`;
-const CACHE_VERSION = `${CACHE_PREFIX}v7`;
-const LEGACY_CACHE_NAMES = new Set(["my-local-app-v1"]);
+const CACHE_VERSION = `${CACHE_PREFIX}v8`;
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=7",
-  "./app.js?v=7",
-  "./db.js?v=7",
-  "./manifest.webmanifest?v=7",
-  "./icons/icon.svg?v=7"
+  "./styles.css?v=8",
+  "./app.js?v=8",
+  "./db.js?v=8",
+  "./manifest.webmanifest?v=8",
+  "./icons/icon.svg?v=8"
 ];
 
 function scopedUrl(path) {
@@ -31,7 +30,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) => Promise.all(keys
-        .filter((key) => key !== CACHE_VERSION && (key.startsWith(CACHE_PREFIX) || LEGACY_SCOPED_CACHE_PATTERN.test(key) || LEGACY_CACHE_NAMES.has(key)))
+        .filter((key) => key !== CACHE_VERSION && (key.startsWith(CACHE_PREFIX) || LEGACY_SCOPED_CACHE_PATTERN.test(key)))
         .map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );

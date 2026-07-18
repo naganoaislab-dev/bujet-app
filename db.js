@@ -74,7 +74,11 @@
       { id: "income-salary", name: "給与", group: "income", color: "#2b8a63", order: 90, active: true, defaultAmount: 280000 },
       { id: "income-bonus", name: "賞与", group: "income", color: "#398b8c", order: 100, active: true, defaultAmount: 0 },
       { id: "income-other", name: "その他収入", group: "income", color: "#5a80b7", order: 110, active: true, defaultAmount: 0 }
-    ].map((category) => ({ ...category, planScaleMax: DEFAULT_PLAN_SCALE_MAX }));
+    ].map((category) => ({
+      ...category,
+      planScaleMax: DEFAULT_PLAN_SCALE_MAX,
+      dailyBudgetEnabled: category.id === "expense-food"
+    }));
 
     const plans = {};
     categories.forEach((category) => {
@@ -86,7 +90,7 @@
 
     return {
       id: STATE_ID,
-      schemaVersion: 3,
+      schemaVersion: 4,
       settings: {
         closingDay: 31,
         startDate,
@@ -108,7 +112,7 @@
       ...fallback,
       ...value,
       id: STATE_ID,
-      schemaVersion: 3,
+      schemaVersion: 4,
       settings: { ...fallback.settings, ...(value.settings || {}) },
       categories: Array.isArray(value.categories) ? value.categories : fallback.categories,
       plans: value.plans && typeof value.plans === "object" ? value.plans : fallback.plans,
@@ -127,6 +131,11 @@
       category.active = category.active !== false;
       category.defaultAmount = Math.max(0, Math.round(Number(category.defaultAmount) || 0));
       category.planScaleMax = normalizePlanScaleMax(category.planScaleMax);
+      category.dailyBudgetEnabled = category.group !== "income" && (
+        typeof category.dailyBudgetEnabled === "boolean"
+          ? category.dailyBudgetEnabled
+          : category.id === "expense-food"
+      );
       if (category.planRule && typeof category.planRule === "object") {
         category.planRule = {
           startMonth: /^\d{4}-\d{2}$/.test(category.planRule.startMonth) ? category.planRule.startMonth : monthKey(new Date()),
