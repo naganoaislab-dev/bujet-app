@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=4">
-  <link rel="icon" href="icons/icon.svg?v=4" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=4">
-  <link rel="stylesheet" href="styles.css?v=4">
-  <script src="db.js?v=4" defer></script>
-  <script src="app.js?v=4" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=6">
+  <link rel="icon" href="icons/icon.svg?v=6" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=6">
+  <link rel="stylesheet" href="styles.css?v=6">
+  <script src="db.js?v=6" defer></script>
+  <script src="app.js?v=6" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -171,13 +171,20 @@
         <div class="form-grid plan-controls">
           <label><span class="field-label">基準月</span><select id="plan-start-month"></select></label>
           <label><span class="field-label">何ヶ月ごと</span><input id="plan-interval" type="number" min="1" max="36" step="1" inputmode="numeric" value="1"></label>
-          <label><span class="field-label">金額</span><input id="plan-bulk-amount" type="number" min="0" step="100" inputmode="numeric" value="0"></label>
+          <label><span class="field-label">金額</span><input id="plan-bulk-amount" type="number" min="0" step="any" inputmode="numeric" value="0"></label>
           <button id="apply-plan-pattern" type="button" class="button secondary">全期間へ反映</button>
         </div>
       </section>
       <div class="plan-editor-head">
-        <div><h3>月ごとの計画</h3><p>棒または金額欄をタップして編集</p></div>
+        <div><h3>月ごとの計画</h3><p>棒を上下にドラッグして概算、金額欄で正確に入力できます。</p></div>
         <button id="copy-previous-plan" type="button" class="text-button">前月をコピー</button>
+      </div>
+      <div class="plan-scale-panel">
+        <label for="plan-scale-max">
+          <span class="field-label">棒の上限額</span>
+          <input id="plan-scale-max" type="number" min="100" max="1000000000" step="any" inputmode="numeric" value="100000">
+        </label>
+        <p><strong id="plan-scale-summary">上端 ￥100,000</strong><span>項目ごとに保存・100円単位。上限を超える月の金額は保持されます。</span></p>
       </div>
       <div id="monthly-plan-editor" class="monthly-plan-editor" aria-label="月ごとの計画金額"></div>
       <div class="dialog-actions sticky-dialog-actions">
