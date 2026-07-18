@@ -74,10 +74,15 @@
     return { startDate: dateKey(start), endDate: dateKey(end) };
   }
 
-  function createDefaultState(options = {}) {
+  function stateRange(options = {}) {
     const range = defaultRange(options.startDate);
     const startDate = range.startDate;
     const endDate = validDateKey(options.endDate) && options.endDate >= startDate ? options.endDate : range.endDate;
+    return { startDate, endDate };
+  }
+
+  function createDefaultState(options = {}) {
+    const { startDate, endDate } = stateRange(options);
     const months = monthsBetween(startDate, endDate);
     const categories = [
       { id: "expense-food", name: "食費", group: "variable", color: "#e4773d", order: 10, active: true, defaultAmount: 45000 },
@@ -118,6 +123,27 @@
       },
       categories,
       plans,
+      transactions: [],
+      createdAt: now,
+      updatedAt: now
+    };
+  }
+
+  function createEmptyState(options = {}) {
+    const { startDate, endDate } = stateRange(options);
+    const now = new Date().toISOString();
+    return {
+      id: String(options.id || LEGACY_STATE_ID),
+      schemaVersion: 6,
+      settings: {
+        closingDay: Math.min(31, Math.max(1, Math.round(Number(options.closingDay) || 31))),
+        startDate,
+        endDate,
+        currency: "JPY",
+        themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID
+      },
+      categories: [],
+      plans: {},
       transactions: [],
       createdAt: now,
       updatedAt: now
@@ -349,7 +375,7 @@
     const storedState = await getRecord(STATE_STORE, project.stateId);
     const state = storedState
       ? normalizeState(storedState, project.stateId)
-      : (project.isSample ? createSampleState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay }) : createDefaultState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay }));
+      : (project.isSample ? createSampleState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay }) : createEmptyState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay }));
     if (!storedState) await requestFromStore(STATE_STORE, "readwrite", (store) => store.put(state));
     return { workspace, projects: sortProjects(projectList), project, state };
   }
@@ -373,7 +399,7 @@
     if (monthCount(startDate, endDate) > 120) throw new Error("管理期間は最大120ヶ月にしてください。");
     const { workspace, projects } = await ensureWorkspace();
     const id = makeProjectId();
-    const state = createDefaultState({ id, startDate, endDate });
+    const state = createEmptyState({ id, startDate, endDate });
     const project = normalizeProject({ id, stateId: id, name, isSample: false }, state, id);
     await requestFromStores([STATE_STORE, PROJECT_STORE], "readwrite", (stores) => {
       stores[STATE_STORE].put(state);
@@ -445,7 +471,7 @@
     if (!project) throw new Error("初期化するプロジェクトが見つかりません。");
     const state = project.isSample
       ? createSampleState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay })
-      : createDefaultState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay });
+      : createEmptyState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay });
     return saveState(state, project.id);
   }
 
@@ -469,6 +495,7 @@
       return resetProject(projectId);
     },
     createDefaultState,
+    createEmptyState,
     createSampleState,
     monthsBetween
   };
