@@ -2,9 +2,13 @@
   "use strict";
 
   const DB_NAME = "my-local-app";
-  const DB_VERSION = 2;
-  const STORE_NAME = "appState";
-  const STATE_ID = "main";
+  const DB_VERSION = 3;
+  const STATE_STORE = "appState";
+  const PROJECT_STORE = "projects";
+  const META_STORE = "appMeta";
+  const LEGACY_STATE_ID = "main";
+  const WORKSPACE_ID = "workspace";
+  const SAMPLE_PROJECT_ID = "sample-project";
   const PLAN_SCALE_STEP = 100;
   const DEFAULT_PLAN_SCALE_MAX = 100000;
   const MAX_PLAN_SCALE_MAX = 1000000000;
@@ -54,14 +58,25 @@
     return months;
   }
 
-  function createDefaultState() {
-    const today = new Date();
-    const start = new Date(today.getFullYear(), today.getMonth(), 1);
-    const end = monthEnd(addMonths(start, 35));
-    const startDate = dateKey(start);
-    const endDate = dateKey(end);
-    const months = monthsBetween(startDate, endDate);
+  function monthCount(startDate, endDate) {
+    const start = new Date(`${startDate}T00:00:00`);
+    const end = new Date(`${endDate}T00:00:00`);
+    return (end.getFullYear() - start.getFullYear()) * 12 + end.getMonth() - start.getMonth() + 1;
+  }
 
+  function defaultRange(startDate) {
+    const start = validDateKey(startDate)
+      ? new Date(`${startDate}T00:00:00`)
+      : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const end = monthEnd(addMonths(new Date(start.getFullYear(), start.getMonth(), 1), 35));
+    return { startDate: dateKey(start), endDate: dateKey(end) };
+  }
+
+  function createDefaultState(options = {}) {
+    const range = defaultRange(options.startDate);
+    const startDate = range.startDate;
+    const endDate = validDateKey(options.endDate) && options.endDate >= startDate ? options.endDate : range.endDate;
+    const months = monthsBetween(startDate, endDate);
     const categories = [
       { id: "expense-food", name: "食費", group: "variable", color: "#e4773d", order: 10, active: true, defaultAmount: 45000 },
       { id: "expense-daily", name: "日用品", group: "variable", color: "#cc9a34", order: 20, active: true, defaultAmount: 10000 },
@@ -88,11 +103,12 @@
       });
     });
 
+    const now = new Date().toISOString();
     return {
-      id: STATE_ID,
-      schemaVersion: 4,
+      id: String(options.id || LEGACY_STATE_ID),
+      schemaVersion: 5,
       settings: {
-        closingDay: 31,
+        closingDay: Math.min(31, Math.max(1, Math.round(Number(options.closingDay) || 31))),
         startDate,
         endDate,
         currency: "JPY"
@@ -100,19 +116,47 @@
       categories,
       plans,
       transactions: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: now,
+      updatedAt: now
     };
   }
 
-  function normalizeState(value) {
-    const fallback = createDefaultState();
+  function createSampleState(options = {}) {
+    const state = createDefaultState({ ...options, id: options.id || SAMPLE_PROJECT_ID });
+    const start = new Date(`${state.settings.startDate}T00:00:00`);
+    const end = new Date(`${state.settings.endDate}T00:00:00`);
+    const today = new Date();
+    const base = today < start ? start : today > end ? end : today;
+    const sampleDate = (daysBefore) => {
+      const date = new Date(base);
+      date.setDate(date.getDate() - daysBefore);
+      return date < start ? state.settings.startDate : dateKey(date);
+    };
+    const now = new Date().toISOString();
+    state.transactions = [
+      { id: "sample-income-salary", direction: "income", categoryId: "income-salary", date: sampleDate(7), amount: 280000, memo: "サンプル給与", createdAt: now, updatedAt: now },
+      { id: "sample-food-1", direction: "expense", categoryId: "expense-food", date: sampleDate(3), amount: 2480, memo: "食材", createdAt: now, updatedAt: now },
+      { id: "sample-daily-1", direction: "expense", categoryId: "expense-daily", date: sampleDate(2), amount: 1280, memo: "日用品", createdAt: now, updatedAt: now },
+      { id: "sample-transport-1", direction: "expense", categoryId: "expense-transport", date: sampleDate(1), amount: 680, memo: "交通費", createdAt: now, updatedAt: now },
+      { id: "sample-rent-1", direction: "expense", categoryId: "expense-rent", date: sampleDate(6), amount: 80000, memo: "家賃", createdAt: now, updatedAt: now }
+    ];
+    return state;
+  }
+
+  function normalizeState(value, stateId = LEGACY_STATE_ID) {
+    const normalizedId = String(stateId || (value && value.id) || LEGACY_STATE_ID);
+    const fallback = createDefaultState({
+      id: normalizedId,
+      startDate: value && value.settings && value.settings.startDate,
+      endDate: value && value.settings && value.settings.endDate,
+      closingDay: value && value.settings && value.settings.closingDay
+    });
     if (!value || typeof value !== "object") return fallback;
     const state = {
       ...fallback,
       ...value,
-      id: STATE_ID,
-      schemaVersion: 4,
+      id: normalizedId,
+      schemaVersion: 5,
       settings: { ...fallback.settings, ...(value.settings || {}) },
       categories: Array.isArray(value.categories) ? value.categories : fallback.categories,
       plans: value.plans && typeof value.plans === "object" ? value.plans : fallback.plans,
@@ -160,14 +204,42 @@
     return state;
   }
 
+  function makeProjectId() {
+    if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") return `project-${globalThis.crypto.randomUUID()}`;
+    return `project-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function normalizeProject(value, state, id = state && state.id) {
+    const projectId = String(id || (value && value.id) || LEGACY_STATE_ID);
+    const createdAt = value && value.createdAt || state.createdAt || new Date().toISOString();
+    return {
+      id: projectId,
+      stateId: String(value && value.stateId || projectId),
+      name: String(value && value.name || "マイプロジェクト").trim().slice(0, 40) || "マイプロジェクト",
+      isSample: value && value.isSample === true,
+      createdAt,
+      updatedAt: value && value.updatedAt || state.updatedAt || createdAt,
+      startDate: state.settings.startDate,
+      endDate: state.settings.endDate,
+      closingDay: state.settings.closingDay
+    };
+  }
+
+  function sortProjects(projects) {
+    return [...projects].sort((left, right) => {
+      if (left.isSample !== right.isSample) return left.isSample ? 1 : -1;
+      return String(left.createdAt).localeCompare(String(right.createdAt));
+    });
+  }
+
   function openDatabase() {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME, { keyPath: "id" });
-        }
+        if (!db.objectStoreNames.contains(STATE_STORE)) db.createObjectStore(STATE_STORE, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(PROJECT_STORE)) db.createObjectStore(PROJECT_STORE, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(META_STORE)) db.createObjectStore(META_STORE, { keyPath: "id" });
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error("データベースを開けませんでした。"));
@@ -175,15 +247,14 @@
     });
   }
 
-  async function requestFromStore(mode, operation) {
-    const db = await openDatabase();
-    return new Promise((resolve, reject) => {
-      const transaction = db.transaction(STORE_NAME, mode);
-      const store = transaction.objectStore(STORE_NAME);
+  function requestFromStore(storeName, mode, operation) {
+    return openDatabase().then((db) => new Promise((resolve, reject) => {
+      const transaction = db.transaction(storeName, mode);
+      const store = transaction.objectStore(storeName);
       let result;
       transaction.oncomplete = () => { db.close(); resolve(result); };
-      transaction.onerror = () => { db.close(); reject(transaction.error || new Error("保存処理に失敗しました。")); };
-      transaction.onabort = () => { db.close(); reject(transaction.error || new Error("保存処理が中断されました。")); };
+      transaction.onerror = () => { db.close(); reject(transaction.error || new Error("データの保存に失敗しました。")); };
+      transaction.onabort = () => { db.close(); reject(transaction.error || new Error("データの保存が中断されました。")); };
       try {
         const request = operation(store);
         if (request) request.onsuccess = () => { result = request.result; };
@@ -191,32 +262,165 @@
         transaction.abort();
         reject(error);
       }
+    }));
+  }
+
+  function requestFromStores(storeNames, mode, operation) {
+    return openDatabase().then((db) => new Promise((resolve, reject) => {
+      const transaction = db.transaction(storeNames, mode);
+      const stores = Object.fromEntries(storeNames.map((name) => [name, transaction.objectStore(name)]));
+      transaction.oncomplete = () => { db.close(); resolve(); };
+      transaction.onerror = () => { db.close(); reject(transaction.error || new Error("データの保存に失敗しました。")); };
+      transaction.onabort = () => { db.close(); reject(transaction.error || new Error("データの保存が中断されました。")); };
+      try {
+        operation(stores);
+      } catch (error) {
+        transaction.abort();
+        reject(error);
+      }
+    }));
+  }
+
+  function getRecord(storeName, id) {
+    return requestFromStore(storeName, "readonly", (store) => store.get(id));
+  }
+
+  function getRecords(storeName) {
+    return requestFromStore(storeName, "readonly", (store) => store.getAll());
+  }
+
+  async function ensureWorkspace() {
+    const storedWorkspace = await getRecord(META_STORE, WORKSPACE_ID);
+    let projectList = (await getRecords(PROJECT_STORE)).filter((project) => project && project.id && project.stateId);
+    if (!storedWorkspace || !projectList.length) {
+      const legacy = await getRecord(STATE_STORE, LEGACY_STATE_ID);
+      const mainState = normalizeState(legacy, LEGACY_STATE_ID);
+      const mainProject = normalizeProject({ id: LEGACY_STATE_ID, stateId: LEGACY_STATE_ID, name: "マイプロジェクト" }, mainState, LEGACY_STATE_ID);
+      const sampleState = createSampleState({ id: SAMPLE_PROJECT_ID });
+      const sampleProject = normalizeProject({ id: SAMPLE_PROJECT_ID, stateId: SAMPLE_PROJECT_ID, name: "サンプルプロジェクト", isSample: true }, sampleState, SAMPLE_PROJECT_ID);
+      const workspace = { id: WORKSPACE_ID, schemaVersion: 1, defaultProjectId: mainProject.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      await requestFromStores([STATE_STORE, PROJECT_STORE, META_STORE], "readwrite", (stores) => {
+        stores[STATE_STORE].put(mainState);
+        stores[STATE_STORE].put(sampleState);
+        stores[PROJECT_STORE].put(mainProject);
+        stores[PROJECT_STORE].put(sampleProject);
+        stores[META_STORE].put(workspace);
+      });
+      return { workspace, projects: sortProjects([mainProject, sampleProject]) };
+    }
+
+    let workspace = { ...storedWorkspace, id: WORKSPACE_ID, schemaVersion: 1 };
+    let changed = false;
+    if (!projectList.some((project) => project.id === SAMPLE_PROJECT_ID)) {
+      const sampleState = createSampleState({ id: SAMPLE_PROJECT_ID });
+      const sampleProject = normalizeProject({ id: SAMPLE_PROJECT_ID, stateId: SAMPLE_PROJECT_ID, name: "サンプルプロジェクト", isSample: true }, sampleState, SAMPLE_PROJECT_ID);
+      await requestFromStores([STATE_STORE, PROJECT_STORE], "readwrite", (stores) => {
+        stores[STATE_STORE].put(sampleState);
+        stores[PROJECT_STORE].put(sampleProject);
+      });
+      projectList.push(sampleProject);
+    }
+    if (!projectList.some((project) => project.id === workspace.defaultProjectId)) {
+      workspace.defaultProjectId = projectList.find((project) => !project.isSample)?.id || projectList[0].id;
+      workspace.updatedAt = new Date().toISOString();
+      changed = true;
+    }
+    if (changed) await requestFromStore(META_STORE, "readwrite", (store) => store.put(workspace));
+    return { workspace, projects: sortProjects(projectList) };
+  }
+
+  async function loadProjectFromWorkspace(projectId, workspace, projectList) {
+    const project = projectList.find((item) => item.id === projectId);
+    if (!project) throw new Error("選択したプロジェクトが見つかりません。");
+    const storedState = await getRecord(STATE_STORE, project.stateId);
+    const state = storedState
+      ? normalizeState(storedState, project.stateId)
+      : (project.isSample ? createSampleState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay }) : createDefaultState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay }));
+    if (!storedState) await requestFromStore(STATE_STORE, "readwrite", (store) => store.put(state));
+    return { workspace, projects: sortProjects(projectList), project, state };
+  }
+
+  async function getWorkspace() {
+    const { workspace, projects } = await ensureWorkspace();
+    return loadProjectFromWorkspace(workspace.defaultProjectId, workspace, projects);
+  }
+
+  async function loadProject(projectId) {
+    const { workspace, projects } = await ensureWorkspace();
+    return loadProjectFromWorkspace(projectId, workspace, projects);
+  }
+
+  async function createProject(input) {
+    const name = String(input && input.name || "").trim().slice(0, 40);
+    const startDate = String(input && input.startDate || "");
+    const endDate = String(input && input.endDate || "");
+    if (!name) throw new Error("プロジェクト名を入力してください。");
+    if (!validDateKey(startDate) || !validDateKey(endDate) || endDate < startDate) throw new Error("終了日は開始日以降にしてください。");
+    if (monthCount(startDate, endDate) > 120) throw new Error("管理期間は最大120ヶ月にしてください。");
+    const { workspace, projects } = await ensureWorkspace();
+    const id = makeProjectId();
+    const state = createDefaultState({ id, startDate, endDate });
+    const project = normalizeProject({ id, stateId: id, name, isSample: false }, state, id);
+    await requestFromStores([STATE_STORE, PROJECT_STORE], "readwrite", (stores) => {
+      stores[STATE_STORE].put(state);
+      stores[PROJECT_STORE].put(project);
     });
+    return { workspace, projects: sortProjects([...projects, project]), project, state };
+  }
+
+  async function setDefaultProject(projectId) {
+    const { workspace, projects } = await ensureWorkspace();
+    if (!projects.some((project) => project.id === projectId)) throw new Error("選択したプロジェクトが見つかりません。");
+    const nextWorkspace = { ...workspace, defaultProjectId: projectId, updatedAt: new Date().toISOString() };
+    await requestFromStore(META_STORE, "readwrite", (store) => store.put(nextWorkspace));
+    return { workspace: nextWorkspace, projects };
+  }
+
+  async function saveState(state, projectId) {
+    const { workspace, projects } = await ensureWorkspace();
+    const id = String(projectId || workspace.defaultProjectId);
+    const project = projects.find((item) => item.id === id);
+    if (!project) throw new Error("保存先のプロジェクトが見つかりません。");
+    const normalized = normalizeState(JSON.parse(JSON.stringify(state)), project.stateId);
+    normalized.updatedAt = new Date().toISOString();
+    const nextProject = normalizeProject({ ...project, updatedAt: normalized.updatedAt }, normalized, project.id);
+    await requestFromStores([STATE_STORE, PROJECT_STORE], "readwrite", (stores) => {
+      stores[STATE_STORE].put(normalized);
+      stores[PROJECT_STORE].put(nextProject);
+    });
+    return normalized;
+  }
+
+  async function resetProject(projectId) {
+    const { workspace, projects } = await ensureWorkspace();
+    const id = String(projectId || workspace.defaultProjectId);
+    const project = projects.find((item) => item.id === id);
+    if (!project) throw new Error("初期化するプロジェクトが見つかりません。");
+    const state = project.isSample
+      ? createSampleState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay })
+      : createDefaultState({ id: project.stateId, startDate: project.startDate, endDate: project.endDate, closingDay: project.closingDay });
+    return saveState(state, project.id);
   }
 
   const BudgetDB = {
-    async getState() {
-      const stored = await requestFromStore("readonly", (store) => store.get(STATE_ID));
-      if (stored) return normalizeState(stored);
-      const initial = createDefaultState();
-      await this.saveState(initial);
-      return initial;
+    getWorkspace,
+    async listProjects() {
+      const { projects } = await ensureWorkspace();
+      return projects;
     },
-
-    async saveState(state) {
-      const normalized = normalizeState(JSON.parse(JSON.stringify(state)));
-      normalized.updatedAt = new Date().toISOString();
-      await requestFromStore("readwrite", (store) => store.put(normalized));
-      return normalized;
+    loadProject,
+    createProject,
+    setDefaultProject,
+    saveState,
+    resetProject,
+    async getState(projectId) {
+      return projectId ? (await loadProject(projectId)).state : (await getWorkspace()).state;
     },
-
-    async reset() {
-      const initial = createDefaultState();
-      await this.saveState(initial);
-      return initial;
+    async reset(projectId) {
+      return resetProject(projectId);
     },
-
     createDefaultState,
+    createSampleState,
     monthsBetween
   };
 

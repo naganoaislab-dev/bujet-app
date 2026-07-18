@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.4.1";
+  const APP_VERSION = "0.5.0";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 500;
@@ -22,6 +22,7 @@
 
   const viewHost = document.querySelector("#view-host");
   const screenTitle = document.querySelector("#screen-title");
+  const activeProjectName = document.querySelector("#active-project-name");
   const networkStatus = document.querySelector("#network-status");
   const toast = document.querySelector("#toast");
   const importFile = document.querySelector("#import-file");
@@ -34,6 +35,9 @@
   const monthlyPlanEditor = document.querySelector("#monthly-plan-editor");
 
   let state;
+  let currentProject = null;
+  let projects = [];
+  let defaultProjectId = "";
   let currentView = "entry";
   let currentPeriod = "";
   let analysisPeriod = "";
@@ -147,7 +151,7 @@
 
   function monthLabel(month, includeYear = true) {
     const parts = monthParts(month);
-    return includeYear ? `${parts.year}年${parts.month}月` : `${parts.month}月`;
+    return includeYear ? `${parts.year}年${parts.month}月度` : `${parts.month}月度`;
   }
 
   function shortDate(value) {
@@ -158,6 +162,20 @@
   function dateTimeLabel(value) {
     const date = parseLocalDate(value);
     return `${date.getMonth() + 1}月${date.getDate()}日`;
+  }
+
+  function projectDateLabel(value) {
+    if (!isValidDateKey(value)) return "未設定";
+    const date = parseLocalDate(value);
+    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+  }
+
+  function projectEndDateForStart(startDate) {
+    if (!isValidDateKey(startDate)) return "";
+    const end = parseLocalDate(startDate);
+    end.setFullYear(end.getFullYear() + 3);
+    end.setDate(end.getDate() - 1);
+    return localDateKey(end);
   }
 
   function daysInMonth(year, month) {
@@ -305,7 +323,8 @@
     const carry = carryAmount(categoryId, month);
     const actual = actualAmount(categoryId, month);
     const monthlyRemaining = plan - actual;
-    return { plan, carry, actual, monthlyRemaining, remaining: monthlyRemaining + carry };
+    const carryRemaining = carry - Math.max(0, actual - plan);
+    return { plan, carry, actual, monthlyRemaining, carryRemaining, remaining: monthlyRemaining + carry };
   }
 
   function dailyBudgetStats(category, month) {
@@ -318,8 +337,7 @@
     return {
       ...stats,
       daysRemaining,
-      dailyRemaining: Math.floor(stats.monthlyRemaining / daysRemaining),
-      dailyRemainingWithCarry: Math.floor(stats.remaining / daysRemaining)
+      dailyRemaining: Math.floor(stats.monthlyRemaining / daysRemaining)
     };
   }
 
@@ -390,13 +408,67 @@
     else dialog.removeAttribute("open");
   }
 
+  function syncCurrentProjectPeriod() {
+    if (!currentProject) return;
+    currentProject = {
+      ...currentProject,
+      startDate: state.settings.startDate,
+      endDate: state.settings.endDate,
+      closingDay: state.settings.closingDay
+    };
+    projects = projects.map((project) => project.id === currentProject.id ? currentProject : project);
+  }
+
+  function applyLoadedProject(loaded) {
+    currentProject = loaded.project;
+    projects = loaded.projects;
+    defaultProjectId = loaded.workspace.defaultProjectId;
+    state = loaded.state;
+    currentPeriod = currentPeriodForToday();
+    analysisPeriod = currentPeriod;
+    incomeExpanded = false;
+    allTransactionsShown = false;
+  }
+
+  async function loadSelectedProject() {
+    const projectId = document.querySelector("#project-load-select").value;
+    if (!projectId) return;
+    const loaded = await window.BudgetDB.loadProject(projectId);
+    applyLoadedProject(loaded);
+    settingsPane = "projects";
+    render();
+    showToast(`${currentProject.name}を読み込みました`);
+  }
+
+  async function setCurrentProjectAsDefault() {
+    if (!currentProject) return;
+    const result = await window.BudgetDB.setDefaultProject(currentProject.id);
+    projects = result.projects;
+    defaultProjectId = result.workspace.defaultProjectId;
+    render();
+    showToast(`${currentProject.name}を既定のプロジェクトにしました`);
+  }
+
+  async function createAndLoadProject() {
+    const name = document.querySelector("#project-name-input").value;
+    const startDate = document.querySelector("#project-start-date").value;
+    const endDate = document.querySelector("#project-end-date").value;
+    const created = await window.BudgetDB.createProject({ name, startDate, endDate });
+    applyLoadedProject(created);
+    settingsPane = "projects";
+    render();
+    showToast(`${currentProject.name}を作成して読み込みました`);
+  }
+
   async function persist(message = "保存しました") {
-    state = await window.BudgetDB.saveState(state);
+    state = await window.BudgetDB.saveState(state, currentProject && currentProject.id);
+    syncCurrentProjectPeriod();
     showToast(message);
   }
 
   function render() {
     screenTitle.textContent = VIEW_TITLES[currentView];
+    if (activeProjectName) activeProjectName.textContent = currentProject ? currentProject.name : "プロジェクトを読み込み中";
     document.querySelectorAll(".nav-button").forEach((button) => {
       const active = button.dataset.view === currentView;
       button.classList.toggle("active", active);
@@ -447,7 +519,7 @@
       </section>
 
       <section class="income-entry-card">
-        <div><strong>収入実績も記録</strong><p>給与・賞与などを状況グラフへ反映します。</p></div>
+        <div><strong>収入実績を記録</strong><p>給与・賞与などを状況グラフへ反映します。</p></div>
         <button type="button" class="button small primary" data-action="toggle-income">${incomeExpanded ? "閉じる" : "収入を入力"}</button>
       </section>
       ${incomeExpanded ? `<section class="section"><div class="category-grid">${renderIncomeCards(currentPeriod)}</div></section>` : ""}
@@ -480,12 +552,11 @@
           <span class="budget-card-name">${escapeHtml(category.name)}</span>
           <span class="daily-budget-main">
             <span class="daily-budget-value"><span>今日の残り予算</span><strong class="${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
-            <span class="daily-budget-value"><span>今日の残り予算（これまでの持ち越し考慮額）</span><strong class="${dailyStats.dailyRemainingWithCarry < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemainingWithCarry)}</strong></span>
           </span>
           <span class="daily-budget-days">締日まで残り${dailyStats.daysRemaining}日</span>
           <span class="daily-budget-sub">
             <span><span>今月の残り予算</span><strong class="${stats.monthlyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.monthlyRemaining)}</strong></span>
-            <span><span>これまでの持ち越し</span><strong class="${stats.carry < 0 ? "negative" : ""}">${formatSignedCurrency(stats.carry)}</strong></span>
+            <span><span>これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>
           </span>
           <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
         </button>`;
@@ -493,8 +564,8 @@
       return `<button type="button" class="budget-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
         <span class="budget-card-name">${escapeHtml(category.name)}</span>
         <span class="budget-card-label">今月の残り予算</span>
-        <strong class="budget-card-amount ${stats.remaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.remaining)}</strong>
-        <span class="budget-card-carry"><span>これまでの持ち越し</span><strong class="${stats.carry < 0 ? "negative" : ""}">${formatSignedCurrency(stats.carry)}</strong></span>
+        <strong class="budget-card-amount ${stats.monthlyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.monthlyRemaining)}</strong>
+        <span class="budget-card-carry"><span>これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>
         <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
       </button>`;
     }).join("");
@@ -595,7 +666,7 @@
       <span class="chart-bar expense-actual" style="height:${height(item.expenseActual)}%"></span>
       <span class="chart-bar income-plan" style="height:${height(item.incomePlan)}%"></span>
       <span class="chart-bar income-actual" style="height:${height(item.incomeActual)}%"></span>
-      <span class="chart-month-label">${monthParts(item.month).month}月</span>
+      <span class="chart-month-label">${monthParts(item.month).month}月度</span>
     </div>`;
   }
 
@@ -701,13 +772,14 @@
 
   function renderSettings() {
     const paneButtons = [
-      ["basic", "基本"], ["expense", "支出"], ["income", "収入"]
+      ["basic", "基本"], ["expense", "支出"], ["income", "収入"], ["projects", "プロジェクト"]
     ].map(([id, label]) => `<button type="button" class="segment-button ${settingsPane === id ? "active" : ""}" data-settings-pane="${id}">${label}</button>`).join("");
     let content;
     if (settingsPane === "basic") content = renderBasicSettings();
     else if (settingsPane === "expense") content = renderCategorySettings("expense");
-    else content = renderCategorySettings("income");
-    viewHost.innerHTML = `<div class="view-stack"><div class="segmented" style="--segments:3">${paneButtons}</div>${content}</div>`;
+    else if (settingsPane === "income") content = renderCategorySettings("income");
+    else content = renderProjectSettings();
+    viewHost.innerHTML = `<div class="view-stack"><div class="segmented" style="--segments:4">${paneButtons}</div>${content}</div>`;
   }
 
   function renderBasicSettings() {
@@ -721,6 +793,40 @@
       <p class="help-text">現在は${periodMonths().length}ヶ月分を管理しています。初期設定は開始月から36ヶ月です。</p>
       <button type="submit" class="button primary">基本設定を保存</button>
     </form>`;
+  }
+
+  function renderProjectSettings() {
+    const project = currentProject;
+    if (!project) return '<div class="empty-state">プロジェクトを読み込んでいます。</div>';
+    const defaultStart = localDateKey();
+    const defaultEnd = projectEndDateForStart(defaultStart);
+    const projectOptions = projects.map((item) => {
+      const label = `${item.name}${item.isSample ? "（サンプル）" : ""}`;
+      return `<option value="${escapeHtml(item.id)}"${item.id === project.id ? " selected" : ""}>${escapeHtml(label)}</option>`;
+    }).join("");
+    const isDefault = project.id === defaultProjectId;
+    return `<div class="view-stack">
+      <section class="card project-current-card">
+        <div class="section-copy"><p class="section-kicker">CURRENT PROJECT</p><h2>${escapeHtml(project.name)}${project.isSample ? "（サンプル）" : ""}</h2><p>${projectDateLabel(project.startDate)}〜${projectDateLabel(project.endDate)}・${project.closingDay}日締め</p></div>
+        <label><span class="field-label">プロジェクトを読み込む</span><select id="project-load-select">${projectOptions}</select></label>
+        <div class="dialog-actions">
+          <button type="button" class="button secondary" data-action="load-project">読み込む</button>
+          <button type="button" class="button primary" data-action="set-default-project"${isDefault ? " disabled" : ""}>${isDefault ? "既定のプロジェクト" : "既定にする"}</button>
+        </div>
+        <p class="help-text">既定にすると、次回アプリを開いたときにこのプロジェクトを自動で読み込みます。</p>
+      </section>
+      <form id="project-create-form" class="card settings-form">
+        <div class="section-copy"><p class="section-kicker">NEW PROJECT</p><h2>新しいプロジェクトを作成</h2><p>現在のプロジェクトとは別に、将来の家計簿期間をあらかじめ作成できます。</p></div>
+        <label><span class="field-label">プロジェクト名</span><input id="project-name-input" type="text" maxlength="40" placeholder="例：2026年度の家計簿" required></label>
+        <div class="form-grid two-columns">
+          <label><span class="field-label">開始日</span><input id="project-start-date" type="date" value="${defaultStart}" required></label>
+          <label><span class="field-label">終了日</span><input id="project-end-date" type="date" value="${defaultEnd}" required></label>
+        </div>
+        <p class="help-text">開始日を変えると、終了日は3年後の前日に自動調整されます。作成後は新しいプロジェクトを読み込みます。</p>
+        <button type="submit" class="button primary">プロジェクトを作成して読み込む</button>
+      </form>
+      <section class="card sample-project-note"><p class="section-kicker">TRY IT</p><h2>サンプルプロジェクト</h2><p>プロジェクト一覧に、操作感を試せるサンプルデータを用意しています。読み込んで自由に操作できます。</p></section>
+    </div>`;
   }
 
   function renderCategorySettings(direction) {
@@ -737,8 +843,9 @@
     if (!categories.length) return '<div class="empty-state">種別がありません。</div>';
     return categories.map((category) => {
       const dailyToggle = category.group === "income" ? "" : `<label class="category-daily-toggle">
-        <input type="checkbox" data-daily-budget-category="${escapeHtml(category.id)}"${category.dailyBudgetEnabled === true ? " checked" : ""}${category.active === false ? " disabled" : ""}>
-        <span><strong>日毎に予算管理</strong><span>当月の残予算を締日までの日数で割って表示</span></span>
+        <span class="category-daily-copy"><strong>日毎に予算管理</strong><span>当月の残予算を締日までの日数で割って表示</span></span>
+        <input class="daily-budget-toggle-input" type="checkbox" role="switch" data-daily-budget-category="${escapeHtml(category.id)}"${category.dailyBudgetEnabled === true ? " checked" : ""}${category.active === false ? " disabled" : ""}>
+        <span class="daily-budget-switch" aria-hidden="true"></span>
       </label>`;
       return `<article class="category-setting-row" style="--category-color:${escapeHtml(category.color)}">
         <span class="color-dot" aria-hidden="true"></span>
@@ -866,7 +973,8 @@
     state.transactions.push(transaction);
     closeDialog(calculatorDialog);
     try {
-      state = await window.BudgetDB.saveState(state);
+      state = await window.BudgetDB.saveState(state, currentProject && currentProject.id);
+      syncCurrentProjectPeriod();
     } catch (error) {
       state.transactions = state.transactions.filter((item) => item.id !== transaction.id);
       pendingTransaction = null;
@@ -1336,7 +1444,8 @@
     validateImportedState(imported);
     const description = `${imported.categories.length}種別、${imported.transactions.length}件の実績を読み込みます。現在のデータは置き換わります。`;
     if (!window.confirm(description)) return;
-    state = await window.BudgetDB.saveState(imported);
+    state = await window.BudgetDB.saveState(imported, currentProject && currentProject.id);
+    syncCurrentProjectPeriod();
     currentPeriod = currentPeriodForToday();
     analysisPeriod = currentPeriod;
     render();
@@ -1359,9 +1468,12 @@
     else if (target.dataset.action === "export-json") exportJson();
     else if (target.dataset.action === "import-csv") { importFile.dataset.importType = "csv"; importFile.accept = "text/csv,.csv"; importFile.value = ""; importFile.click(); }
     else if (target.dataset.action === "import-json") { importFile.dataset.importType = "json"; importFile.accept = "application/json,.json"; importFile.value = ""; importFile.click(); }
+    else if (target.dataset.action === "load-project") await loadSelectedProject();
+    else if (target.dataset.action === "set-default-project") await setCurrentProjectAsDefault();
     else if (target.dataset.action === "reset-data") {
       if (window.confirm("すべての設定・計画・実績を削除し、初期データへ戻しますか？")) {
-        state = await window.BudgetDB.reset();
+        state = await window.BudgetDB.resetProject(currentProject && currentProject.id);
+        syncCurrentProjectPeriod();
         currentPeriod = currentPeriodForToday();
         analysisPeriod = currentPeriod;
         render();
@@ -1391,10 +1503,18 @@
     } else if (event.target.id === "analysis-period") {
       analysisPeriod = event.target.value;
       render();
+    } else if (event.target.id === "project-start-date") {
+      const suggestedEndDate = projectEndDateForStart(event.target.value);
+      if (suggestedEndDate) document.querySelector("#project-end-date").value = suggestedEndDate;
     }
   }
 
   async function handleViewSubmit(event) {
+    if (event.target.id === "project-create-form") {
+      event.preventDefault();
+      await createAndLoadProject();
+      return;
+    }
     if (event.target.id !== "basic-settings-form") return;
     event.preventDefault();
     const closingDay = clamp(toInteger(document.querySelector("#closing-day").value, 31), 1, 31);
@@ -1434,9 +1554,9 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 
-  viewHost.addEventListener("click", handleViewClick);
+  viewHost.addEventListener("click", (event) => handleViewClick(event).catch((error) => showToast(error instanceof Error ? error.message : "操作を完了できませんでした")));
   viewHost.addEventListener("change", (event) => handleViewChange(event).catch((error) => showToast(error instanceof Error ? error.message : "設定を保存できませんでした")));
-  viewHost.addEventListener("submit", handleViewSubmit);
+  viewHost.addEventListener("submit", (event) => handleViewSubmit(event).catch((error) => showToast(error instanceof Error ? error.message : "保存できませんでした")));
 
   document.querySelector("#calculator-keys").addEventListener("click", (event) => {
     const key = event.target.closest("[data-calc]");
@@ -1646,9 +1766,7 @@
 
   async function initialize() {
     try {
-      state = await window.BudgetDB.getState();
-      currentPeriod = currentPeriodForToday();
-      analysisPeriod = currentPeriod;
+      applyLoadedProject(await window.BudgetDB.getWorkspace());
       updateNetworkStatus();
       render();
     } catch (error) {
@@ -1657,7 +1775,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=9", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=10", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
