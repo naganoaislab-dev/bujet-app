@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=9">
-  <link rel="icon" href="icons/icon.svg?v=9" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=9">
-  <link rel="stylesheet" href="styles.css?v=9">
-  <script src="db.js?v=9" defer></script>
-  <script src="app.js?v=9" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=10">
+  <link rel="icon" href="icons/icon.svg?v=10" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=10">
+  <link rel="stylesheet" href="styles.css?v=10">
+  <script src="db.js?v=10" defer></script>
+  <script src="app.js?v=10" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -24,6 +24,7 @@
       <div class="topbar-copy">
         <p class="eyebrow">BUDGET MINUS</p>
         <h1 id="screen-title">支出入力</h1>
+        <p id="active-project-name" class="active-project-name">プロジェクトを読み込み中</p>
       </div>
       <div id="network-status" class="network-pill" role="status" aria-live="polite">
         <span class="network-dot" aria-hidden="true"></span>
@@ -203,7 +204,7 @@
       </div>
       <div class="version-summary">
         <span class="version-mark" aria-hidden="true">B−</span>
-        <div><span>アプリバージョン</span><strong id="app-version-name">v0.4.1</strong></div>
+        <div><span>アプリバージョン</span><strong id="app-version-name">v0.5.0</strong></div>
       </div>
       <p class="help-text">端末内のデータだけで動作する、オフライン対応の予算ベース家計簿です。</p>
       <button type="submit" class="button primary">閉じる</button>
