@@ -12,6 +12,8 @@
   const PLAN_SCALE_STEP = 100;
   const DEFAULT_PLAN_SCALE_MAX = 100000;
   const MAX_PLAN_SCALE_MAX = 1000000000;
+  const DEFAULT_THEME_ID = "forest";
+  const THEME_IDS = new Set(["forest", "ocean", "sapphire", "violet", "plum", "rose", "coral", "amber", "olive", "slate"]);
 
   function pad(value) {
     return String(value).padStart(2, "0");
@@ -111,7 +113,8 @@
         closingDay: Math.min(31, Math.max(1, Math.round(Number(options.closingDay) || 31))),
         startDate,
         endDate,
-        currency: "JPY"
+        currency: "JPY",
+        themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID
       },
       categories,
       plans,
@@ -149,7 +152,8 @@
       id: normalizedId,
       startDate: value && value.settings && value.settings.startDate,
       endDate: value && value.settings && value.settings.endDate,
-      closingDay: value && value.settings && value.settings.closingDay
+      closingDay: value && value.settings && value.settings.closingDay,
+      themeId: value && value.settings && value.settings.themeId
     });
     if (!value || typeof value !== "object") return fallback;
     const state = {
@@ -163,6 +167,7 @@
       transactions: Array.isArray(value.transactions) ? value.transactions : []
     };
     state.settings.closingDay = Math.min(31, Math.max(1, Math.round(Number(state.settings.closingDay) || 31)));
+    state.settings.themeId = THEME_IDS.has(state.settings.themeId) ? state.settings.themeId : DEFAULT_THEME_ID;
     if (!validDateKey(state.settings.startDate) || !validDateKey(state.settings.endDate) || new Date(`${state.settings.endDate}T00:00:00`) < new Date(`${state.settings.startDate}T00:00:00`)) {
       state.settings = { ...fallback.settings };
     }
