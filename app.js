@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.9";
+  const APP_VERSION = "0.5.10";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 500;
@@ -1905,7 +1905,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=19", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=20", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
