@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.8";
+  const APP_VERSION = "0.5.9";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 500;
@@ -682,7 +682,21 @@
     });
 
     const projectEnd = aggregates[aggregates.length - 1] || { plannedCumulative: 0, actualCumulative: 0 };
-    const projectEndTone = projectEnd.actualCumulative < 0 ? "negative" : projectEnd.actualCumulative > 0 ? "positive" : "";
+    const today = localDateKey();
+    const activePeriodIndex = Math.max(0, aggregates.findIndex((item) => item.month === currentPeriodForToday()));
+    const projectEndForecast = today > state.settings.endDate
+      ? projectEnd.actualCumulative
+      : aggregates.reduce((sum, item, index) => {
+        if (index < activePeriodIndex) return sum + item.actualNet;
+        if (index > activePeriodIndex) return sum + item.plannedNet;
+        return sum + Math.max(item.incomeActual, item.incomePlan) - Math.max(item.expenseActual, item.expensePlan);
+      }, 0);
+    const projectEndForecastDescription = today > state.settings.endDate
+      ? "プロジェクト終了時の実績です。"
+      : today < state.settings.startDate
+        ? "プロジェクト開始時の計画から算出した見込みです。"
+        : "これまでの実績と、残りの計画から算出した見込みです。";
+    const projectEndTone = projectEndForecast < 0 ? "negative" : projectEndForecast > 0 ? "positive" : "";
 
     const barMaximum = Math.max(1, ...aggregates.flatMap((item) => [item.expensePlan, item.expenseActual, item.incomePlan, item.incomeActual]));
     const lineMaximum = Math.max(1, ...aggregates.flatMap((item) => [Math.abs(item.plannedNet), Math.abs(item.actualNet), Math.abs(item.plannedCumulative), Math.abs(item.actualCumulative)]));
@@ -690,9 +704,9 @@
     const points = (field) => aggregates.map((item, index) => `${index * 100 + 50},${50 - (item[field] / lineMaximum) * 45}`).join(" ");
 
     viewHost.innerHTML = `<div class="view-stack">
-      <section class="card overview-hero" aria-label="プロジェクト終了時の累積収支">
-        <div><p class="section-kicker">PROJECT END</p><h2>プロジェクト終了時の累積収支</h2><p>${projectDateLabel(state.settings.startDate)}〜${projectDateLabel(state.settings.endDate)}の実績累積です。</p></div>
-        <div class="overview-hero-total"><strong class="${projectEndTone}">${formatSignedCurrency(projectEnd.actualCumulative)}</strong><span>計画累積 ${formatSignedCurrency(projectEnd.plannedCumulative)}</span></div>
+      <section class="card overview-hero" aria-label="プロジェクト終了時の見込み収支">
+        <div><p class="section-kicker">PROJECT END FORECAST</p><h2>プロジェクト終了時の見込み収支</h2><p>${projectDateLabel(state.settings.startDate)}〜${projectDateLabel(state.settings.endDate)}。${projectEndForecastDescription}</p></div>
+        <div class="overview-hero-total"><strong class="${projectEndTone}">${formatSignedCurrency(projectEndForecast)}</strong><span>計画時 ${formatSignedCurrency(projectEnd.plannedCumulative)}</span></div>
       </section>
       <div class="month-switcher"><label class="field-label" for="overview-period">注目する月</label><select id="overview-period">${monthOptions(currentPeriod)}</select></div>
       <section class="summary-grid">
@@ -1891,7 +1905,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=18", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=19", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
