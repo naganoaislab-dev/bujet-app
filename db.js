@@ -206,7 +206,7 @@
       category.active = category.active !== false;
       category.defaultAmount = Math.max(0, Math.round(Number(category.defaultAmount) || 0));
       category.planScaleMax = normalizePlanScaleMax(category.planScaleMax);
-      category.dailyBudgetEnabled = category.group !== "income" && (
+      category.dailyBudgetEnabled = category.group === "variable" && (
         typeof category.dailyBudgetEnabled === "boolean"
           ? category.dailyBudgetEnabled
           : category.id === "expense-food"

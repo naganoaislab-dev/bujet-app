@@ -2,11 +2,11 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.10";
+  const APP_VERSION = "0.5.11";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
-  const PLAN_BAR_MEDIUM_STEP = 500;
-  const PLAN_BAR_LARGE_STEP = 1000;
+  const PLAN_BAR_MEDIUM_STEP = 1000;
+  const PLAN_BAR_LARGE_STEP = 10000;
   const PLAN_BAR_MEDIUM_SCALE = 10000;
   const PLAN_BAR_LARGE_SCALE = 100000;
   const DEFAULT_PLAN_SCALE_MAX = 100000;
@@ -119,26 +119,28 @@
     return Math.max(0, Math.round(toInteger(value) / normalizedStep) * normalizedStep);
   }
 
-  function roundPlanAmount(value) {
-    return roundAmountToStep(value, PLAN_AMOUNT_STEP);
-  }
-
   function normalizePlanScaleMax(value) {
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount <= 0) return DEFAULT_PLAN_SCALE_MAX;
     return clamp(Math.round(amount / PLAN_AMOUNT_STEP) * PLAN_AMOUNT_STEP, PLAN_AMOUNT_STEP, MAX_PLAN_SCALE_MAX);
   }
 
-  function planBarHeight(amount, scaleMaximum = planScaleDraft) {
-    if (amount <= 0) return 0;
-    return clamp((amount / Math.max(PLAN_AMOUNT_STEP, scaleMaximum)) * 100, 0, 100);
-  }
-
   function planBarStep(scaleMaximum = planScaleDraft) {
     const normalizedScale = normalizePlanScaleMax(scaleMaximum);
-    if (normalizedScale > PLAN_BAR_LARGE_SCALE) return PLAN_BAR_LARGE_STEP;
+    if (normalizedScale >= PLAN_BAR_LARGE_SCALE) return PLAN_BAR_LARGE_STEP;
     if (normalizedScale >= PLAN_BAR_MEDIUM_SCALE) return PLAN_BAR_MEDIUM_STEP;
     return PLAN_AMOUNT_STEP;
+  }
+
+  function planBarPositionAmount(amount, scaleMaximum = planScaleDraft) {
+    const maximum = Math.max(PLAN_AMOUNT_STEP, normalizePlanScaleMax(scaleMaximum));
+    return clamp(roundAmountToStep(Math.max(0, toInteger(amount)), planBarStep(maximum)), 0, maximum);
+  }
+
+  function planBarHeight(amount, scaleMaximum = planScaleDraft) {
+    const displayedAmount = planBarPositionAmount(amount, scaleMaximum);
+    if (displayedAmount <= 0) return 0;
+    return clamp((displayedAmount / Math.max(PLAN_AMOUNT_STEP, scaleMaximum)) * 100, 0, 100);
   }
 
   function pad(value) {
@@ -361,7 +363,7 @@
   }
 
   function dailyBudgetStats(category, month) {
-    if (!category || isIncomeCategory(category) || category.dailyBudgetEnabled !== true) return null;
+    if (!category || category.group !== "variable" || category.dailyBudgetEnabled !== true) return null;
     const today = localDateKey();
     const range = periodRange(month);
     const stats = categoryBudgetStats(category.id, month);
@@ -509,6 +511,16 @@
     showToast("プロジェクト名を変更しました");
   }
 
+  async function toggleExpenseCategoryActive(categoryId) {
+    const category = categoryById(categoryId);
+    if (!category || category.group === "income") return;
+    const willEnable = category.active === false;
+    category.active = willEnable;
+    category.archivedAt = willEnable ? null : localDateKey();
+    await persist(`${category.name}を${willEnable ? "有効" : "無効"}にしました`);
+    render();
+  }
+
   async function deleteCurrentProject() {
     if (!currentProject || currentProject.isSample) return;
     const project = currentProject;
@@ -557,7 +569,10 @@
   function renderEntry() {
     const range = periodRange(currentPeriod);
     const monthStats = aggregateMonth(currentPeriod);
-    const expenseCategories = expenseCategoriesForReporting(currentPeriod);
+    const expenseCategories = [
+      ...categoriesForGroup("variable"),
+      ...categoriesForGroup("fixed")
+    ];
     const available = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).remaining, 0);
     const allTransactions = transactionsForMonth(currentPeriod).sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
     const recent = allTransactionsShown ? allTransactions : allTransactions.slice(0, 8);
@@ -954,16 +969,17 @@
   function renderCategoryRows(categories) {
     if (!categories.length) return '<div class="empty-state">種別がありません。</div>';
     return categories.map((category) => {
-      const dailyToggle = category.group === "income" ? "" : `<label class="category-daily-toggle">
+      const dailyToggle = category.group === "variable" ? `<label class="category-daily-toggle">
         <span class="category-daily-copy"><strong>日毎に予算管理</strong><span>当月の残予算を締日までの日数で割って表示</span></span>
         <input class="daily-budget-toggle-input" type="checkbox" role="switch" data-daily-budget-category="${escapeHtml(category.id)}"${category.dailyBudgetEnabled === true ? " checked" : ""}${category.active === false ? " disabled" : ""}>
         <span class="daily-budget-switch" aria-hidden="true"></span>
-      </label>`;
+      </label>` : "";
       return `<article class="category-setting-row" style="--category-color:${escapeHtml(category.color)}">
         <span class="color-dot" aria-hidden="true"></span>
-        <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（非表示）" : ""}</strong><span>${monthLabel(currentPeriod)} ${formatCurrency(planAmount(category.id, currentPeriod))}</span></span>
+        <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（無効）" : ""}</strong><span>${monthLabel(currentPeriod)} ${formatCurrency(planAmount(category.id, currentPeriod))}</span></span>
         <button type="button" class="row-action" data-plan-category="${escapeHtml(category.id)}">${periodMonths().length}ヶ月</button>
         <button type="button" class="row-action" data-edit-category="${escapeHtml(category.id)}">編集</button>
+        ${category.group !== "income" ? `<button type="button" class="row-action category-active-toggle ${category.active === false ? "is-inactive" : ""}" data-toggle-category-active="${escapeHtml(category.id)}">${category.active === false ? "有効にする" : "無効にする"}</button>` : ""}
         ${dailyToggle}
       </article>`;
     }).join("");
@@ -1147,10 +1163,10 @@
     cancelPlanPointerTracking();
     editingPlanCategoryId = categoryId;
     planDraft = {};
-    planRuleDraft = category.planRule ? { ...category.planRule, amount: roundPlanAmount(category.planRule.amount) } : null;
+    planRuleDraft = category.planRule ? { ...category.planRule, amount: Math.max(0, toInteger(category.planRule.amount)) } : null;
     planScaleDraft = normalizePlanScaleMax(category.planScaleMax);
     selectedPlanMonth = null;
-    periodMonths().forEach((month) => { planDraft[month] = roundPlanAmount(planAmount(categoryId, month)); });
+    periodMonths().forEach((month) => { planDraft[month] = Math.max(0, toInteger(planAmount(categoryId, month))); });
     document.querySelector("#plan-category-name").textContent = category.name;
     const planLength = periodMonths().length;
     document.querySelector("#plan-kind").textContent = category.group === "income" ? `収入予定・${planLength}ヶ月` : category.group === "fixed" ? `固定支出・${planLength}ヶ月` : `変動支出・${planLength}ヶ月`;
@@ -1170,7 +1186,7 @@
       const amount = Math.max(0, toInteger(planDraft[month]));
       const height = planBarHeight(amount);
       const overScale = amount > planScaleDraft;
-      const sliderValue = Math.min(amount, planScaleDraft);
+      const sliderValue = planBarPositionAmount(amount);
       const valueText = `${formatCurrency(amount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`;
       const selected = month === selectedPlanMonth;
       return `<article class="month-plan-column ${selected ? "selected" : ""} ${overScale ? "over-scale" : ""}" data-plan-column="${month}" style="--category-color:${escapeHtml(category.color)}">
@@ -1232,7 +1248,7 @@
     const overScale = normalizedAmount > planScaleDraft;
     bar.style.setProperty("--bar-height", `${planBarHeight(normalizedAmount)}%`);
     barArea.setAttribute("aria-valuemax", String(planScaleDraft));
-    barArea.setAttribute("aria-valuenow", String(Math.min(normalizedAmount, planScaleDraft)));
+    barArea.setAttribute("aria-valuenow", String(planBarPositionAmount(normalizedAmount)));
     barArea.setAttribute("aria-valuetext", `${formatCurrency(normalizedAmount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`);
     column.classList.toggle("over-scale", overScale);
     overflow.hidden = !overScale;
@@ -1331,7 +1347,7 @@
 
   function commitPlanInput(event) {
     if (!event.target.dataset.planMonth) return;
-    updatePlanColumn(event.target.dataset.planMonth, roundPlanAmount(event.target.value));
+    updatePlanColumn(event.target.dataset.planMonth, Math.max(0, toInteger(event.target.value)));
   }
 
   function applyPlanPattern() {
@@ -1339,7 +1355,7 @@
     const startMonth = document.querySelector("#plan-start-month").value;
     const startIndex = months.indexOf(startMonth);
     const interval = clamp(toInteger(document.querySelector("#plan-interval").value, 1), 1, 36);
-    const amount = roundPlanAmount(document.querySelector("#plan-bulk-amount").value);
+    const amount = Math.max(0, toInteger(document.querySelector("#plan-bulk-amount").value));
     document.querySelector("#plan-bulk-amount").value = String(amount);
     planRuleDraft = { startMonth, interval, amount };
     months.forEach((month, index) => {
@@ -1472,7 +1488,7 @@
       if (imported.categories.some((category) => category.id === record.id)) throw new Error(`CSV ${record.rowNumber}行目の種別IDが重複しています。`);
       const importedDailySetting = String(record.dailyBudgetEnabled || "").trim().toLowerCase();
       if (importedDailySetting && !["true", "false"].includes(importedDailySetting)) throw new Error(`CSV ${record.rowNumber}行目の日毎予算設定が不正です。`);
-      const dailyBudgetEnabled = record.group !== "income" && (importedDailySetting ? importedDailySetting === "true" : record.id === "expense-food");
+      const dailyBudgetEnabled = record.group === "variable" && (importedDailySetting ? importedDailySetting === "true" : record.id === "expense-food");
       imported.categories.push({ id: record.id, name: cleanImportedText(record.name).trim() || "名称未設定", group: record.group, color: /^#[0-9a-f]{6}$/i.test(record.color) ? record.color : "#3f7d5b", order: toInteger(record.order), active: record.active !== "false", defaultAmount: Math.max(0, toInteger(record.amount)), planScaleMax: normalizePlanScaleMax(record.planScaleMax), dailyBudgetEnabled });
       imported.plans[record.id] = {};
     });
@@ -1575,6 +1591,7 @@
     else if (target.dataset.addCategory) openCategoryEditor(null, target.dataset.addCategory);
     else if (target.dataset.editCategory) openCategoryEditor(target.dataset.editCategory);
     else if (target.dataset.planCategory) openPlanEditor(target.dataset.planCategory);
+    else if (target.dataset.toggleCategoryActive) await toggleExpenseCategoryActive(target.dataset.toggleCategoryActive);
     else if (target.dataset.action === "toggle-income") { incomeExpanded = !incomeExpanded; render(); }
     else if (target.dataset.action === "toggle-history") { allTransactionsShown = !allTransactionsShown; render(); }
     else if (target.dataset.action === "export-csv") exportCsv();
@@ -1591,7 +1608,7 @@
     const dailyBudgetCategoryId = event.target.dataset.dailyBudgetCategory;
     if (dailyBudgetCategoryId) {
       const category = categoryById(dailyBudgetCategoryId);
-      if (!category || isIncomeCategory(category)) return;
+      if (!category || category.group !== "variable") return;
       const previousValue = category.dailyBudgetEnabled === true;
       category.dailyBudgetEnabled = event.target.checked;
       try {
@@ -1758,7 +1775,7 @@
       category.color = color;
       category.active = true;
       category.archivedAt = null;
-      if (group === "income") category.dailyBudgetEnabled = false;
+      if (group !== "variable") category.dailyBudgetEnabled = false;
     } else {
       const categoryId = makeId("category");
       const order = Math.max(0, ...state.categories.map((category) => toInteger(category.order))) + 10;
@@ -1856,7 +1873,7 @@
     event.preventDefault();
     selectPlanMonth(month);
     const maximum = currentAmount > planScaleDraft ? MAX_PLAN_SCALE_MAX : planScaleDraft;
-    updatePlanColumn(month, clamp(roundPlanAmount(nextAmount), 0, maximum));
+    updatePlanColumn(month, clamp(roundAmountToStep(nextAmount, barStep), 0, maximum));
   });
   document.querySelector("#plan-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1864,10 +1881,10 @@
     if (!category || !planDraft) return;
     planScaleDraft = normalizePlanScaleMax(document.querySelector("#plan-scale-max").value);
     const normalizedPlanDraft = {};
-    Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = roundPlanAmount(amount); });
+    Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = Math.max(0, toInteger(amount)); });
     state.plans[editingPlanCategoryId] = { ...(state.plans[editingPlanCategoryId] || {}), ...normalizedPlanDraft };
-    category.defaultAmount = roundPlanAmount(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]);
-    category.planRule = planRuleDraft ? { ...planRuleDraft, amount: roundPlanAmount(planRuleDraft.amount) } : null;
+    category.defaultAmount = Math.max(0, toInteger(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]));
+    category.planRule = planRuleDraft ? { ...planRuleDraft, amount: Math.max(0, toInteger(planRuleDraft.amount)) } : null;
     category.planScaleMax = planScaleDraft;
     cancelPlanPointerTracking();
     closeDialog(planDialog);
@@ -1905,7 +1922,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=20", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=21", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
