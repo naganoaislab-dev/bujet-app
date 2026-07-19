@@ -178,12 +178,13 @@ p { color: var(--muted); line-height: 1.55; }
 .budget-card { position: relative; min-height: 8.5rem; padding: 0.9rem; overflow: hidden; border: 1px solid var(--line); border-radius: 1.05rem; color: var(--ink); background: var(--surface); box-shadow: 0 7px 20px rgba(45, 53, 46, 0.05); text-align: left; cursor: pointer; }
 .budget-card::before { position: absolute; top: 0; right: 0; bottom: 0; width: 0.28rem; background: var(--category-color); content: ""; }
 .budget-card:active { transform: scale(0.985); }
-.reorderable-category-grid .budget-card { -webkit-touch-callout: none; touch-action: pan-y; -webkit-user-select: none; user-select: none; }
+.reorderable-category-grid .budget-card { -webkit-touch-callout: none; touch-action: none; -webkit-user-select: none; user-select: none; }
 .reorderable-category-grid.is-reordering { touch-action: none; }
 .reorderable-category-grid.is-reordering .budget-card { will-change: transform; }
-.budget-card.is-reorder-placeholder { opacity: 0.28; pointer-events: none; transform: scale(0.98); }
-.expense-drag-preview { position: fixed; z-index: 200; top: 0; left: 0; margin: 0; pointer-events: none; opacity: 0.97; box-shadow: 0 18px 36px rgba(var(--primary-rgb), 0.28); transform-origin: center; }
-body.is-expense-reordering { -webkit-user-select: none; user-select: none; }
+.expense-reorder-placeholder { min-height: 8.5rem; border: 1px dashed rgba(var(--primary-rgb), 0.42); border-radius: 1.05rem; background: var(--primary-soft); opacity: 0.58; }
+.expense-reorder-placeholder.daily-budget-card { grid-column: 1 / -1; min-height: 11rem; }
+.expense-drag-preview { position: fixed; z-index: 200; top: 0; left: 0; margin: 0; pointer-events: none; opacity: 0.98; box-shadow: 0 20px 42px rgba(var(--primary-rgb), 0.32); transform-origin: center; will-change: transform; }
+body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none; touch-action: none; }
 .budget-card-name { display: block; margin-bottom: 0.8rem; padding-right: 0.5rem; font-size: 0.9rem; font-weight: 800; }
 .budget-card-label { display: block; color: var(--muted); font-size: 0.64rem; font-weight: 700; }
 .budget-card-amount { display: block; margin: 0.15rem 0 0.55rem; font-size: 1.15rem; font-weight: 850; letter-spacing: -0.04em; }

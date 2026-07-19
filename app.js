@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.14";
+  const APP_VERSION = "0.5.15";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 1000;
@@ -682,17 +682,20 @@
     return Array.from(grid.children).filter((card) => card.matches(".budget-card[data-category-id]"));
   }
 
+  function expenseOrderNodesInGrid(grid) {
+    return Array.from(grid.children).filter((card) => card.dataset.categoryId);
+  }
+
   function expenseCardOrderInGrid(grid) {
-    return expenseCardsInGrid(grid).map((card) => card.dataset.categoryId);
+    return expenseOrderNodesInGrid(grid).map((card) => card.dataset.categoryId);
   }
 
   function snapshotExpenseCardPositions(grid) {
     return new Map(expenseCardsInGrid(grid).map((card) => [card, card.getBoundingClientRect()]));
   }
 
-  function animateExpenseCardReflow(grid, previousPositions, draggedCard) {
+  function animateExpenseCardReflow(grid, previousPositions) {
     expenseCardsInGrid(grid).forEach((card) => {
-      if (card === draggedCard) return;
       const before = previousPositions.get(card);
       if (!before) return;
       const after = card.getBoundingClientRect();
@@ -702,52 +705,58 @@
       card.style.transition = "none";
       card.style.transform = `translate3d(${x}px, ${y}px, 0)`;
       window.requestAnimationFrame(() => {
-        card.style.transition = "transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+        card.style.transition = "transform 190ms cubic-bezier(0.2, 0.8, 0.2, 1)";
         card.style.transform = "";
       });
     });
   }
 
   function updateExpenseDragPreview(gesture, clientX, clientY) {
-    if (!gesture.preview) return;
-    gesture.preview.style.transform = `translate3d(${clientX - gesture.pointerOffsetX}px, ${clientY - gesture.pointerOffsetY}px, 0) scale(1.035)`;
+    gesture.card.style.transform = `translate3d(${clientX - gesture.pointerOffsetX}px, ${clientY - gesture.pointerOffsetY}px, 0) scale(1.035)`;
   }
 
   function expenseCardAtPoint(gesture, clientX, clientY) {
     const gridBounds = gesture.grid.getBoundingClientRect();
     if (clientX < gridBounds.left - 18 || clientX > gridBounds.right + 18 || clientY < gridBounds.top - 18 || clientY > gridBounds.bottom + 18) return null;
-    const direct = document.elementFromPoint(clientX, clientY);
-    const directCard = direct && direct.closest(".budget-card[data-category-id]");
-    if (directCard && directCard !== gesture.card && gesture.grid.contains(directCard)) return directCard;
-    const candidates = expenseCardsInGrid(gesture.grid).filter((card) => card !== gesture.card);
-    return candidates.reduce((nearest, card) => {
-      const bounds = card.getBoundingClientRect();
-      const distance = Math.hypot(clientX - (bounds.left + bounds.width / 2), clientY - (bounds.top + bounds.height / 2));
-      return !nearest || distance < nearest.distance ? { card, distance } : nearest;
-    }, null)?.card || null;
+    const element = document.elementFromPoint(clientX, clientY);
+    const card = element && element.closest(".budget-card[data-category-id]");
+    return card && gesture.grid.contains(card) ? card : null;
+  }
+
+  function expenseInsertionPlacement(target, clientX, clientY) {
+    const bounds = target.getBoundingClientRect();
+    const centerX = bounds.left + bounds.width / 2;
+    const centerY = bounds.top + bounds.height / 2;
+    if (Math.abs(clientY - centerY) > bounds.height * 0.3) {
+      if (clientY < centerY - bounds.height * 0.1) return "before";
+      if (clientY > centerY + bounds.height * 0.1) return "after";
+      return null;
+    }
+    if (clientX < centerX - bounds.width * 0.1) return "before";
+    if (clientX > centerX + bounds.width * 0.1) return "after";
+    return null;
   }
 
   function restoreExpenseCardOrder(grid, categoryIds) {
-    const cardsById = new Map(expenseCardsInGrid(grid).map((card) => [card.dataset.categoryId, card]));
+    const nodesById = new Map(expenseOrderNodesInGrid(grid).map((card) => [card.dataset.categoryId, card]));
     categoryIds.forEach((categoryId) => {
-      const card = cardsById.get(categoryId);
-      if (card) grid.append(card);
+      const node = nodesById.get(categoryId);
+      if (node) grid.append(node);
     });
   }
 
   function moveExpenseCardForPointer(gesture, clientX, clientY) {
     const target = expenseCardAtPoint(gesture, clientX, clientY);
-    if (!target || target === gesture.card) return;
-    const targetBounds = target.getBoundingClientRect();
-    const nearTargetMiddle = Math.abs(clientY - (targetBounds.top + targetBounds.height / 2)) < targetBounds.height * 0.35;
-    const insertAfter = nearTargetMiddle
-      ? clientX > targetBounds.left + targetBounds.width / 2
-      : clientY > targetBounds.top + targetBounds.height / 2;
-    const reference = insertAfter ? target.nextElementSibling : target;
-    if (reference === gesture.card || (!reference && gesture.card === gesture.grid.lastElementChild)) return;
+    if (!target) return;
+    const placement = expenseInsertionPlacement(target, clientX, clientY);
+    if (!placement || (gesture.lastTargetId === target.dataset.categoryId && gesture.lastPlacement === placement)) return;
+    const reference = placement === "after" ? target.nextElementSibling : target;
+    if (reference === gesture.placeholder) return;
     const previousPositions = snapshotExpenseCardPositions(gesture.grid);
-    gesture.grid.insertBefore(gesture.card, reference);
-    animateExpenseCardReflow(gesture.grid, previousPositions, gesture.card);
+    gesture.grid.insertBefore(gesture.placeholder, reference);
+    gesture.lastTargetId = target.dataset.categoryId;
+    gesture.lastPlacement = placement;
+    animateExpenseCardReflow(gesture.grid, previousPositions);
   }
 
   function addExpenseReorderTracking() {
@@ -764,14 +773,18 @@
 
   function clearExpenseReorderVisuals(gesture) {
     if (gesture.timer) window.clearTimeout(gesture.timer);
-    gesture.card.classList.remove("is-reorder-placeholder");
+    if (gesture.placeholder && gesture.placeholder.isConnected) gesture.placeholder.replaceWith(gesture.card);
+    else if (!gesture.grid.contains(gesture.card)) gesture.grid.append(gesture.card);
+    gesture.card.classList.remove("expense-drag-preview");
+    gesture.card.style.width = "";
+    gesture.card.style.height = "";
+    gesture.card.style.transform = "";
     gesture.grid.classList.remove("is-reordering");
     document.body.classList.remove("is-expense-reordering");
     expenseCardsInGrid(gesture.grid).forEach((card) => {
       card.style.transition = "";
-      if (card !== gesture.card) card.style.transform = "";
+      card.style.transform = "";
     });
-    if (gesture.preview) gesture.preview.remove();
     if (typeof gesture.card.hasPointerCapture === "function" && typeof gesture.card.releasePointerCapture === "function") {
       try {
         if (gesture.card.hasPointerCapture(gesture.pointerId)) gesture.card.releasePointerCapture(gesture.pointerId);
@@ -786,23 +799,23 @@
     gesture.timer = null;
     gesture.active = true;
     const bounds = gesture.card.getBoundingClientRect();
-    const preview = gesture.card.cloneNode(true);
-    preview.classList.add("expense-drag-preview");
-    preview.removeAttribute("data-category-id");
-    preview.setAttribute("aria-hidden", "true");
-    preview.tabIndex = -1;
-    preview.style.width = `${bounds.width}px`;
-    preview.style.height = `${bounds.height}px`;
-    gesture.preview = preview;
-    gesture.card.classList.add("is-reorder-placeholder");
+    const placeholder = document.createElement("div");
+    placeholder.className = `expense-reorder-placeholder${gesture.card.classList.contains("daily-budget-card") ? " daily-budget-card" : ""}`;
+    placeholder.dataset.categoryId = gesture.card.dataset.categoryId;
+    placeholder.style.height = `${bounds.height}px`;
+    gesture.placeholder = placeholder;
     gesture.grid.classList.add("is-reordering");
     document.body.classList.add("is-expense-reordering");
-    document.body.append(preview);
-    updateExpenseDragPreview(gesture, gesture.lastClientX, gesture.lastClientY);
     if (typeof gesture.card.setPointerCapture === "function") {
       try { gesture.card.setPointerCapture(gesture.pointerId); }
       catch (error) { console.debug("Expense reorder pointer capture unavailable", error); }
     }
+    gesture.card.replaceWith(placeholder);
+    gesture.card.classList.add("expense-drag-preview");
+    gesture.card.style.width = `${bounds.width}px`;
+    gesture.card.style.height = `${bounds.height}px`;
+    document.body.append(gesture.card);
+    updateExpenseDragPreview(gesture, gesture.lastClientX, gesture.lastClientY);
   }
 
   function startExpenseReorder(event) {
@@ -819,7 +832,7 @@
       grid,
       group,
       active: false,
-      preview: null,
+      placeholder: null,
       initialOrder: expenseCardOrderInGrid(grid),
       initialCategoryOrders: new Map(state.categories.filter((item) => item.group === group).map((item) => [item.id, item.order])),
       pointerOffsetX: event.clientX - bounds.left,
@@ -828,9 +841,11 @@
       startClientY: event.clientY,
       lastClientX: event.clientX,
       lastClientY: event.clientY,
+      lastTargetId: "",
+      lastPlacement: "",
       timer: null
     };
-    gesture.timer = window.setTimeout(() => activateExpenseReorder(gesture), 360);
+    gesture.timer = window.setTimeout(() => activateExpenseReorder(gesture), 420);
     expenseReorderGesture = gesture;
     addExpenseReorderTracking();
   }
@@ -841,7 +856,7 @@
     gesture.lastClientX = event.clientX;
     gesture.lastClientY = event.clientY;
     if (!gesture.active) {
-      if (Math.hypot(event.clientX - gesture.startClientX, event.clientY - gesture.startClientY) > 9) {
+      if (Math.hypot(event.clientX - gesture.startClientX, event.clientY - gesture.startClientY) > 14) {
         expenseReorderGesture = null;
         removeExpenseReorderTracking();
         if (gesture.timer) window.clearTimeout(gesture.timer);
@@ -2153,7 +2168,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=24", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=25", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
