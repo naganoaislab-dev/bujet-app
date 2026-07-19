@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.15";
+  const APP_VERSION = "0.5.16";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 1000;
@@ -322,6 +322,10 @@
 
   function planAmount(categoryId, month) {
     return Math.max(0, toInteger(state.plans[categoryId] && state.plans[categoryId][month], 0));
+  }
+
+  function periodPlanTotal(categoryId) {
+    return periodMonths().reduce((sum, month) => sum + planAmount(categoryId, month), 0);
   }
 
   function activeExpensePlanAmount(category, month) {
@@ -955,7 +959,7 @@
     const projectEndTone = projectEndForecast < 0 ? "negative" : projectEndForecast > 0 ? "positive" : "";
 
     const barMaximum = Math.max(1, ...aggregates.flatMap((item) => [item.expensePlan, item.expenseActual, item.incomePlan, item.incomeActual]));
-    const lineMaximum = Math.max(1, ...aggregates.flatMap((item) => [Math.abs(item.plannedNet), Math.abs(item.actualNet), Math.abs(item.plannedCumulative), Math.abs(item.actualCumulative)]));
+    const lineMaximum = Math.max(1, ...aggregates.flatMap((item) => [Math.abs(item.plannedNet), Math.abs(item.actualNet)]));
     const width = aggregates.length * 100;
     const points = (field) => aggregates.map((item, index) => `${index * 100 + 50},${50 - (item[field] / lineMaximum) * 45}`).join(" ");
 
@@ -973,9 +977,9 @@
       </section>
 
       <section class="card chart-card" aria-labelledby="cashflow-chart-title">
-        <div class="section-copy"><p class="section-kicker">${aggregates.length} MONTHS</p><h2 id="cashflow-chart-title">計画と実績の推移</h2><p>横にスクロールして全期間を確認できます。線は月次収支と累積収支です。</p></div>
+        <div class="section-copy"><p class="section-kicker">${aggregates.length} MONTHS</p><h2 id="cashflow-chart-title">計画と実績の推移</h2><p>横にスクロールして全期間を確認できます。線は月次収支です。</p></div>
         <div class="chart-legend">
-          ${legend("#e8b59b", "支出予定")}${legend("#d66735", "支出実績")}${legend("#a8ceba", "収入予定")}${legend("#2f8057", "収入実績")}${legend("#7f9dc2", "月次予定収支")}${legend("#3c69a1", "月次実績収支")}${legend("#aa8cbd", "累積予定収支")}${legend("#825aa0", "累積実績収支")}
+          ${legend("#e8b59b", "支出予定")}${legend("#d66735", "支出実績")}${legend("#a8ceba", "収入予定")}${legend("#2f8057", "収入実績")}${legend("#7f9dc2", "月次予定収支")}${legend("#3c69a1", "月次実績収支")}
         </div>
         <div class="chart-scroll">
           <div class="chart-canvas" style="--month-count:${aggregates.length}">
@@ -986,18 +990,37 @@
             <svg class="line-overlay" viewBox="0 0 ${width} 100" preserveAspectRatio="none" aria-hidden="true">
               <polyline class="chart-line monthly-net planned" points="${points("plannedNet")}"></polyline>
               <polyline class="chart-line monthly-net actual" points="${points("actualNet")}"></polyline>
-              <polyline class="chart-line cumulative-net planned" points="${points("plannedCumulative")}"></polyline>
-              <polyline class="chart-line cumulative-net actual" points="${points("actualCumulative")}"></polyline>
             </svg>
           </div>
         </div>
         <p class="chart-note">棒グラフと折れ線は別スケールです。正確な金額は下表で確認できます。</p>
       </section>
 
+      ${renderCumulativeNetChart({
+        id: "planned-cumulative-chart",
+        kicker: "CUMULATIVE PLANNED NET",
+        title: "累積予定収支",
+        description: "毎月の予定収支を累積した推移です。",
+        field: "plannedCumulative",
+        lineClass: "planned",
+        color: "#aa8cbd",
+        aggregates
+      })}
+      ${renderCumulativeNetChart({
+        id: "actual-cumulative-chart",
+        kicker: "CUMULATIVE ACTUAL NET",
+        title: "累積実績収支",
+        description: "入力済みの実績収支を累積した推移です。",
+        field: "actualCumulative",
+        lineClass: "actual",
+        color: "#825aa0",
+        aggregates
+      })}
+
       <section class="card" aria-labelledby="monthly-table-title">
         <div class="section-copy"><h2 id="monthly-table-title">月別の数値</h2><p>グラフと同じ内容を表形式で確認できます。</p></div>
-        <div class="table-scroll"><table class="data-table"><thead><tr><th>月</th><th>収入予定</th><th>収入実績</th><th>支出予定</th><th>支出実績</th><th>予定収支</th><th>実績収支</th><th>累積実績</th></tr></thead><tbody>
-          ${aggregates.map((item) => `<tr><td>${monthLabel(item.month)}</td><td>${formatCurrency(item.incomePlan)}</td><td>${formatCurrency(item.incomeActual)}</td><td>${formatCurrency(item.expensePlan)}</td><td>${formatCurrency(item.expenseActual)}</td><td>${formatSignedCurrency(item.plannedNet)}</td><td>${formatSignedCurrency(item.actualNet)}</td><td>${formatSignedCurrency(item.actualCumulative)}</td></tr>`).join("")}
+        <div class="table-scroll"><table class="data-table"><thead><tr><th>月</th><th>収入予定</th><th>収入実績</th><th>支出予定</th><th>支出実績</th><th>予定収支</th><th>実績収支</th><th>累積予定</th><th>累積実績</th></tr></thead><tbody>
+          ${aggregates.map((item) => `<tr><td>${monthLabel(item.month)}</td><td>${formatCurrency(item.incomePlan)}</td><td>${formatCurrency(item.incomeActual)}</td><td>${formatCurrency(item.expensePlan)}</td><td>${formatCurrency(item.expenseActual)}</td><td>${formatSignedCurrency(item.plannedNet)}</td><td>${formatSignedCurrency(item.actualNet)}</td><td>${formatSignedCurrency(item.plannedCumulative)}</td><td>${formatSignedCurrency(item.actualCumulative)}</td></tr>`).join("")}
         </tbody></table></div>
       </section>
     </div>`;
@@ -1005,6 +1028,29 @@
 
   function legend(color, label) {
     return `<span class="legend-item"><span class="legend-swatch" style="--legend-color:${color}"></span>${label}</span>`;
+  }
+
+  function renderCumulativeNetChart({ id, kicker, title, description, field, lineClass, color, aggregates }) {
+    const maximum = Math.max(1, ...aggregates.map((item) => Math.abs(item[field])));
+    const width = aggregates.length * 100;
+    const points = aggregates.map((item, index) => `${index * 100 + 50},${50 - (item[field] / maximum) * 45}`).join(" ");
+    const finalValue = aggregates.length ? aggregates[aggregates.length - 1][field] : 0;
+    const maximumLabel = compactFormatter.format(maximum);
+    return `<section class="card chart-card cumulative-chart-card" aria-labelledby="${id}-title">
+      <div class="section-copy"><p class="section-kicker">${kicker}</p><h2 id="${id}-title">${title}</h2><p>${description}最終月は ${formatSignedCurrency(finalValue)} です。</p></div>
+      <div class="chart-legend">${legend(color, title)}</div>
+      <div class="chart-scroll">
+        <div class="chart-canvas cumulative-chart-canvas" style="--month-count:${aggregates.length}">
+          <div class="chart-gridline" style="top:10%"><span>+${maximumLabel}</span></div>
+          <div class="chart-gridline" style="top:50%"><span>0</span></div>
+          <div class="chart-gridline" style="top:90%"><span>−${maximumLabel}</span></div>
+          <svg class="line-overlay" viewBox="0 0 ${width} 100" preserveAspectRatio="none" aria-hidden="true">
+            <polyline class="chart-line cumulative-net ${lineClass}" points="${points}"></polyline>
+          </svg>
+          <div class="cumulative-chart-months" aria-hidden="true">${aggregates.map((item) => `<span>${monthParts(item.month).month}月度</span>`).join("")}</div>
+        </div>
+      </div>
+    </section>`;
   }
 
   function renderMonthBars(item, maximum) {
@@ -1217,7 +1263,7 @@
       </label>` : "";
       return `<article class="category-setting-row" style="--category-color:${escapeHtml(category.color)}">
         <span class="color-dot" aria-hidden="true"></span>
-        <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（無効）" : ""}</strong><span>${monthLabel(currentPeriod)} ${formatCurrency(planAmount(category.id, currentPeriod))}</span></span>
+        <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（無効）" : ""}</strong><span>${monthLabel(currentPeriod)} ${formatCurrency(planAmount(category.id, currentPeriod))}</span><span>計画合計 ${formatCurrency(periodPlanTotal(category.id))}</span></span>
         <button type="button" class="row-action" data-plan-category="${escapeHtml(category.id)}">${periodMonths().length}ヶ月</button>
         <button type="button" class="row-action" data-edit-category="${escapeHtml(category.id)}">編集</button>
         ${category.group !== "income" ? `<button type="button" class="row-action category-active-toggle ${category.active === false ? "is-inactive" : ""}" data-toggle-category-active="${escapeHtml(category.id)}">${category.active === false ? "有効にする" : "無効にする"}</button>` : ""}
@@ -2168,7 +2214,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=25", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=26", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });

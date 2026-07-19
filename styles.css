@@ -246,6 +246,8 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .chart-line.monthly-net.planned { stroke: #7f9dc2; stroke-dasharray: 4 3; }
 .chart-line.cumulative-net.actual { stroke: #825aa0; }
 .chart-line.cumulative-net.planned { stroke: #aa8cbd; stroke-dasharray: 7 3; }
+.cumulative-chart-months { position: absolute; z-index: 1; right: 0; bottom: 0; left: 2.8rem; display: grid; grid-template-columns: repeat(var(--month-count), minmax(3.1rem, 1fr)); }
+.cumulative-chart-months span { color: var(--muted); font-size: 0.6rem; text-align: center; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 0.55rem 0.9rem; margin: 0.65rem 0 0.4rem; }
 .legend-item { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--muted); font-size: 0.64rem; font-weight: 700; }
 .legend-swatch { width: 0.75rem; height: 0.5rem; border-radius: 0.15rem; background: var(--legend-color); }
@@ -305,6 +307,7 @@ input[type="color"] { width: 100%; height: 3rem; padding: 0.25rem; border: 1px s
 .category-setting-row .category-meta { min-width: 0; }
 .category-setting-row .category-meta strong, .category-setting-row .category-meta span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .category-setting-row .category-meta span { color: var(--muted); font-size: 0.68rem; }
+.category-setting-row .category-meta span:last-child { overflow: visible; color: var(--primary-strong); font-weight: 800; line-height: 1.35; text-overflow: clip; white-space: normal; }
 .category-daily-toggle { position: relative; display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 0.7rem; min-height: 3.4rem; margin-top: 0.05rem; padding: 0.55rem 0.65rem; border-top: 1px solid var(--line); border-radius: 0.65rem; cursor: pointer; }
 .category-daily-copy { min-width: 0; }
 .category-daily-copy strong, .category-daily-copy span { display: block; }
