@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.12";
+  const APP_VERSION = "0.5.14";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 1000;
@@ -66,6 +66,8 @@
   let planRuleDraft = null;
   let planScaleDraft = DEFAULT_PLAN_SCALE_MAX;
   let planPointerGesture = null;
+  let expenseReorderGesture = null;
+  let expenseReorderSuppressClickUntil = 0;
   let selectedPlanMonth = null;
   let toastTimer = null;
   let calculatorContext = null;
@@ -599,13 +601,13 @@
       </div>
 
       <section class="section" aria-labelledby="variable-title">
-        <div class="section-header"><div><p class="section-kicker">VARIABLE</p><h2 id="variable-title">変動支出</h2></div><p class="section-description">カードを押して入力</p></div>
-        <div class="category-grid">${renderBudgetCards(categoriesForGroup("variable"), currentPeriod)}</div>
+        <div class="section-header"><div><p class="section-kicker">VARIABLE</p><h2 id="variable-title">変動支出</h2></div><p class="section-description">タップで入力・長押しで並べ替え</p></div>
+        <div class="category-grid reorderable-category-grid" data-reorder-group="variable" aria-label="変動支出の並び順">${renderBudgetCards(categoriesForGroup("variable"), currentPeriod)}</div>
       </section>
 
       <section class="section" aria-labelledby="fixed-title">
-        <div class="section-header"><div><p class="section-kicker">FIXED</p><h2 id="fixed-title">固定支出</h2></div><p class="section-description">毎月の決まった支出</p></div>
-        <div class="category-grid">${renderBudgetCards(categoriesForGroup("fixed"), currentPeriod)}</div>
+        <div class="section-header"><div><p class="section-kicker">FIXED</p><h2 id="fixed-title">固定支出</h2></div><p class="section-description">タップで入力・長押しで並べ替え</p></div>
+        <div class="category-grid reorderable-category-grid" data-reorder-group="fixed" aria-label="固定支出の並び順">${renderBudgetCards(categoriesForGroup("fixed"), currentPeriod)}</div>
       </section>
 
       <section class="income-entry-card">
@@ -674,6 +676,226 @@
         <span class="budget-card-carry"><span>予定</span><strong>${formatCurrency(planned)}</strong></span>
       </button>`;
     }).join("");
+  }
+
+  function expenseCardsInGrid(grid) {
+    return Array.from(grid.children).filter((card) => card.matches(".budget-card[data-category-id]"));
+  }
+
+  function expenseCardOrderInGrid(grid) {
+    return expenseCardsInGrid(grid).map((card) => card.dataset.categoryId);
+  }
+
+  function snapshotExpenseCardPositions(grid) {
+    return new Map(expenseCardsInGrid(grid).map((card) => [card, card.getBoundingClientRect()]));
+  }
+
+  function animateExpenseCardReflow(grid, previousPositions, draggedCard) {
+    expenseCardsInGrid(grid).forEach((card) => {
+      if (card === draggedCard) return;
+      const before = previousPositions.get(card);
+      if (!before) return;
+      const after = card.getBoundingClientRect();
+      const x = before.left - after.left;
+      const y = before.top - after.top;
+      if (Math.abs(x) < 1 && Math.abs(y) < 1) return;
+      card.style.transition = "none";
+      card.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      window.requestAnimationFrame(() => {
+        card.style.transition = "transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+        card.style.transform = "";
+      });
+    });
+  }
+
+  function updateExpenseDragPreview(gesture, clientX, clientY) {
+    if (!gesture.preview) return;
+    gesture.preview.style.transform = `translate3d(${clientX - gesture.pointerOffsetX}px, ${clientY - gesture.pointerOffsetY}px, 0) scale(1.035)`;
+  }
+
+  function expenseCardAtPoint(gesture, clientX, clientY) {
+    const gridBounds = gesture.grid.getBoundingClientRect();
+    if (clientX < gridBounds.left - 18 || clientX > gridBounds.right + 18 || clientY < gridBounds.top - 18 || clientY > gridBounds.bottom + 18) return null;
+    const direct = document.elementFromPoint(clientX, clientY);
+    const directCard = direct && direct.closest(".budget-card[data-category-id]");
+    if (directCard && directCard !== gesture.card && gesture.grid.contains(directCard)) return directCard;
+    const candidates = expenseCardsInGrid(gesture.grid).filter((card) => card !== gesture.card);
+    return candidates.reduce((nearest, card) => {
+      const bounds = card.getBoundingClientRect();
+      const distance = Math.hypot(clientX - (bounds.left + bounds.width / 2), clientY - (bounds.top + bounds.height / 2));
+      return !nearest || distance < nearest.distance ? { card, distance } : nearest;
+    }, null)?.card || null;
+  }
+
+  function restoreExpenseCardOrder(grid, categoryIds) {
+    const cardsById = new Map(expenseCardsInGrid(grid).map((card) => [card.dataset.categoryId, card]));
+    categoryIds.forEach((categoryId) => {
+      const card = cardsById.get(categoryId);
+      if (card) grid.append(card);
+    });
+  }
+
+  function moveExpenseCardForPointer(gesture, clientX, clientY) {
+    const target = expenseCardAtPoint(gesture, clientX, clientY);
+    if (!target || target === gesture.card) return;
+    const targetBounds = target.getBoundingClientRect();
+    const nearTargetMiddle = Math.abs(clientY - (targetBounds.top + targetBounds.height / 2)) < targetBounds.height * 0.35;
+    const insertAfter = nearTargetMiddle
+      ? clientX > targetBounds.left + targetBounds.width / 2
+      : clientY > targetBounds.top + targetBounds.height / 2;
+    const reference = insertAfter ? target.nextElementSibling : target;
+    if (reference === gesture.card || (!reference && gesture.card === gesture.grid.lastElementChild)) return;
+    const previousPositions = snapshotExpenseCardPositions(gesture.grid);
+    gesture.grid.insertBefore(gesture.card, reference);
+    animateExpenseCardReflow(gesture.grid, previousPositions, gesture.card);
+  }
+
+  function addExpenseReorderTracking() {
+    window.addEventListener("pointermove", handleExpenseReorderPointerMove, { capture: true, passive: false });
+    window.addEventListener("pointerup", handleExpenseReorderPointerUp, true);
+    window.addEventListener("pointercancel", handleExpenseReorderPointerCancel, true);
+  }
+
+  function removeExpenseReorderTracking() {
+    window.removeEventListener("pointermove", handleExpenseReorderPointerMove, true);
+    window.removeEventListener("pointerup", handleExpenseReorderPointerUp, true);
+    window.removeEventListener("pointercancel", handleExpenseReorderPointerCancel, true);
+  }
+
+  function clearExpenseReorderVisuals(gesture) {
+    if (gesture.timer) window.clearTimeout(gesture.timer);
+    gesture.card.classList.remove("is-reorder-placeholder");
+    gesture.grid.classList.remove("is-reordering");
+    document.body.classList.remove("is-expense-reordering");
+    expenseCardsInGrid(gesture.grid).forEach((card) => {
+      card.style.transition = "";
+      if (card !== gesture.card) card.style.transform = "";
+    });
+    if (gesture.preview) gesture.preview.remove();
+    if (typeof gesture.card.hasPointerCapture === "function" && typeof gesture.card.releasePointerCapture === "function") {
+      try {
+        if (gesture.card.hasPointerCapture(gesture.pointerId)) gesture.card.releasePointerCapture(gesture.pointerId);
+      } catch (error) {
+        console.debug("Expense reorder pointer release unavailable", error);
+      }
+    }
+  }
+
+  function activateExpenseReorder(gesture) {
+    if (gesture !== expenseReorderGesture) return;
+    gesture.timer = null;
+    gesture.active = true;
+    const bounds = gesture.card.getBoundingClientRect();
+    const preview = gesture.card.cloneNode(true);
+    preview.classList.add("expense-drag-preview");
+    preview.removeAttribute("data-category-id");
+    preview.setAttribute("aria-hidden", "true");
+    preview.tabIndex = -1;
+    preview.style.width = `${bounds.width}px`;
+    preview.style.height = `${bounds.height}px`;
+    gesture.preview = preview;
+    gesture.card.classList.add("is-reorder-placeholder");
+    gesture.grid.classList.add("is-reordering");
+    document.body.classList.add("is-expense-reordering");
+    document.body.append(preview);
+    updateExpenseDragPreview(gesture, gesture.lastClientX, gesture.lastClientY);
+    if (typeof gesture.card.setPointerCapture === "function") {
+      try { gesture.card.setPointerCapture(gesture.pointerId); }
+      catch (error) { console.debug("Expense reorder pointer capture unavailable", error); }
+    }
+  }
+
+  function startExpenseReorder(event) {
+    const card = event.target.closest(".reorderable-category-grid .budget-card[data-category-id]");
+    if (!card || event.isPrimary === false || (event.pointerType === "mouse" && event.button !== 0) || expenseReorderGesture) return;
+    const grid = card.closest(".reorderable-category-grid");
+    const group = grid && grid.dataset.reorderGroup;
+    const category = categoryById(card.dataset.categoryId);
+    if (!grid || !["variable", "fixed"].includes(group) || !category || category.group !== group) return;
+    const bounds = card.getBoundingClientRect();
+    const gesture = {
+      pointerId: event.pointerId,
+      card,
+      grid,
+      group,
+      active: false,
+      preview: null,
+      initialOrder: expenseCardOrderInGrid(grid),
+      initialCategoryOrders: new Map(state.categories.filter((item) => item.group === group).map((item) => [item.id, item.order])),
+      pointerOffsetX: event.clientX - bounds.left,
+      pointerOffsetY: event.clientY - bounds.top,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
+      timer: null
+    };
+    gesture.timer = window.setTimeout(() => activateExpenseReorder(gesture), 360);
+    expenseReorderGesture = gesture;
+    addExpenseReorderTracking();
+  }
+
+  function handleExpenseReorderPointerMove(event) {
+    const gesture = expenseReorderGesture;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    gesture.lastClientX = event.clientX;
+    gesture.lastClientY = event.clientY;
+    if (!gesture.active) {
+      if (Math.hypot(event.clientX - gesture.startClientX, event.clientY - gesture.startClientY) > 9) {
+        expenseReorderGesture = null;
+        removeExpenseReorderTracking();
+        if (gesture.timer) window.clearTimeout(gesture.timer);
+      }
+      return;
+    }
+    if (event.cancelable) event.preventDefault();
+    updateExpenseDragPreview(gesture, event.clientX, event.clientY);
+    moveExpenseCardForPointer(gesture, event.clientX, event.clientY);
+  }
+
+  function applyExpenseCategoryOrder(gesture) {
+    const categoriesById = new Map(state.categories.map((category) => [category.id, category]));
+    const activeCategories = expenseCardOrderInGrid(gesture.grid).map((categoryId) => categoriesById.get(categoryId)).filter(Boolean);
+    const inactiveCategories = state.categories
+      .filter((category) => category.group === gesture.group && category.active === false)
+      .sort((left, right) => Number(left.order) - Number(right.order));
+    [...activeCategories, ...inactiveCategories].forEach((category, index) => { category.order = (index + 1) * 10; });
+  }
+
+  async function finishExpenseReorder(event, cancelled = false) {
+    const gesture = expenseReorderGesture;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    expenseReorderGesture = null;
+    removeExpenseReorderTracking();
+    if (!gesture.active) {
+      if (gesture.timer) window.clearTimeout(gesture.timer);
+      return;
+    }
+    if (event.cancelable) event.preventDefault();
+    expenseReorderSuppressClickUntil = Date.now() + 500;
+    if (cancelled) restoreExpenseCardOrder(gesture.grid, gesture.initialOrder);
+    const orderChanged = !cancelled && expenseCardOrderInGrid(gesture.grid).some((categoryId, index) => categoryId !== gesture.initialOrder[index]);
+    clearExpenseReorderVisuals(gesture);
+    if (!orderChanged) return;
+    try {
+      applyExpenseCategoryOrder(gesture);
+      await persist(`${gesture.group === "variable" ? "変動支出" : "固定支出"}の並び順を保存しました`);
+      render();
+    } catch (error) {
+      state.categories.forEach((category) => {
+        if (gesture.initialCategoryOrders.has(category.id)) category.order = gesture.initialCategoryOrders.get(category.id);
+      });
+      render();
+      throw error;
+    }
+  }
+
+  function handleExpenseReorderPointerUp(event) {
+    finishExpenseReorder(event).catch((error) => showToast(error instanceof Error ? error.message : "並び順を保存できませんでした"));
+  }
+
+  function handleExpenseReorderPointerCancel(event) {
+    finishExpenseReorder(event, true).catch((error) => showToast(error instanceof Error ? error.message : "並び替えを中止しました"));
   }
 
   function renderTransactionRow(transaction) {
@@ -1588,6 +1810,7 @@
   async function handleViewClick(event) {
     const target = event.target.closest("button");
     if (!target) return;
+    if (target.dataset.categoryId && Date.now() < expenseReorderSuppressClickUntil) return;
     if (target.dataset.categoryId) openCalculator(target.dataset.categoryId);
     else if (target.dataset.transactionId) openTransactionEditor(target.dataset.transactionId);
     else if (target.dataset.analysisMode) { analysisMode = target.dataset.analysisMode === "income" ? "income" : "expense"; render(); }
@@ -1691,6 +1914,10 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 
+  viewHost.addEventListener("pointerdown", startExpenseReorder);
+  viewHost.addEventListener("contextmenu", (event) => {
+    if (event.target.closest(".reorderable-category-grid .budget-card")) event.preventDefault();
+  });
   viewHost.addEventListener("click", (event) => handleViewClick(event).catch((error) => showToast(error instanceof Error ? error.message : "操作を完了できませんでした")));
   viewHost.addEventListener("change", (event) => handleViewChange(event).catch((error) => showToast(error instanceof Error ? error.message : "設定を保存できませんでした")));
   viewHost.addEventListener("submit", (event) => handleViewSubmit(event).catch((error) => showToast(error instanceof Error ? error.message : "保存できませんでした")));
@@ -1926,7 +2153,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=22", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=24", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
