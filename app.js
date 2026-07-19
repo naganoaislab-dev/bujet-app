@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.11";
+  const APP_VERSION = "0.5.12";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 1000;
@@ -300,7 +300,7 @@
 
   function expenseCategoriesForReporting(month) {
     return state.categories
-      .filter((category) => category.group !== "income" && (category.active !== false || planAmount(category.id, month) > 0 || actualAmount(category.id, month) > 0))
+      .filter((category) => category.group !== "income" && (category.active !== false || actualAmount(category.id, month) > 0))
       .sort((a, b) => Number(a.order) - Number(b.order));
   }
 
@@ -320,6 +320,10 @@
 
   function planAmount(categoryId, month) {
     return Math.max(0, toInteger(state.plans[categoryId] && state.plans[categoryId][month], 0));
+  }
+
+  function activeExpensePlanAmount(category, month) {
+    return category && category.group !== "income" && category.active !== false ? planAmount(category.id, month) : 0;
   }
 
   function transactionsForMonth(month, direction = null) {
@@ -384,7 +388,7 @@
   function aggregateMonth(month) {
     const expenseCategories = expenseCategoriesForReporting(month);
     const incomeCategories = incomeCategoriesForReporting(month);
-    const expensePlan = expenseCategories.reduce((sum, category) => sum + planAmount(category.id, month), 0);
+    const expensePlan = expenseCategories.reduce((sum, category) => sum + activeExpensePlanAmount(category, month), 0);
     const incomePlan = incomeCategories.reduce((sum, category) => sum + planAmount(category.id, month), 0);
     const expenseActual = transactionsForMonth(month, "expense").reduce((sum, item) => sum + toInteger(item.amount), 0);
     const incomeActual = transactionsForMonth(month, "income").reduce((sum, item) => sum + toInteger(item.amount), 0);
@@ -782,7 +786,7 @@
     const incomeMode = analysisMode === "income";
     const categories = incomeMode ? incomeCategoriesForReporting(analysisPeriod) : expenseCategoriesForReporting(analysisPeriod);
     const rows = categories.map((category) => {
-      const plan = planAmount(category.id, analysisPeriod);
+      const plan = incomeMode ? planAmount(category.id, analysisPeriod) : activeExpensePlanAmount(category, analysisPeriod);
       const actual = actualAmount(category.id, analysisPeriod);
       return { category, plan, actual, variance: plan - actual, ratio: plan > 0 ? actual / plan : actual > 0 ? 2 : 0 };
     }).sort((a, b) => b.actual - a.actual);
@@ -1922,7 +1926,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=21", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=22", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
