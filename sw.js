@@ -3,15 +3,15 @@
 const SCOPE_KEY = new URL(self.registration.scope).pathname.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "root";
 const LEGACY_SCOPED_CACHE_PATTERN = new RegExp(`^budget-minus-${SCOPE_KEY}-v\\d+$`);
 const CACHE_PREFIX = `budget-minus-${SCOPE_KEY}--`;
-const CACHE_VERSION = `${CACHE_PREFIX}v24`;
+const CACHE_VERSION = `${CACHE_PREFIX}v25`;
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=24",
-  "./app.js?v=24",
-  "./db.js?v=24",
-  "./manifest.webmanifest?v=24",
-  "./icons/icon.svg?v=24"
+  "./styles.css?v=25",
+  "./app.js?v=25",
+  "./db.js?v=25",
+  "./manifest.webmanifest?v=25",
+  "./icons/icon.svg?v=25"
 ];
 
 function scopedUrl(path) {
