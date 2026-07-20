@@ -186,7 +186,9 @@ p { color: var(--muted); line-height: 1.55; }
 .expense-drag-preview { position: fixed; z-index: 200; top: 0; left: 0; margin: 0; pointer-events: none; opacity: 0.98; box-shadow: 0 20px 42px rgba(var(--primary-rgb), 0.32); transform-origin: center; will-change: transform; }
 body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none; touch-action: none; }
 .budget-card-name { display: block; margin-bottom: 0.8rem; padding-right: 0.5rem; font-size: 0.9rem; font-weight: 800; }
-.budget-card-missing { display: inline-block; margin-left: 0.45rem; color: var(--danger); font-size: 0.68rem; font-style: normal; font-weight: 850; vertical-align: 0.08rem; }
+.budget-card-status { display: inline-block; margin-left: 0.45rem; font-size: 0.68rem; font-style: normal; font-weight: 850; vertical-align: 0.08rem; }
+.budget-card-status.missing { color: var(--danger); }
+.budget-card-status.complete { color: var(--primary-strong); }
 .budget-card-label { display: block; color: var(--muted); font-size: 0.64rem; font-weight: 700; }
 .budget-card-amount { display: block; margin: 0.15rem 0 0.55rem; font-size: 1.15rem; font-weight: 850; letter-spacing: -0.04em; }
 .budget-card-carry { display: flex; justify-content: space-between; gap: 0.35rem; color: var(--muted); font-size: 0.68rem; }
