@@ -186,6 +186,7 @@ p { color: var(--muted); line-height: 1.55; }
 .expense-drag-preview { position: fixed; z-index: 200; top: 0; left: 0; margin: 0; pointer-events: none; opacity: 0.98; box-shadow: 0 20px 42px rgba(var(--primary-rgb), 0.32); transform-origin: center; will-change: transform; }
 body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none; touch-action: none; }
 .budget-card-name { display: block; margin-bottom: 0.8rem; padding-right: 0.5rem; font-size: 0.9rem; font-weight: 800; }
+.budget-card-missing { display: inline-block; margin-left: 0.45rem; color: var(--danger); font-size: 0.68rem; font-style: normal; font-weight: 850; vertical-align: 0.08rem; }
 .budget-card-label { display: block; color: var(--muted); font-size: 0.64rem; font-weight: 700; }
 .budget-card-amount { display: block; margin: 0.15rem 0 0.55rem; font-size: 1.15rem; font-weight: 850; letter-spacing: -0.04em; }
 .budget-card-carry { display: flex; justify-content: space-between; gap: 0.35rem; color: var(--muted); font-size: 0.68rem; }
@@ -265,6 +266,40 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .cumulative-chart-tap-target.is-selected { background: color-mix(in srgb, var(--primary) 7%, transparent); }
 .cumulative-chart-months { position: absolute; z-index: 1; right: 0; bottom: 0; left: 2.8rem; display: grid; grid-template-columns: repeat(var(--month-count), minmax(3.1rem, 1fr)); }
 .cumulative-chart-months span { color: var(--muted); font-size: 0.6rem; text-align: center; }
+.chart-plot { position: absolute; top: 1.25rem; right: 0; bottom: 3.25rem; left: 2.8rem; }
+.chart-plot .chart-gridline { z-index: 1; }
+.chart-plot .chart-gridline span { left: -2.8rem; width: 2.55rem; padding-right: 0.25rem; text-align: left; }
+.chart-plot .line-overlay { inset: 0; width: 100%; height: 100%; }
+.interactive-bar-series { position: absolute; z-index: 2; inset: 0; display: grid; grid-template-columns: repeat(var(--month-count), 3.1rem); }
+.interactive-month-bars { position: relative; height: 100%; }
+.interactive-chart-bar { position: absolute; top: var(--bar-top); width: 30%; height: var(--bar-height); min-height: 0; border-radius: 0.22rem 0.22rem 0 0; }
+.interactive-chart-bar:nth-child(1) { left: 16%; }
+.interactive-chart-bar:nth-child(2) { right: 16%; }
+.interactive-chart-bar.is-negative { border-radius: 0 0 0.22rem 0.22rem; }
+.interactive-chart-bar.expense-plan { background: #e8b59b; }
+.interactive-chart-bar.expense-actual { background: #d66735; }
+.interactive-chart-bar.income-plan { background: #a8ceba; }
+.interactive-chart-bar.income-actual { background: #2f8057; }
+.interactive-chart-bar.monthly-net-planned { background: #7f9dc2; }
+.interactive-chart-bar.monthly-net-actual { background: #3c69a1; }
+.interactive-chart-selection-guide, .cumulative-chart-selection-guide { top: 0; bottom: 0; left: var(--selection-left); }
+.interactive-chart-selection-guide { position: absolute; z-index: 4; border-left: 1px dashed var(--ink); opacity: 0.42; pointer-events: none; }
+.interactive-chart-tooltip { position: absolute; z-index: 6; top: 0.25rem; left: clamp(5rem, var(--selection-left), calc(100% - 5rem)); display: grid; width: 9.65rem; gap: 0.2rem; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 0.65rem; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 5px 14px rgba(29, 38, 32, 0.13); font-size: 0.64rem; line-height: 1.35; pointer-events: none; transform: translateX(-50%); }
+.interactive-chart-tooltip strong { font-size: 0.72rem; }
+.interactive-chart-tooltip span { display: flex; align-items: center; gap: 0.28rem; font-weight: 800; }
+.interactive-chart-tooltip i { width: 0.9rem; height: 0; border-top: 2px solid currentColor; }
+.interactive-chart-tooltip .expense-plan { color: #a86143; }
+.interactive-chart-tooltip .expense-actual { color: #c95325; }
+.interactive-chart-tooltip .income-plan { color: #3f8761; }
+.interactive-chart-tooltip .income-actual { color: #216d48; }
+.interactive-chart-tooltip .monthly-net-planned { color: #647fa5; }
+.interactive-chart-tooltip .monthly-net-actual { color: #3c69a1; }
+.interactive-chart-tap-targets { position: absolute; z-index: 5; inset: 0; display: grid; grid-template-columns: repeat(var(--month-count), 3.1rem); }
+.interactive-chart-tap-target { padding: 0; border: 0; outline: 0; background: transparent; cursor: pointer; touch-action: pan-x; -webkit-tap-highlight-color: transparent; }
+.interactive-chart-tap-target:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
+.interactive-chart-tap-target.is-selected { background: color-mix(in srgb, var(--primary) 7%, transparent); }
+.chart-plot .cumulative-chart-tooltip { top: 0.25rem; }
+.chart-plot .cumulative-chart-tap-targets { inset: 0; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 0.55rem 0.9rem; margin: 0.65rem 0 0.4rem; }
 .legend-item { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--muted); font-size: 0.64rem; font-weight: 700; }
 .legend-swatch { width: 0.75rem; height: 0.5rem; border-radius: 0.15rem; background: var(--legend-color); }
@@ -373,6 +408,7 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .dialog-actions.three-actions { grid-template-columns: auto 1fr 1fr; }
 .calculator-expression { display: block; min-height: 1.4rem; color: var(--muted); text-align: right; font-size: 0.85rem; }
 .calculator-display { display: block; margin: 0.2rem 0 1rem; overflow: hidden; font-size: clamp(2.15rem, 12vw, 3.6rem); font-weight: 850; letter-spacing: -0.055em; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.calculator-expression[hidden], .calculator-display[hidden], .calculator-keys[hidden] { display: none; }
 .calculator-shift-toggle { width: 100%; margin: -0.15rem 0 0.7rem; }
 .calculator-shift-panel { display: grid; gap: 0.65rem; margin: -0.1rem 0 0.8rem; padding: 0.8rem; border: 1px solid var(--line); border-radius: 0.9rem; background: var(--surface-2); }
 .calculator-shift-panel[hidden] { display: none; }
