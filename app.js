@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.24";
+  const APP_VERSION = "0.5.25";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const MIN_PLAN_SCALE_MAX = 100;
@@ -1785,7 +1785,7 @@
       const valueText = `${formatCurrency(amount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`;
       const selected = month === selectedPlanMonth;
       return `<article class="month-plan-column ${selected ? "selected" : ""} ${overScale ? "over-scale" : ""}" data-plan-column="${month}" style="--category-color:${escapeHtml(category.color)}">
-        <span class="month-plan-label">${monthLabel(month, false)}<br>${monthParts(month).year}<span class="month-plan-selected-indicator"${selected ? "" : " hidden"}>選択中</span></span>
+        <button type="button" class="month-plan-label" data-plan-select="${month}" aria-pressed="${selected}">${monthLabel(month, false)}<br>${monthParts(month).year}<span class="month-plan-selected-indicator"${selected ? "" : " hidden"}>選択中</span></button>
         <div class="month-plan-bar-area" data-plan-slider="${month}" role="slider" tabindex="0" aria-label="${monthLabel(month)}の計画金額" aria-describedby="plan-scale-step" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="${planScaleDraft}" aria-valuenow="${sliderValue}" aria-valuetext="${escapeHtml(valueText)}"${selected ? ' aria-current="true"' : ""}>
           <span class="month-plan-overflow"${overScale ? "" : " hidden"}>上限超過</span>
           <span class="month-plan-bar" style="--bar-height:${height}%"></span>
@@ -1804,6 +1804,8 @@
       column.classList.toggle("selected", selected);
       const indicator = column.querySelector(".month-plan-selected-indicator");
       if (indicator) indicator.hidden = !selected;
+      const label = column.querySelector(".month-plan-label");
+      if (label) label.setAttribute("aria-pressed", String(selected));
       const barArea = column.querySelector(".month-plan-bar-area");
       if (selected) barArea.setAttribute("aria-current", "true");
       else barArea.removeAttribute("aria-current");
@@ -1811,9 +1813,16 @@
     const copyButton = document.querySelector("#copy-next-plan");
     const canCopy = selectedIndex >= 0 && selectedIndex < months.length - 1;
     copyButton.disabled = !canCopy;
-    if (selectedIndex < 0) copyButton.title = "棒または金額欄で月を選択してください";
-    else if (!canCopy) copyButton.title = "最後の月から先にはコピーできません";
-    else copyButton.title = `${monthLabel(months[selectedIndex])}を${monthLabel(months[selectedIndex + 1])}へコピー`;
+    if (selectedIndex < 0) {
+      copyButton.textContent = "月を選択すると次の月へコピーできます";
+      copyButton.title = "月名・棒グラフ・金額欄をタップして月を選択してください";
+    } else if (!canCopy) {
+      copyButton.textContent = "最終月のため次の月へコピーできません";
+      copyButton.title = "最後の月から先にはコピーできません";
+    } else {
+      copyButton.textContent = `選択中の${monthLabel(months[selectedIndex])}の値を${monthLabel(months[selectedIndex + 1])}へコピー`;
+      copyButton.title = `${monthLabel(months[selectedIndex])}の値を${monthLabel(months[selectedIndex + 1])}へコピー`;
+    }
   }
 
   function selectPlanMonth(month, scrollIntoView = false) {
@@ -2325,6 +2334,10 @@
   });
   monthlyPlanEditor.addEventListener("focusin", (event) => {
     if (event.target.dataset.planMonth) selectPlanMonth(event.target.dataset.planMonth);
+  });
+  monthlyPlanEditor.addEventListener("click", (event) => {
+    const monthSelectButton = event.target.closest("[data-plan-select]");
+    if (monthSelectButton) selectPlanMonth(monthSelectButton.dataset.planSelect);
   });
   monthlyPlanEditor.addEventListener("change", commitPlanInput);
   monthlyPlanEditor.addEventListener("focusout", commitPlanInput);
