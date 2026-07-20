@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.21";
+  const APP_VERSION = "0.5.22";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 1000;
@@ -769,7 +769,11 @@
     return categories.map((category) => {
       const stats = categoryBudgetStats(category.id, month);
       const dailyStats = dailyBudgetStats(category, month);
-      const fixedExpenseMissing = category.group === "fixed" && planAmount(category.id, month) > 0 && actualAmount(category.id, month) === 0;
+      const fixedExpenseStatus = category.group === "fixed" && planAmount(category.id, month) > 0
+        ? actualAmount(category.id, month) > 0
+          ? { label: "入力済", tone: "complete" }
+          : { label: "未入力", tone: "missing" }
+        : null;
       const available = Math.max(1, stats.plan + Math.max(0, stats.carry));
       const progress = clamp((stats.actual / available) * 100, 0, 100);
       if (dailyStats) {
@@ -787,7 +791,7 @@
         </button>`;
       }
       return `<button type="button" class="budget-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
-        <span class="budget-card-name">${escapeHtml(category.name)}${fixedExpenseMissing ? '<em class="budget-card-missing">未入力</em>' : ""}</span>
+        <span class="budget-card-name">${escapeHtml(category.name)}${fixedExpenseStatus ? `<em class="budget-card-status ${fixedExpenseStatus.tone}">${fixedExpenseStatus.label}</em>` : ""}</span>
         <span class="budget-card-label">今月の残り予算</span>
         <strong class="budget-card-amount ${stats.monthlyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.monthlyRemaining)}</strong>
         <span class="budget-card-carry"><span>これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>
