@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=28">
-  <link rel="icon" href="icons/icon.svg?v=28" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=28">
-  <link rel="stylesheet" href="styles.css?v=28">
-  <script src="db.js?v=28" defer></script>
-  <script src="app.js?v=28" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=29">
+  <link rel="icon" href="icons/icon.svg?v=29" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=29">
+  <link rel="stylesheet" href="styles.css?v=29">
+  <script src="db.js?v=29" defer></script>
+  <script src="app.js?v=29" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -224,7 +224,11 @@
         <div><span>アプリバージョン</span><strong id="app-version-name">v0.5.10</strong></div>
       </div>
       <p class="help-text">端末内のデータだけで動作する、オフライン対応の予算ベース家計簿です。</p>
-      <button type="submit" class="button primary">閉じる</button>
+      <p id="app-update-status" class="app-update-status" role="status">更新を確認できます。</p>
+      <div class="dialog-actions">
+        <button id="app-update-check" type="button" class="button secondary">最新バージョンを確認</button>
+        <button type="submit" class="button primary">閉じる</button>
+      </div>
     </form>
   </dialog>
 
