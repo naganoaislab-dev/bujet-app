@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=33">
-  <link rel="icon" href="icons/icon.svg?v=33" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=33">
-  <link rel="stylesheet" href="styles.css?v=33">
-  <script src="db.js?v=33" defer></script>
-  <script src="app.js?v=33" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=34">
+  <link rel="icon" href="icons/icon.svg?v=34" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=34">
+  <link rel="stylesheet" href="styles.css?v=34">
+  <script src="db.js?v=34" defer></script>
+  <script src="app.js?v=34" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -199,9 +199,9 @@
       <div class="plan-scale-panel">
         <label for="plan-scale-max">
           <span class="field-label">棒の上限額</span>
-          <input id="plan-scale-max" type="number" min="100" max="1000000000" step="any" inputmode="numeric" value="100000">
+          <input id="plan-scale-max" type="number" min="100" max="1000000000" step="1" inputmode="numeric" value="100000">
         </label>
-        <p><strong id="plan-scale-summary">上端 ￥100,000</strong><span id="plan-scale-step">棒は￥500刻み</span><span>金額欄は￥100刻み。上限を超える月の金額は保持されます。</span></p>
+        <p><strong id="plan-scale-summary">上端 ￥100,000</strong><span id="plan-scale-step">棒は￥1,000刻み</span><span>金額欄は1円単位。棒は目盛り単位に丸めて表示します。</span></p>
       </div>
       <div id="monthly-plan-editor" class="monthly-plan-editor" aria-label="月ごとの計画金額"></div>
       <div class="dialog-actions three-actions sticky-dialog-actions">

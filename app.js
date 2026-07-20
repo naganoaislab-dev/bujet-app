@@ -2,13 +2,22 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.23";
+  const APP_VERSION = "0.5.24";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
-  const PLAN_BAR_MEDIUM_STEP = 1000;
-  const PLAN_BAR_LARGE_STEP = 10000;
-  const PLAN_BAR_MEDIUM_SCALE = 10000;
-  const PLAN_BAR_LARGE_SCALE = 100000;
+  const MIN_PLAN_SCALE_MAX = 100;
+  const PLAN_BAR_STEPS = Object.freeze([
+    { maximum: 1000, step: 10 },
+    { maximum: 10000, step: 100 },
+    { maximum: 50000, step: 500 },
+    { maximum: 100000, step: 1000 },
+    { maximum: 500000, step: 5000 },
+    { maximum: 1000000, step: 10000 },
+    { maximum: 5000000, step: 50000 },
+    { maximum: 10000000, step: 100000 },
+    { maximum: 50000000, step: 500000 },
+    { maximum: 100000000, step: 1000000 }
+  ]);
   const DEFAULT_PLAN_SCALE_MAX = 100000;
   const MAX_PLAN_SCALE_MAX = 1000000000;
   const MILLISECONDS_PER_DAY = 86400000;
@@ -127,25 +136,25 @@
   function normalizePlanScaleMax(value) {
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount <= 0) return DEFAULT_PLAN_SCALE_MAX;
-    return clamp(Math.round(amount / PLAN_AMOUNT_STEP) * PLAN_AMOUNT_STEP, PLAN_AMOUNT_STEP, MAX_PLAN_SCALE_MAX);
+    return clamp(Math.round(amount), MIN_PLAN_SCALE_MAX, MAX_PLAN_SCALE_MAX);
   }
 
   function planBarStep(scaleMaximum = planScaleDraft) {
     const normalizedScale = normalizePlanScaleMax(scaleMaximum);
-    if (normalizedScale >= PLAN_BAR_LARGE_SCALE) return PLAN_BAR_LARGE_STEP;
-    if (normalizedScale >= PLAN_BAR_MEDIUM_SCALE) return PLAN_BAR_MEDIUM_STEP;
-    return PLAN_AMOUNT_STEP;
+    return (PLAN_BAR_STEPS.find((range) => normalizedScale <= range.maximum) || PLAN_BAR_STEPS[PLAN_BAR_STEPS.length - 1]).step;
   }
 
   function planBarPositionAmount(amount, scaleMaximum = planScaleDraft) {
-    const maximum = Math.max(PLAN_AMOUNT_STEP, normalizePlanScaleMax(scaleMaximum));
-    return clamp(roundAmountToStep(Math.max(0, toInteger(amount)), planBarStep(maximum)), 0, maximum);
+    const maximum = Math.max(MIN_PLAN_SCALE_MAX, normalizePlanScaleMax(scaleMaximum));
+    const normalizedAmount = Math.max(0, toInteger(amount));
+    if (normalizedAmount >= maximum) return maximum;
+    return clamp(roundAmountToStep(normalizedAmount, planBarStep(maximum)), 0, maximum);
   }
 
   function planBarHeight(amount, scaleMaximum = planScaleDraft) {
     const displayedAmount = planBarPositionAmount(amount, scaleMaximum);
     if (displayedAmount <= 0) return 0;
-    return clamp((displayedAmount / Math.max(PLAN_AMOUNT_STEP, scaleMaximum)) * 100, 0, 100);
+    return clamp((displayedAmount / Math.max(MIN_PLAN_SCALE_MAX, scaleMaximum)) * 100, 0, 100);
   }
 
   function pad(value) {
