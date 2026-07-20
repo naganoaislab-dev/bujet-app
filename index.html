@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=27">
-  <link rel="icon" href="icons/icon.svg?v=27" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=27">
-  <link rel="stylesheet" href="styles.css?v=27">
-  <script src="db.js?v=27" defer></script>
-  <script src="app.js?v=27" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=28">
+  <link rel="icon" href="icons/icon.svg?v=28" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=28">
+  <link rel="stylesheet" href="styles.css?v=28">
+  <script src="db.js?v=28" defer></script>
+  <script src="app.js?v=28" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -54,7 +54,7 @@
   </div>
 
   <dialog id="calculator-dialog" class="sheet-dialog calculator-dialog">
-    <form method="dialog" class="sheet-card calculator-card">
+    <form id="calculator-form" method="dialog" class="sheet-card calculator-card">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="dialog-heading">
         <div>
@@ -65,6 +65,14 @@
       </div>
       <output id="calculator-expression" class="calculator-expression" aria-live="polite"></output>
       <output id="calculator-display" class="calculator-display" aria-live="polite">¥0</output>
+      <button id="calculator-shift-toggle" type="button" class="button secondary calculator-shift-toggle" hidden>予算をシフト</button>
+      <section id="calculator-shift-panel" class="calculator-shift-panel" aria-labelledby="calculator-shift-title" hidden>
+        <div><p class="eyebrow">BUDGET SHIFT</p><h3 id="calculator-shift-title">固定支出の予算を移す</h3><p id="calculator-shift-source" class="help-text"></p></div>
+        <label><span class="field-label">移動先の月</span><select id="calculator-shift-target-month"></select></label>
+        <p id="calculator-shift-target-summary" class="calculator-shift-target-summary" aria-live="polite"></p>
+        <label><span class="field-label">移す金額</span><input id="calculator-shift-amount" type="number" min="1" step="1" inputmode="numeric"></label>
+        <button id="calculator-shift-confirm" type="button" class="button primary">予算をシフトする</button>
+      </section>
       <div id="calculator-keys" class="calculator-keys">
         <button type="button" data-calc="clear" class="calc-key utility">AC</button>
         <button type="button" data-calc="backspace" class="calc-key utility" aria-label="一文字削除">⌫</button>
@@ -151,10 +159,9 @@
       </select>
       <label class="field-label" for="category-color">表示色</label>
       <input id="category-color" type="color" value="#3f7d5b">
-      <div class="dialog-actions three-actions">
-        <button id="category-delete" type="button" class="button danger">削除</button>
+      <div class="dialog-actions">
         <button type="button" class="button secondary" data-close="category-dialog">キャンセル</button>
-        <button type="submit" class="button primary">保存</button>
+        <button type="submit" class="button primary">追加</button>
       </div>
     </form>
   </dialog>
@@ -165,6 +172,14 @@
         <div><p id="plan-kind" class="eyebrow">36ヶ月の計画</p><h2 id="plan-category-name">食費</h2></div>
         <button type="button" class="icon-button" data-close="plan-dialog" aria-label="閉じる">×</button>
       </div>
+      <section class="plan-category-panel" aria-labelledby="plan-category-settings-title">
+        <div class="section-copy"><h3 id="plan-category-settings-title">項目を編集</h3><p>名称・区分・表示色を変更できます。</p></div>
+        <div class="form-grid plan-category-controls">
+          <label><span class="field-label">項目名</span><input id="plan-category-name-input" type="text" maxlength="20" required></label>
+          <label><span class="field-label">区分</span><select id="plan-category-group" required><option value="variable">変動支出</option><option value="fixed">固定支出</option><option value="income">収入</option></select></label>
+          <label><span class="field-label">表示色</span><input id="plan-category-color" type="color" value="#3f7d5b"></label>
+        </div>
+      </section>
       <section class="bulk-plan-panel" aria-labelledby="bulk-plan-title">
         <div class="section-copy">
           <h3 id="bulk-plan-title">まとめて設定</h3>
@@ -189,9 +204,10 @@
         <p><strong id="plan-scale-summary">上端 ￥100,000</strong><span id="plan-scale-step">棒は￥500刻み</span><span>金額欄は￥100刻み。上限を超える月の金額は保持されます。</span></p>
       </div>
       <div id="monthly-plan-editor" class="monthly-plan-editor" aria-label="月ごとの計画金額"></div>
-      <div class="dialog-actions sticky-dialog-actions">
+      <div class="dialog-actions three-actions sticky-dialog-actions">
+        <button id="plan-category-delete" type="button" class="button danger">削除</button>
         <button type="button" class="button secondary" data-close="plan-dialog">キャンセル</button>
-        <button type="submit" class="button primary">計画を保存</button>
+        <button type="submit" class="button primary">項目と計画を保存</button>
       </div>
     </form>
   </dialog>
