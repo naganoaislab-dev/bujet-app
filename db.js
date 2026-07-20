@@ -9,7 +9,7 @@
   const LEGACY_STATE_ID = "main";
   const WORKSPACE_ID = "workspace";
   const SAMPLE_PROJECT_ID = "sample-project";
-  const PLAN_SCALE_STEP = 100;
+  const MIN_PLAN_SCALE_MAX = 100;
   const DEFAULT_PLAN_SCALE_MAX = 100000;
   const MAX_PLAN_SCALE_MAX = 1000000000;
   const DEFAULT_THEME_ID = "forest";
@@ -44,7 +44,7 @@
   function normalizePlanScaleMax(value) {
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount <= 0) return DEFAULT_PLAN_SCALE_MAX;
-    return Math.min(MAX_PLAN_SCALE_MAX, Math.max(PLAN_SCALE_STEP, Math.round(amount / PLAN_SCALE_STEP) * PLAN_SCALE_STEP));
+    return Math.min(MAX_PLAN_SCALE_MAX, Math.max(MIN_PLAN_SCALE_MAX, Math.round(amount)));
   }
 
   function monthsBetween(startDate, endDate) {
