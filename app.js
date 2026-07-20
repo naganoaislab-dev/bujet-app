@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.17";
+  const APP_VERSION = "0.5.18";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 1000;
@@ -855,17 +855,22 @@
     addExpenseReorderTracking();
   }
 
+  function cancelPendingExpenseReorder(gesture) {
+    if (expenseReorderGesture !== gesture) return;
+    expenseReorderGesture = null;
+    removeExpenseReorderTracking();
+    if (gesture.timer) window.clearTimeout(gesture.timer);
+  }
+
   function handleExpenseReorderPointerMove(event) {
     const gesture = expenseReorderGesture;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     gesture.lastClientX = event.clientX;
     gesture.lastClientY = event.clientY;
     if (!gesture.active) {
-      if (Math.hypot(event.clientX - gesture.startClientX, event.clientY - gesture.startClientY) > 14) {
-        expenseReorderGesture = null;
-        removeExpenseReorderTracking();
-        if (gesture.timer) window.clearTimeout(gesture.timer);
-      }
+      const horizontalDistance = Math.abs(event.clientX - gesture.startClientX);
+      const verticalDistance = Math.abs(event.clientY - gesture.startClientY);
+      if (verticalDistance > 6 || Math.hypot(horizontalDistance, verticalDistance) > 14) cancelPendingExpenseReorder(gesture);
       return;
     }
     if (event.cancelable) event.preventDefault();
@@ -1270,7 +1275,6 @@
       return `<article class="category-setting-row" style="--category-color:${escapeHtml(category.color)}">
         <span class="color-dot" aria-hidden="true"></span>
         <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（無効）" : ""}</strong><span>${monthLabel(currentPeriod)} ${formatCurrency(planAmount(category.id, currentPeriod))}</span><span>計画合計 ${formatCurrency(periodPlanTotal(category.id))}</span></span>
-        <button type="button" class="row-action" data-plan-category="${escapeHtml(category.id)}">${periodMonths().length}ヶ月</button>
         <button type="button" class="row-action" data-edit-category="${escapeHtml(category.id)}">編集</button>
         ${category.group !== "income" ? `<button type="button" class="row-action category-active-toggle ${category.active === false ? "is-inactive" : ""}" data-toggle-category-active="${escapeHtml(category.id)}">${category.active === false ? "有効にする" : "無効にする"}</button>` : ""}
         ${dailyToggle}
@@ -1302,13 +1306,59 @@
     return { current: "0", accumulator: null, operation: null, waitingForOperand: false, expression: "" };
   }
 
+  function calculatorShiftTargetMonths(sourceMonth) {
+    const sourceIndex = periodMonths().indexOf(sourceMonth);
+    return sourceIndex < 0 ? [] : periodMonths().slice(sourceIndex + 1);
+  }
+
+  function updateCalculatorShiftTargetSummary() {
+    if (!calculatorContext || !calculatorContext.isFixed) return;
+    const category = categoryById(calculatorContext.categoryId);
+    const sourceMonth = calculatorContext.sourceMonth;
+    const targetMonth = document.querySelector("#calculator-shift-target-month").value;
+    const sourceBudget = category ? planAmount(category.id, sourceMonth) : 0;
+    const targetBudget = category && targetMonth ? planAmount(category.id, targetMonth) : 0;
+    const amountInput = document.querySelector("#calculator-shift-amount");
+    const requestedAmount = Math.max(0, toInteger(amountInput.value));
+    const validAmount = requestedAmount > 0 && requestedAmount <= sourceBudget && Boolean(targetMonth);
+    document.querySelector("#calculator-shift-source").textContent = `${monthLabel(sourceMonth)}の予定 ${formatCurrency(sourceBudget)} から移します。`;
+    document.querySelector("#calculator-shift-target-summary").textContent = targetMonth
+      ? `${monthLabel(targetMonth)}の現在の予定：${formatCurrency(targetBudget)} → シフト後：${formatCurrency(targetBudget + requestedAmount)}`
+      : "移動先の月を選択してください。";
+    const confirm = document.querySelector("#calculator-shift-confirm");
+    confirm.disabled = !validAmount;
+    confirm.textContent = targetMonth && requestedAmount > 0 ? `${monthLabel(targetMonth)}へ${formatCurrency(requestedAmount)}をシフト` : "予算をシフトする";
+    amountInput.max = String(sourceBudget);
+  }
+
+  function resetCalculatorShiftPanel(category) {
+    const panel = document.querySelector("#calculator-shift-panel");
+    const toggle = document.querySelector("#calculator-shift-toggle");
+    const sourceMonth = currentPeriod;
+    const targets = category && category.group === "fixed" ? calculatorShiftTargetMonths(sourceMonth) : [];
+    const sourceBudget = category ? planAmount(category.id, sourceMonth) : 0;
+    panel.hidden = true;
+    toggle.hidden = category?.group !== "fixed";
+    toggle.disabled = !targets.length || sourceBudget <= 0;
+    toggle.title = !targets.length ? "移動先の月がありません" : toggle.disabled ? "シフトできる予算がありません" : "選択中の月の固定支出予算を別の月へ移します";
+    document.querySelector("#calculator-shift-target-month").innerHTML = targets.map((month) => `<option value="${month}">${monthLabel(month)}</option>`).join("");
+    document.querySelector("#calculator-shift-amount").value = String(sourceBudget);
+    updateCalculatorShiftTargetSummary();
+  }
+
   function openCalculator(categoryId) {
     const category = categoryById(categoryId);
     if (!category) return;
-    calculatorContext = { categoryId, direction: directionForCategory(category) };
+    calculatorContext = { categoryId, direction: directionForCategory(category), isFixed: category.group === "fixed", sourceMonth: currentPeriod };
     calculator = createCalculatorState();
+    if (calculatorContext.isFixed) {
+      calculator.current = String(planAmount(categoryId, currentPeriod));
+      calculator.waitingForOperand = true;
+      calculator.expression = `${monthLabel(currentPeriod)}の予定額`;
+    }
     document.querySelector("#calculator-category").textContent = category.name;
     document.querySelector("#calculator-kind").textContent = calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
+    resetCalculatorShiftPanel(category);
     updateCalculatorDisplay();
     openDialog(calculatorDialog);
   }
@@ -1409,6 +1459,38 @@
     openDialog(memoDialog);
   }
 
+  async function shiftCalculatorBudget() {
+    if (!calculatorContext || !calculatorContext.isFixed) return;
+    const category = categoryById(calculatorContext.categoryId);
+    const sourceMonth = calculatorContext.sourceMonth;
+    const targetMonth = document.querySelector("#calculator-shift-target-month").value;
+    const amount = Math.max(0, toInteger(document.querySelector("#calculator-shift-amount").value));
+    const targets = calculatorShiftTargetMonths(sourceMonth);
+    if (!category || category.group !== "fixed" || !targets.includes(targetMonth)) throw new Error("移動先の月を選択してください");
+    const sourceBudget = planAmount(category.id, sourceMonth);
+    if (amount <= 0 || amount > sourceBudget) throw new Error(`移せる金額は${formatCurrency(sourceBudget)}までです`);
+    const targetBudget = planAmount(category.id, targetMonth);
+    const previousDefaultAmount = category.defaultAmount;
+    const previousPlanRule = category.planRule ? { ...category.planRule } : null;
+    state.plans[category.id] = { ...(state.plans[category.id] || {}) };
+    state.plans[category.id][sourceMonth] = sourceBudget - amount;
+    state.plans[category.id][targetMonth] = targetBudget + amount;
+    category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
+    category.planRule = null;
+    try {
+      await persist(`${category.name}の予算を${monthLabel(sourceMonth)}から${monthLabel(targetMonth)}へ${formatCurrency(amount)}シフトしました`);
+    } catch (error) {
+      state.plans[category.id][sourceMonth] = sourceBudget;
+      state.plans[category.id][targetMonth] = targetBudget;
+      category.defaultAmount = previousDefaultAmount;
+      category.planRule = previousPlanRule;
+      updateCalculatorShiftTargetSummary();
+      throw error;
+    }
+    closeDialog(calculatorDialog);
+    render();
+  }
+
   async function savePendingTransaction(memo) {
     if (!pendingTransaction) return;
     const stored = state.transactions.find((transaction) => transaction.id === pendingTransaction.id);
@@ -1439,15 +1521,18 @@
     openDialog(transactionDialog);
   }
 
-  function openCategoryEditor(id = null, group = "variable") {
-    const category = id ? categoryById(id) : null;
-    document.querySelector("#category-dialog-title").textContent = category ? "種別を編集" : "種別を追加";
-    document.querySelector("#category-id").value = category ? category.id : "";
-    document.querySelector("#category-name").value = category ? category.name : "";
-    document.querySelector("#category-group").value = category ? category.group : group;
-    document.querySelector("#category-color").value = category ? category.color : (group === "income" ? "#2b8a63" : "#3f7d5b");
-    document.querySelector("#category-delete").hidden = !category;
+  function openCategoryEditor(group = "variable") {
+    document.querySelector("#category-dialog-title").textContent = "種別を追加";
+    document.querySelector("#category-id").value = "";
+    document.querySelector("#category-name").value = "";
+    document.querySelector("#category-group").value = group;
+    document.querySelector("#category-color").value = group === "income" ? "#2b8a63" : "#3f7d5b";
     openDialog(categoryDialog);
+  }
+
+  function updatePlanCategoryKind(group) {
+    const planLength = periodMonths().length;
+    document.querySelector("#plan-kind").textContent = group === "income" ? `収入予定・${planLength}ヶ月` : group === "fixed" ? `固定支出・${planLength}ヶ月` : `変動支出・${planLength}ヶ月`;
   }
 
   function openPlanEditor(categoryId) {
@@ -1461,8 +1546,10 @@
     selectedPlanMonth = null;
     periodMonths().forEach((month) => { planDraft[month] = Math.max(0, toInteger(planAmount(categoryId, month))); });
     document.querySelector("#plan-category-name").textContent = category.name;
-    const planLength = periodMonths().length;
-    document.querySelector("#plan-kind").textContent = category.group === "income" ? `収入予定・${planLength}ヶ月` : category.group === "fixed" ? `固定支出・${planLength}ヶ月` : `変動支出・${planLength}ヶ月`;
+    document.querySelector("#plan-category-name-input").value = category.name;
+    document.querySelector("#plan-category-group").value = category.group;
+    document.querySelector("#plan-category-color").value = category.color;
+    updatePlanCategoryKind(category.group);
     document.querySelector("#plan-start-month").innerHTML = monthOptions(planRuleDraft && periodMonths().includes(planRuleDraft.startMonth) ? planRuleDraft.startMonth : periodMonths()[0]);
     document.querySelector("#plan-interval").value = String(planRuleDraft ? planRuleDraft.interval : 1);
     document.querySelector("#plan-bulk-amount").value = planRuleDraft ? planRuleDraft.amount : (planDraft[currentPeriod] ?? category.defaultAmount ?? 0);
@@ -1882,9 +1969,8 @@
     else if (target.dataset.transactionId) openTransactionEditor(target.dataset.transactionId);
     else if (target.dataset.analysisMode) { analysisMode = target.dataset.analysisMode === "income" ? "income" : "expense"; render(); }
     else if (target.dataset.settingsPane) { settingsPane = target.dataset.settingsPane; render(); }
-    else if (target.dataset.addCategory) openCategoryEditor(null, target.dataset.addCategory);
-    else if (target.dataset.editCategory) openCategoryEditor(target.dataset.editCategory);
-    else if (target.dataset.planCategory) openPlanEditor(target.dataset.planCategory);
+    else if (target.dataset.addCategory) openCategoryEditor(target.dataset.addCategory);
+    else if (target.dataset.editCategory) openPlanEditor(target.dataset.editCategory);
     else if (target.dataset.cumulativeChartIndex !== undefined) { cumulativeChartSelectedIndex = clamp(toInteger(target.dataset.cumulativeChartIndex), 0, Math.max(0, periodMonths().length - 1)); render(); }
     else if (target.dataset.toggleCategoryActive) await toggleExpenseCategoryActive(target.dataset.toggleCategoryActive);
     else if (target.dataset.action === "toggle-income") { incomeExpanded = !incomeExpanded; render(); }
@@ -1996,6 +2082,15 @@
     if (key) handleCalculatorKey(key.dataset.calc);
   });
   document.querySelector("#calculator-ok").addEventListener("click", () => acceptCalculator().catch((error) => showToast(error.message)));
+  document.querySelector("#calculator-shift-toggle").addEventListener("click", () => {
+    const panel = document.querySelector("#calculator-shift-panel");
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) updateCalculatorShiftTargetSummary();
+  });
+  document.querySelector("#calculator-shift-target-month").addEventListener("change", updateCalculatorShiftTargetSummary);
+  document.querySelector("#calculator-shift-amount").addEventListener("input", updateCalculatorShiftTargetSummary);
+  document.querySelector("#calculator-shift-confirm").addEventListener("click", () => shiftCalculatorBudget().catch((error) => showToast(error.message)));
+  document.querySelector("#calculator-form").addEventListener("submit", (event) => event.preventDefault());
 
   document.querySelector("#app-version-button").addEventListener("click", () => {
     document.querySelector("#app-version-name").textContent = `v${APP_VERSION}`;
@@ -2088,8 +2183,7 @@
     render();
   });
 
-  document.querySelector("#category-delete").addEventListener("click", async () => {
-    const id = document.querySelector("#category-id").value;
+  async function deleteCategory(id, dialog) {
     const category = categoryById(id);
     if (!category || !window.confirm(`${category.name}を非表示にしますか？入力済み実績は残ります。`)) return;
     const hasTransactions = state.transactions.some((item) => item.categoryId === id);
@@ -2105,13 +2199,15 @@
       state.categories = state.categories.filter((item) => item.id !== id);
       delete state.plans[id];
     }
-    closeDialog(categoryDialog);
+    closeDialog(dialog);
     await persist(hasTransactions ? "種別を非表示にしました" : "種別を削除しました");
     render();
-  });
+  }
 
   document.querySelector("#apply-plan-pattern").addEventListener("click", applyPlanPattern);
   document.querySelector("#copy-next-plan").addEventListener("click", copyPlanToNextMonth);
+  document.querySelector("#plan-category-group").addEventListener("change", (event) => updatePlanCategoryKind(event.target.value));
+  document.querySelector("#plan-category-delete").addEventListener("click", () => deleteCategory(editingPlanCategoryId, planDialog).catch((error) => showToast(error.message)));
   document.querySelector("#plan-scale-max").addEventListener("input", (event) => {
     if (!Number.isFinite(Number(event.target.value)) || Number(event.target.value) <= 0) return;
     planScaleDraft = normalizePlanScaleMax(event.target.value);
@@ -2179,16 +2275,34 @@
     event.preventDefault();
     const category = categoryById(editingPlanCategoryId);
     if (!category || !planDraft) return;
+    const name = document.querySelector("#plan-category-name-input").value.trim();
+    const group = document.querySelector("#plan-category-group").value;
+    const color = document.querySelector("#plan-category-color").value;
+    if (!name) {
+      showToast("項目名を入力してください");
+      return;
+    }
+    const hasTransactions = state.transactions.some((item) => item.categoryId === category.id);
+    if (hasTransactions && directionForCategory(category) !== directionForImportedCategory({ group })) {
+      showToast("実績がある項目は支出・収入の区分を変更できません");
+      return;
+    }
     planScaleDraft = normalizePlanScaleMax(document.querySelector("#plan-scale-max").value);
     const normalizedPlanDraft = {};
     Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = Math.max(0, toInteger(amount)); });
     state.plans[editingPlanCategoryId] = { ...(state.plans[editingPlanCategoryId] || {}), ...normalizedPlanDraft };
+    category.name = name;
+    category.group = group;
+    category.color = color;
+    category.active = true;
+    category.archivedAt = null;
+    if (group !== "variable") category.dailyBudgetEnabled = false;
     category.defaultAmount = Math.max(0, toInteger(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]));
     category.planRule = planRuleDraft ? { ...planRuleDraft, amount: Math.max(0, toInteger(planRuleDraft.amount)) } : null;
     category.planScaleMax = planScaleDraft;
     cancelPlanPointerTracking();
     closeDialog(planDialog);
-    await persist(`${category.name}の計画を保存しました`);
+    await persist(`${category.name}の項目と計画を保存しました`);
     render();
   });
 
@@ -2222,7 +2336,7 @@
 
     if ("serviceWorker" in navigator) {
       try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=27", document.baseURI), {
+        await navigator.serviceWorker.register(new URL("sw.js?v=28", document.baseURI), {
           scope: "./",
           updateViaCache: "none"
         });
