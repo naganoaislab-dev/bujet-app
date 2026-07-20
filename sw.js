@@ -1,17 +1,18 @@
 "use strict";
 
 const SCOPE_KEY = new URL(self.registration.scope).pathname.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "root";
+const IS_LEGACY_VERSIONED_WORKER = new URL(self.location.href).searchParams.has("v");
 const LEGACY_SCOPED_CACHE_PATTERN = new RegExp(`^budget-minus-${SCOPE_KEY}-v\\d+$`);
 const CACHE_PREFIX = `budget-minus-${SCOPE_KEY}--`;
-const CACHE_VERSION = `${CACHE_PREFIX}v28`;
+const CACHE_VERSION = `${CACHE_PREFIX}v29`;
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=28",
-  "./app.js?v=28",
-  "./db.js?v=28",
-  "./manifest.webmanifest?v=28",
-  "./icons/icon.svg?v=28"
+  "./styles.css?v=29",
+  "./app.js?v=29",
+  "./db.js?v=29",
+  "./manifest.webmanifest?v=29",
+  "./icons/icon.svg?v=29"
 ];
 
 function scopedUrl(path) {
@@ -22,8 +23,12 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_VERSION)
       .then((cache) => cache.addAll(APP_SHELL.map(scopedUrl)))
-      .then(() => self.skipWaiting())
+      .then(() => IS_LEGACY_VERSIONED_WORKER ? self.skipWaiting() : undefined)
   );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {

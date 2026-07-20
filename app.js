@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.18";
+  const APP_VERSION = "0.5.19";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 1000;
@@ -74,6 +74,8 @@
   let calculatorContext = null;
   let calculator = createCalculatorState();
   let lastRenderedDate = "";
+  let serviceWorkerRegistration = null;
+  let serviceWorkerUpdateRequested = false;
 
   const currencyFormatter = new Intl.NumberFormat("ja-JP", {
     style: "currency",
@@ -457,6 +459,120 @@
   function closeDialog(dialog) {
     if (dialog.open && typeof dialog.close === "function") dialog.close();
     else dialog.removeAttribute("open");
+  }
+
+  function setAppUpdateStatus(message, available = false) {
+    const status = document.querySelector("#app-update-status");
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle("is-available", available);
+  }
+
+  function refreshAppUpdateUi() {
+    const button = document.querySelector("#app-update-check");
+    if (!("serviceWorker" in navigator)) {
+      button.disabled = true;
+      setAppUpdateStatus("このブラウザではアプリ更新を確認できません。");
+      return;
+    }
+    if (serviceWorkerRegistration?.waiting && navigator.serviceWorker.controller) {
+      setAppUpdateStatus("新しいバージョンを入手できます。更新確認ボタンから適用してください。", true);
+      return;
+    }
+    setAppUpdateStatus(`現在のバージョンは v${APP_VERSION} です。`);
+  }
+
+  function announceAppUpdateAvailable(registration) {
+    if (!registration.waiting || !navigator.serviceWorker.controller) return;
+    refreshAppUpdateUi();
+    showToast("新しいバージョンを入手できます");
+  }
+
+  function trackServiceWorkerInstallation(registration, worker) {
+    if (!worker) return;
+    worker.addEventListener("statechange", () => {
+      if (worker.state === "installed") announceAppUpdateAvailable(registration);
+    });
+  }
+
+  function waitForServiceWorkerInstallation(registration) {
+    const worker = registration.installing;
+    if (!worker || worker.state === "installed" || worker.state === "redundant") return Promise.resolve();
+    return new Promise((resolve) => {
+      const handleStateChange = () => {
+        if (worker.state !== "installed" && worker.state !== "redundant") return;
+        worker.removeEventListener("statechange", handleStateChange);
+        resolve();
+      };
+      worker.addEventListener("statechange", handleStateChange);
+    });
+  }
+
+  async function applyWaitingServiceWorker(registration) {
+    if (!registration.waiting) return false;
+    if (!window.confirm("新しいバージョンがあります。今すぐ更新しますか？")) {
+      setAppUpdateStatus("新しいバージョンは次回以降に更新できます。", true);
+      return false;
+    }
+    serviceWorkerUpdateRequested = true;
+    document.querySelector("#app-update-check").disabled = true;
+    setAppUpdateStatus("更新を適用しています。まもなく再読み込みします。", true);
+    registration.waiting.postMessage({ type: "SKIP_WAITING" });
+    return true;
+  }
+
+  async function checkForAppUpdate() {
+    if (!("serviceWorker" in navigator)) {
+      refreshAppUpdateUi();
+      return;
+    }
+    const button = document.querySelector("#app-update-check");
+    button.disabled = true;
+    setAppUpdateStatus("最新バージョンを確認しています…");
+    try {
+      const registration = serviceWorkerRegistration || await navigator.serviceWorker.getRegistration();
+      if (!registration) {
+        setAppUpdateStatus("更新機能を準備しています。画面を開き直してからもう一度お試しください。");
+        return;
+      }
+      serviceWorkerRegistration = registration;
+      if (registration.waiting && navigator.serviceWorker.controller) {
+        await applyWaitingServiceWorker(registration);
+        return;
+      }
+      await registration.update();
+      if (registration.installing) {
+        setAppUpdateStatus("新しいバージョンをダウンロードしています…");
+        await waitForServiceWorkerInstallation(registration);
+      }
+      if (registration.waiting && navigator.serviceWorker.controller) {
+        await applyWaitingServiceWorker(registration);
+        return;
+      }
+      setAppUpdateStatus(`すでに最新バージョン（v${APP_VERSION}）です。`);
+      showToast("最新バージョンです");
+    } catch (error) {
+      setAppUpdateStatus("更新を確認できませんでした。通信状況を確認して再試行してください。");
+      showToast(error instanceof Error ? error.message : "更新を確認できませんでした");
+    } finally {
+      if (!serviceWorkerUpdateRequested) button.disabled = false;
+    }
+  }
+
+  async function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) return;
+    const registration = await navigator.serviceWorker.register(new URL("sw.js", document.baseURI), {
+      scope: "./",
+      updateViaCache: "none"
+    });
+    serviceWorkerRegistration = registration;
+    registration.addEventListener("updatefound", () => trackServiceWorkerInstallation(registration, registration.installing));
+    trackServiceWorkerInstallation(registration, registration.installing);
+    announceAppUpdateAvailable(registration);
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!serviceWorkerUpdateRequested) return;
+      window.location.reload();
+    });
   }
 
   function syncCurrentProjectPeriod() {
@@ -2094,8 +2210,10 @@
 
   document.querySelector("#app-version-button").addEventListener("click", () => {
     document.querySelector("#app-version-name").textContent = `v${APP_VERSION}`;
+    refreshAppUpdateUi();
     openDialog(versionDialog);
   });
+  document.querySelector("#app-update-check").addEventListener("click", () => checkForAppUpdate());
 
   document.querySelectorAll("[data-close]").forEach((button) => {
     button.addEventListener("click", () => closeDialog(document.querySelector(`#${button.dataset.close}`)));
@@ -2334,15 +2452,10 @@
       viewHost.innerHTML = `<div class="card"><h2>データを開けませんでした</h2><p>${escapeHtml(error instanceof Error ? error.message : "時間をおいて再度お試しください。")}</p></div>`;
     }
 
-    if ("serviceWorker" in navigator) {
-      try {
-        await navigator.serviceWorker.register(new URL("sw.js?v=28", document.baseURI), {
-          scope: "./",
-          updateViaCache: "none"
-        });
-      } catch (error) {
-        console.error("Service Workerの登録に失敗しました。", error);
-      }
+    try {
+      await registerServiceWorker();
+    } catch (error) {
+      console.error("Service Workerの登録に失敗しました。", error);
     }
   }
 
