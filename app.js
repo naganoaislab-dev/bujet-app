@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.20";
+  const APP_VERSION = "0.5.21";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 1000;
@@ -894,12 +894,14 @@
 
   function addExpenseReorderTracking() {
     window.addEventListener("pointermove", handleExpenseReorderPointerMove, { capture: true, passive: false });
+    window.addEventListener("touchmove", handleExpenseReorderTouchMove, { capture: true, passive: false });
     window.addEventListener("pointerup", handleExpenseReorderPointerUp, true);
     window.addEventListener("pointercancel", handleExpenseReorderPointerCancel, true);
   }
 
   function removeExpenseReorderTracking() {
     window.removeEventListener("pointermove", handleExpenseReorderPointerMove, true);
+    window.removeEventListener("touchmove", handleExpenseReorderTouchMove, true);
     window.removeEventListener("pointerup", handleExpenseReorderPointerUp, true);
     window.removeEventListener("pointercancel", handleExpenseReorderPointerCancel, true);
   }
@@ -976,6 +978,7 @@
       lastClientY: event.clientY,
       lastTargetId: "",
       lastPlacement: "",
+      pointerType: event.pointerType,
       timer: null
     };
     gesture.timer = window.setTimeout(() => activateExpenseReorder(gesture), 420);
@@ -1004,6 +1007,12 @@
     if (event.cancelable) event.preventDefault();
     updateExpenseDragPreview(gesture, event.clientX, event.clientY);
     moveExpenseCardForPointer(gesture, event.clientX, event.clientY);
+  }
+
+  function handleExpenseReorderTouchMove(event) {
+    const gesture = expenseReorderGesture;
+    if (!gesture || !gesture.active || gesture.pointerType !== "touch" || event.touches.length !== 1) return;
+    if (event.cancelable) event.preventDefault();
   }
 
   function applyExpenseCategoryOrder(gesture) {
@@ -1065,7 +1074,6 @@
 
   function renderOverview() {
     const aggregates = periodMonths().map(aggregateMonth);
-    const selected = aggregateMonth(currentPeriod);
     let plannedCumulative = 0;
     let actualCumulative = 0;
     aggregates.forEach((item) => {
@@ -1099,12 +1107,6 @@
       <section class="card overview-hero" aria-label="${projectDateLabel(state.settings.endDate)}時点の見込み収支">
         <div><p class="section-kicker">PROJECT END FORECAST</p><h2>${projectDateLabel(state.settings.endDate)}時点の見込み収支</h2><p>これまでの実績と、残りの計画から算出した見込み収支。</p></div>
         <div class="overview-hero-total"><strong class="${projectEndTone}">${formatSignedCurrency(projectEndForecast)}</strong><span>計画時 ${formatSignedCurrency(projectEnd.plannedCumulative)}</span></div>
-      </section>
-      <section class="summary-grid">
-        ${summaryCard("予定収入", selected.incomePlan, `実績 ${formatCurrency(selected.incomeActual)}`)}
-        ${summaryCard("予定支出", selected.expensePlan, `実績 ${formatCurrency(selected.expenseActual)}`)}
-        ${summaryCard("予定収支", selected.plannedNet, `${monthLabel(currentPeriod)}の計画`, selected.plannedNet < 0 ? "negative" : "positive")}
-        ${summaryCard("実績収支", selected.actualNet, `${monthLabel(currentPeriod)}の結果`, selected.actualNet < 0 ? "negative" : "positive")}
       </section>
 
       ${renderInteractiveOverviewBarChart({
@@ -1500,7 +1502,7 @@
   }
 
   function updateCalculatorShiftTargetSummary() {
-    if (!calculatorContext || !calculatorContext.isFixed) return;
+    if (!calculatorContext || !calculatorContext.canShiftBudget) return;
     const category = categoryById(calculatorContext.categoryId);
     const sourceMonth = calculatorContext.sourceMonth;
     const targetMonth = document.querySelector("#calculator-shift-target-month").value;
@@ -1523,15 +1525,16 @@
     const panel = document.querySelector("#calculator-shift-panel");
     const toggle = document.querySelector("#calculator-shift-toggle");
     const sourceMonth = currentPeriod;
-    const targets = category && category.group === "fixed" ? calculatorShiftTargetMonths(sourceMonth) : [];
+    const canShiftBudget = category && ["variable", "fixed"].includes(category.group);
+    const targets = canShiftBudget ? calculatorShiftTargetMonths(sourceMonth) : [];
     const sourceBudget = category ? planAmount(category.id, sourceMonth) : 0;
     panel.hidden = true;
     document.querySelector("#calculator-expression").hidden = false;
     document.querySelector("#calculator-display").hidden = false;
     document.querySelector("#calculator-keys").hidden = false;
-    toggle.hidden = category?.group !== "fixed";
+    toggle.hidden = !canShiftBudget;
     toggle.disabled = !targets.length || sourceBudget <= 0;
-    toggle.title = !targets.length ? "移動先の月がありません" : toggle.disabled ? "シフトできる予算がありません" : "選択中の月の固定支出予算を別の月へ移します";
+    toggle.title = !targets.length ? "移動先の月がありません" : toggle.disabled ? "シフトできる予算がありません" : "選択中の月の支出予算を別の月へ移します";
     document.querySelector("#calculator-shift-target-month").innerHTML = targets.map((month) => `<option value="${month}">${monthLabel(month)}</option>`).join("");
     document.querySelector("#calculator-shift-amount").value = String(sourceBudget);
     updateCalculatorShiftTargetSummary();
@@ -1540,7 +1543,13 @@
   function openCalculator(categoryId) {
     const category = categoryById(categoryId);
     if (!category) return;
-    calculatorContext = { categoryId, direction: directionForCategory(category), isFixed: category.group === "fixed", sourceMonth: currentPeriod };
+    calculatorContext = {
+      categoryId,
+      direction: directionForCategory(category),
+      isFixed: category.group === "fixed",
+      canShiftBudget: ["variable", "fixed"].includes(category.group),
+      sourceMonth: currentPeriod
+    };
     calculator = createCalculatorState();
     if (calculatorContext.isFixed) {
       calculator.current = String(planAmount(categoryId, currentPeriod));
@@ -1651,13 +1660,13 @@
   }
 
   async function shiftCalculatorBudget() {
-    if (!calculatorContext || !calculatorContext.isFixed) return;
+    if (!calculatorContext || !calculatorContext.canShiftBudget) return;
     const category = categoryById(calculatorContext.categoryId);
     const sourceMonth = calculatorContext.sourceMonth;
     const targetMonth = document.querySelector("#calculator-shift-target-month").value;
     const amount = Math.max(0, toInteger(document.querySelector("#calculator-shift-amount").value));
     const targets = calculatorShiftTargetMonths(sourceMonth);
-    if (!category || category.group !== "fixed" || !targets.includes(targetMonth)) throw new Error("移動先の月を選択してください");
+    if (!category || !["variable", "fixed"].includes(category.group) || !targets.includes(targetMonth)) throw new Error("移動先の月を選択してください");
     const sourceBudget = planAmount(category.id, sourceMonth);
     if (amount <= 0 || amount > sourceBudget) throw new Error(`移せる金額は${formatCurrency(sourceBudget)}までです`);
     const targetBudget = planAmount(category.id, targetMonth);
