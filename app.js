@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.22";
+  const APP_VERSION = "0.5.23";
   const BACKUP_VERSION = 2;
   const PLAN_AMOUNT_STEP = 100;
   const PLAN_BAR_MEDIUM_STEP = 1000;
@@ -1281,7 +1281,7 @@
       const plan = incomeMode ? planAmount(category.id, analysisPeriod) : activeExpensePlanAmount(category, analysisPeriod);
       const actual = actualAmount(category.id, analysisPeriod);
       return { category, plan, actual, variance: plan - actual, ratio: plan > 0 ? actual / plan : actual > 0 ? 2 : 0 };
-    }).sort((a, b) => b.actual - a.actual);
+    });
     const totalPlan = rows.reduce((sum, row) => sum + row.plan, 0);
     const totalActual = rows.reduce((sum, row) => sum + row.actual, 0);
     const progressDonut = makePlanProgressDonut(totalPlan, totalActual, incomeMode);
@@ -1291,15 +1291,21 @@
     const end = parseLocalDate(range.end);
     const totalDays = Math.max(1, Math.round((end - start) / 86400000) + 1);
     const elapsedDays = today < start ? 0 : today > end ? totalDays : Math.round((today - start) / 86400000) + 1;
-    const projected = elapsedDays > 0 ? Math.round((totalActual / elapsedDays) * totalDays) : 0;
-    const insights = incomeMode ? createIncomeInsights(rows, totalPlan, totalActual, projected, analysisPeriod) : createInsights(rows, totalPlan, totalActual, projected, analysisPeriod);
+    const insights = incomeMode ? createIncomeInsights(rows, totalPlan, totalActual, analysisPeriod) : createInsights(rows, totalPlan, totalActual, analysisPeriod);
     let heroStatus = "計画どおり";
     let heroTone = "positive";
     if (incomeMode && totalActual < totalPlan) { heroStatus = `${formatCurrency(totalPlan - totalActual)} 未達`; heroTone = "negative"; }
     else if (incomeMode && totalActual > totalPlan) heroStatus = `${formatCurrency(totalActual - totalPlan)} 上振れ`;
     else if (!incomeMode && totalActual > totalPlan) { heroStatus = `${formatCurrency(totalActual - totalPlan)} 超過`; heroTone = "negative"; }
     else if (!incomeMode && totalActual < totalPlan) heroStatus = `${formatCurrency(totalPlan - totalActual)} 残り`;
-    const projectedBehind = incomeMode ? projected < totalPlan : projected > totalPlan;
+    const variableRows = rows.filter((row) => row.category.group === "variable");
+    const fixedRows = rows.filter((row) => row.category.group === "fixed");
+    const analysisRows = incomeMode
+      ? `<div class="analysis-list">${rows.map((row) => renderAnalysisRow(row, true)).join("") || '<div class="empty-state">収入種別がありません。</div>'}</div>`
+      : [
+        ["VARIABLE", "変動支出", variableRows],
+        ["FIXED", "固定支出", fixedRows]
+      ].filter(([, , groupRows]) => groupRows.length).map(([kicker, title, groupRows]) => `<section class="analysis-category-group"><p class="section-kicker">${kicker}</p><h3>${title}</h3><div class="analysis-list">${groupRows.map((row) => renderAnalysisRow(row, false)).join("")}</div></section>`).join("") || '<div class="empty-state">支出種別がありません。</div>';
 
     viewHost.innerHTML = `<div class="view-stack">
       <div class="segmented" style="--segments:2" aria-label="分析対象">
@@ -1313,11 +1319,9 @@
       </section>
       <section class="summary-grid">
         ${summaryCard(incomeMode ? "現在の収入" : "現在の支出", totalActual, `${elapsedDays}/${totalDays}日経過`)}
-        ${summaryCard("着地予測", projected, incomeMode ? (projectedBehind ? "収入計画を下回るペース" : "収入計画以上のペース") : (projectedBehind ? "予算超過ペース" : "予算内ペース"), projectedBehind ? "negative" : "positive")}
+        ${summaryCard(incomeMode ? "計画上の収入合計" : "計画上の支出合計", totalPlan, `${monthLabel(analysisPeriod)}の計画`)}
       </section>
-      <section class="card"><div class="section-copy"><p class="section-kicker">BY CATEGORY</p><h2>種別ごとの計画差</h2><p>実績が多い順に表示しています。</p></div><div class="analysis-list">
-        ${rows.map((row) => renderAnalysisRow(row, incomeMode)).join("") || `<div class="empty-state">${incomeMode ? "収入" : "支出"}種別がありません。</div>`}
-      </div></section>
+      <section class="card"><div class="section-copy"><p class="section-kicker">BY CATEGORY</p><h2>種別ごとの計画差</h2><p>${incomeMode ? "設定した並び順で表示しています。" : "変動支出・固定支出を、入力画面と同じ並び順で表示しています。"}</p></div>${analysisRows}</section>
       <section class="card"><div class="section-copy"><p class="section-kicker">INSIGHTS</p><h2>今月の気づき</h2></div><ul class="insight-list">${insights.map((item) => `<li class="insight-item"><span class="insight-icon" aria-hidden="true">${item.icon}</span><span><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body)}</span></span></li>`).join("")}</ul></section>
     </div>`;
   }
@@ -1339,14 +1343,13 @@
     return { gradient: `conic-gradient(${color} 0 ${progress.toFixed(2)}%, var(--surface-2) ${progress.toFixed(2)}% 100%)` };
   }
 
-  function createInsights(rows, totalPlan, totalActual, projected, month) {
+  function createInsights(rows, totalPlan, totalActual, month) {
     if (month > periodForDate(localDateKey())) {
-      return [{ icon: "→", title: "未来月の計画です", body: "実績がまだないため、予算計画だけを表示しています。月が始まると着地予測や未記録項目を分析します。" }];
+      return [{ icon: "→", title: "未来月の計画です", body: "実績がまだないため、予算計画だけを表示しています。月が始まると予算差や未記録項目を分析します。" }];
     }
     const insights = [];
     const overspent = rows.filter((row) => row.actual > row.plan && row.actual > 0).sort((a, b) => a.variance - b.variance);
     if (overspent[0]) insights.push({ icon: "!", title: `${overspent[0].category.name}が予算を超えています`, body: `${formatCurrency(Math.abs(overspent[0].variance))}の超過です。記録を確認し、必要なら翌月計画を調整しましょう。` });
-    if (projected > totalPlan && totalPlan > 0) insights.push({ icon: "↗", title: "今のペースでは予算超過の見込み", body: `月末の着地予測は${formatCurrency(projected)}です。残り期間で${formatCurrency(projected - totalPlan)}の調整が目安です。` });
     const fixedMissing = categoriesForGroup("fixed").filter((category) => planAmount(category.id, month) > 0 && actualAmount(category.id, month) === 0);
     if (fixedMissing.length) insights.push({ icon: "✓", title: "未記録の固定支出があります", body: `${fixedMissing.map((category) => category.name).join("、")}は予定がありますが実績が未入力です。` });
     const unplanned = rows.find((row) => row.plan === 0 && row.actual > 0);
@@ -1355,14 +1358,13 @@
     return insights;
   }
 
-  function createIncomeInsights(rows, totalPlan, totalActual, projected, month) {
+  function createIncomeInsights(rows, totalPlan, totalActual, month) {
     if (month > periodForDate(localDateKey())) {
-      return [{ icon: "→", title: "未来月の収入計画です", body: "実績がまだないため、収入予定だけを表示しています。月が始まると未達や着地予測を分析します。" }];
+      return [{ icon: "→", title: "未来月の収入計画です", body: "実績がまだないため、収入予定だけを表示しています。月が始まると未達や予定外収入を分析します。" }];
     }
     const insights = [];
     const shortfalls = rows.filter((row) => row.plan > row.actual).sort((a, b) => b.variance - a.variance);
     if (shortfalls[0]) insights.push({ icon: "!", title: `${shortfalls[0].category.name}が計画未達です`, body: `${formatCurrency(shortfalls[0].variance)}がまだ記録されていません。入金済みなら収入実績を追加してください。` });
-    if (projected < totalPlan && totalPlan > 0 && totalActual > 0) insights.push({ icon: "↘", title: "収入が計画を下回る見込み", body: `月末の着地予測は${formatCurrency(projected)}です。計画との差は${formatCurrency(totalPlan - projected)}です。` });
     const unplanned = rows.find((row) => row.plan === 0 && row.actual > 0);
     if (unplanned) insights.push({ icon: "＋", title: `${unplanned.category.name}に予定外収入`, body: `${formatCurrency(unplanned.actual)}の実績があります。継続する場合は今後の収入計画へ追加できます。` });
     if (!insights.length) insights.push({ icon: "○", title: "収入は計画どおりです", body: totalActual ? "目立った未達はありません。" : "まだ収入実績がありません。入金されたら入力画面から記録しましょう。" });
@@ -1478,14 +1480,14 @@
 
   function renderData() {
     const updated = state.updatedAt ? new Date(state.updatedAt).toLocaleString("ja-JP") : "未保存";
+    const backupDate = state.settings.lastBackupAt ? new Date(state.settings.lastBackupAt) : null;
+    const lastBackup = backupDate && !Number.isNaN(backupDate.getTime()) ? backupDate.toLocaleString("ja-JP") : "まだ作成していません";
     const outsideTransactions = state.transactions.filter((transaction) => transaction.date < state.settings.startDate || transaction.date > state.settings.endDate);
     viewHost.innerHTML = `<div class="view-stack">
       <section class="card"><p class="section-kicker">LOCAL FIRST</p><h2>データはこの端末内に保存</h2><p>外部サーバーには送信しません。機種変更や万一に備えて定期的にバックアップしてください。</p><div class="privacy-banner">${state.categories.length}種別・${state.transactions.length}件の実績・${periodMonths().length}ヶ月の計画<br>最終更新：${escapeHtml(updated)}</div></section>
       <section class="data-action-list">
-        ${dataAction("表", "Excel互換CSVを出力", "設定・種別・月別計画・全実績を1つのCSVへ保存", "export-csv")}
-        ${dataAction("読", "CSVをインポート", "本アプリが出力したCSVでデータを全置換", "import-csv")}
-        ${dataAction("{ }", "JSON完全バックアップ", "編集せず保管する復元用ファイル", "export-json")}
-        ${dataAction("戻", "JSONから復元", "完全バックアップを読み込んで全置換", "import-json")}
+        ${dataAction("{ }", "完全バックアップ", `編集せず保管する復元用ファイル。最終作成：${escapeHtml(lastBackup)}`, "export-json")}
+        ${dataAction("戻", "完全バックアップから復元", "完全バックアップを読み込んで全置換", "import-json")}
       </section>
       ${outsideTransactions.length ? `<section class="section"><div class="section-header"><div><p class="section-kicker">OUTSIDE PERIOD</p><h2>管理期間外の実績</h2></div><p class="section-description">${outsideTransactions.length}件</p></div><p class="help-text">期間を短くしたため集計対象外になった実績です。タップして日付を修正または削除できます。</p><div class="transaction-list">${outsideTransactions.sort((a, b) => b.date.localeCompare(a.date)).map(renderTransactionRow).join("")}</div></section>` : ""}
       <section class="card"><div class="section-copy"><p class="section-kicker">RESET</p><h2>初期データへ戻す</h2><p>種別・月別計画・実績を削除し、空の状態に戻します。プロジェクト名と期間は残ります。</p></div><button type="button" class="button danger" data-action="reset-data">すべて初期化</button></section>
@@ -1974,143 +1976,28 @@
     window.setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
 
-  function csvEscape(value, protectFormula = false) {
-    let text = String(value ?? "");
-    if (protectFormula && /^[=+\-@]/.test(text)) text = `'${text}`;
-    return `"${text.replaceAll('"', '""')}"`;
-  }
-
-  function exportCsv() {
-    const headers = ["recordType", "id", "categoryId", "name", "group", "date", "month", "amount", "memo", "closingDay", "startDate", "endDate", "color", "order", "active", "createdAt", "updatedAt", "planScaleMax", "dailyBudgetEnabled"];
-    const rows = [headers];
-    rows.push(["settings", "main", "", APP_NAME, "", "", "", "", "", state.settings.closingDay, state.settings.startDate, state.settings.endDate, "", "", "", state.createdAt || "", state.updatedAt || "", "", ""]);
-    state.categories.forEach((category) => {
-      rows.push(["category", category.id, "", category.name, category.group, "", "", category.defaultAmount || 0, "", "", "", "", category.color, category.order, category.active !== false, "", "", normalizePlanScaleMax(category.planScaleMax), category.dailyBudgetEnabled === true]);
-      if (category.planRule) rows.push(["rule", `${category.id}|rule`, category.id, "", "", "", category.planRule.startMonth, category.planRule.amount, "", "", "", "", "", category.planRule.interval, "", "", "", "", ""]);
-    });
-    periodMonths().forEach((month) => state.categories.forEach((category) => rows.push(["plan", `${category.id}|${month}`, category.id, "", "", "", month, planAmount(category.id, month), "", "", "", "", "", "", "", "", "", "", ""])));
-    state.transactions.forEach((transaction) => rows.push(["transaction", transaction.id, transaction.categoryId, "", transaction.direction, transaction.date, "", transaction.amount, transaction.memo || "", "", "", "", "", "", "", transaction.createdAt || "", transaction.updatedAt || "", "", ""]));
-    const content = `\uFEFF${rows.map((row, rowIndex) => row.map((value) => csvEscape(value, rowIndex > 0 && typeof value === "string")).join(",")).join("\r\n")}`;
-    downloadBlob(content, "text/csv;charset=utf-8", `budget-minus-${localDateKey()}.csv`);
-    showToast("Excel互換CSVを書き出しました");
-  }
-
-  function parseCsv(text) {
-    const rows = [];
-    let row = [];
-    let field = "";
-    let quoted = false;
-    const source = text.replace(/^\uFEFF/, "");
-    for (let index = 0; index < source.length; index += 1) {
-      const character = source[index];
-      if (quoted) {
-        if (character === '"' && source[index + 1] === '"') { field += '"'; index += 1; }
-        else if (character === '"') quoted = false;
-        else field += character;
-      } else if (character === '"') quoted = true;
-      else if (character === ",") { row.push(field); field = ""; }
-      else if (character === "\n") { row.push(field.replace(/\r$/, "")); rows.push(row); row = []; field = ""; }
-      else field += character;
-    }
-    if (field.length || row.length) { row.push(field.replace(/\r$/, "")); rows.push(row); }
-    return rows;
-  }
-
-  function cleanImportedText(value) {
-    return /^'[=+\-@]/.test(value) ? value.slice(1) : value;
-  }
-
   function isSafeImportedId(value) {
     return /^[A-Za-z0-9][A-Za-z0-9._|:-]*$/.test(String(value));
-  }
-
-  function normalizeImportedDate(value) {
-    const match = cleanImportedText(String(value || "").trim()).match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
-    if (!match) return "";
-    const normalized = `${match[1]}-${pad(match[2])}-${pad(match[3])}`;
-    return isValidDateKey(normalized) ? normalized : "";
-  }
-
-  function normalizeImportedMonth(value) {
-    const match = cleanImportedText(String(value || "").trim()).match(/^(\d{4})[\/-](\d{1,2})$/);
-    if (!match || Number(match[2]) < 1 || Number(match[2]) > 12) return "";
-    return `${match[1]}-${pad(match[2])}`;
-  }
-
-  function stateFromCsv(text) {
-    const rows = parseCsv(text);
-    if (rows.length < 2) throw new Error("CSVにデータがありません。");
-    const headers = rows[0];
-    const required = ["recordType", "id", "categoryId", "name", "group", "date", "month", "amount", "memo", "closingDay", "startDate", "endDate", "color", "order", "active"];
-    if (required.some((header) => !headers.includes(header))) throw new Error("本アプリが出力したCSV形式ではありません。");
-    const records = rows.slice(1).filter((row) => row.some((field) => field !== "")).map((row, index) => {
-      const record = {};
-      headers.forEach((header, column) => { record[header] = row[column] ?? ""; });
-      record.rowNumber = index + 2;
-      return record;
-    });
-    const settings = records.find((record) => record.recordType === "settings");
-    if (!settings) throw new Error("基本設定の行がありません。");
-    const importedStartDate = normalizeImportedDate(settings.startDate);
-    const importedEndDate = normalizeImportedDate(settings.endDate);
-    if (!importedStartDate || !importedEndDate) throw new Error("基本設定の日付が不正です。");
-    if (parseLocalDate(importedEndDate) < parseLocalDate(importedStartDate)) throw new Error("CSVの終了日が開始日より前です。");
-    const importedClosingDay = toInteger(settings.closingDay, 0);
-    if (importedClosingDay < 1 || importedClosingDay > 31) throw new Error("CSVの締日が不正です。");
-    const imported = {
-      id: "main",
-      schemaVersion: 4,
-      settings: { closingDay: importedClosingDay, startDate: importedStartDate, endDate: importedEndDate, currency: "JPY" },
-      categories: [],
-      plans: {},
-      transactions: [],
-      createdAt: settings.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    records.filter((record) => record.recordType === "category").forEach((record) => {
-      if (!isSafeImportedId(record.id) || !["variable", "fixed", "income"].includes(record.group)) throw new Error(`CSV ${record.rowNumber}行目の種別が不正です。`);
-      if (imported.categories.some((category) => category.id === record.id)) throw new Error(`CSV ${record.rowNumber}行目の種別IDが重複しています。`);
-      const importedDailySetting = String(record.dailyBudgetEnabled || "").trim().toLowerCase();
-      if (importedDailySetting && !["true", "false"].includes(importedDailySetting)) throw new Error(`CSV ${record.rowNumber}行目の日毎予算設定が不正です。`);
-      const dailyBudgetEnabled = record.group === "variable" && (importedDailySetting ? importedDailySetting === "true" : record.id === "expense-food");
-      imported.categories.push({ id: record.id, name: cleanImportedText(record.name).trim() || "名称未設定", group: record.group, color: /^#[0-9a-f]{6}$/i.test(record.color) ? record.color : "#3f7d5b", order: toInteger(record.order), active: record.active !== "false", defaultAmount: Math.max(0, toInteger(record.amount)), planScaleMax: normalizePlanScaleMax(record.planScaleMax), dailyBudgetEnabled });
-      imported.plans[record.id] = {};
-    });
-    const categoryIds = new Set(imported.categories.map((category) => category.id));
-    records.filter((record) => record.recordType === "rule").forEach((record) => {
-      const category = imported.categories.find((item) => item.id === record.categoryId);
-      const interval = toInteger(record.order, 0);
-      const ruleMonth = normalizeImportedMonth(record.month);
-      if (!category || !ruleMonth || interval < 1 || interval > 36 || toInteger(record.amount, -1) < 0) throw new Error(`CSV ${record.rowNumber}行目の一括設定ルールが不正です。`);
-      category.planRule = { startMonth: ruleMonth, interval, amount: toInteger(record.amount) };
-    });
-    records.filter((record) => record.recordType === "plan").forEach((record) => {
-      const planMonth = normalizeImportedMonth(record.month);
-      if (!categoryIds.has(record.categoryId) || !planMonth || toInteger(record.amount, -1) < 0) throw new Error(`CSV ${record.rowNumber}行目の月別計画が不正です。`);
-      imported.plans[record.categoryId][planMonth] = toInteger(record.amount);
-    });
-    const transactionIds = new Set();
-    records.filter((record) => record.recordType === "transaction").forEach((record) => {
-      const transactionDate = normalizeImportedDate(record.date);
-      if (!isSafeImportedId(record.id) || !categoryIds.has(record.categoryId) || !["expense", "income"].includes(record.group) || !transactionDate || toInteger(record.amount) <= 0) throw new Error(`CSV ${record.rowNumber}行目の実績が不正です。`);
-      if (transactionIds.has(record.id)) throw new Error(`CSV ${record.rowNumber}行目の実績IDが重複しています。`);
-      transactionIds.add(record.id);
-      const category = imported.categories.find((item) => item.id === record.categoryId);
-      if (directionForImportedCategory(category) !== record.group) throw new Error(`CSV ${record.rowNumber}行目の実績区分と種別が一致しません。`);
-      imported.transactions.push({ id: record.id, categoryId: record.categoryId, direction: record.group, date: transactionDate, amount: toInteger(record.amount), memo: cleanImportedText(record.memo), createdAt: record.createdAt || new Date().toISOString(), updatedAt: record.updatedAt || new Date().toISOString() });
-    });
-    if (!imported.categories.length) throw new Error("CSVに種別がありません。");
-    return imported;
   }
 
   function directionForImportedCategory(category) {
     return category && category.group === "income" ? "income" : "expense";
   }
 
-  function exportJson() {
-    const payload = { app: APP_NAME, backupVersion: BACKUP_VERSION, exportedAt: new Date().toISOString(), state };
+  async function exportJson() {
+    const exportedAt = new Date().toISOString();
+    const backupState = { ...state, settings: { ...state.settings, lastBackupAt: exportedAt } };
+    const payload = { app: APP_NAME, backupVersion: BACKUP_VERSION, exportedAt, state: backupState };
     downloadBlob(JSON.stringify(payload, null, 2), "application/json", `budget-minus-backup-${localDateKey()}.json`);
-    showToast("JSONバックアップを書き出しました");
+    const previousState = state;
+    state = backupState;
+    try {
+      await persist("完全バックアップを作成しました");
+      render();
+    } catch (error) {
+      state = previousState;
+      throw error;
+    }
   }
 
   function validateImportedState(imported) {
@@ -2145,15 +2032,11 @@
     });
   }
 
-  async function importDataFile(file, type) {
+  async function importDataFile(file) {
     const text = await file.text();
-    let imported;
-    if (type === "csv") imported = stateFromCsv(text);
-    else {
-      const payload = JSON.parse(text);
-      if (!payload || payload.app !== APP_NAME || payload.backupVersion !== BACKUP_VERSION || !payload.state) throw new Error("有効なBudget Minusバックアップではありません。");
-      imported = payload.state;
-    }
+    const payload = JSON.parse(text);
+    if (!payload || payload.app !== APP_NAME || payload.backupVersion !== BACKUP_VERSION || !payload.state) throw new Error("有効なBudget Minus完全バックアップではありません。");
+    const imported = payload.state;
     validateImportedState(imported);
     const description = `${imported.categories.length}種別、${imported.transactions.length}件の実績を読み込みます。現在のデータは置き換わります。`;
     if (!window.confirm(description)) return;
@@ -2179,10 +2062,8 @@
     else if (target.dataset.toggleCategoryActive) await toggleExpenseCategoryActive(target.dataset.toggleCategoryActive);
     else if (target.dataset.action === "toggle-income") { incomeExpanded = !incomeExpanded; render(); }
     else if (target.dataset.action === "toggle-history") { allTransactionsShown = !allTransactionsShown; render(); }
-    else if (target.dataset.action === "export-csv") exportCsv();
-    else if (target.dataset.action === "export-json") exportJson();
-    else if (target.dataset.action === "import-csv") { importFile.dataset.importType = "csv"; importFile.accept = "text/csv,.csv"; importFile.value = ""; importFile.click(); }
-    else if (target.dataset.action === "import-json") { importFile.dataset.importType = "json"; importFile.accept = "application/json,.json"; importFile.value = ""; importFile.click(); }
+    else if (target.dataset.action === "export-json") await exportJson();
+    else if (target.dataset.action === "import-json") { importFile.accept = "application/json,.json"; importFile.value = ""; importFile.click(); }
     else if (target.dataset.action === "load-project") await loadSelectedProject();
     else if (target.dataset.action === "set-default-project") await setCurrentProjectAsDefault();
     else if (target.dataset.action === "delete-project") await deleteCurrentProject();
@@ -2519,7 +2400,7 @@
   importFile.addEventListener("change", async () => {
     const file = importFile.files && importFile.files[0];
     if (!file) return;
-    try { await importDataFile(file, importFile.dataset.importType); }
+    try { await importDataFile(file); }
     catch (error) { showToast(error instanceof Error ? error.message : "ファイルを読み込めませんでした"); }
   });
 
