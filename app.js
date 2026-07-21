@@ -2,9 +2,17 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.30";
+  const APP_VERSION = "0.5.31";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
+  const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
+  const INCOME_CATEGORY_GROUPS = Object.freeze(["income", SIGNED_INCOME_GROUP]);
+  const CATEGORY_GROUP_LABELS = Object.freeze({
+    variable: "変動支出",
+    fixed: "固定支出",
+    income: "収入",
+    [SIGNED_INCOME_GROUP]: "収入（マイナス込み）"
+  });
   const PLAN_AMOUNT_STEP = 100;
   const MIN_PLAN_SCALE_MAX = 100;
   const PLAN_BAR_STEPS = Object.freeze([
@@ -340,7 +348,7 @@
 
   function incomeCategoriesForReporting(month) {
     return state.categories
-      .filter((category) => isIncomeCategory(category) && (category.active !== false || planAmount(category.id, month) !== 0 || actualAmount(category.id, month) !== 0))
+      .filter((category) => isIncomeCategory(category) && (category.active !== false || actualAmount(category.id, month) !== 0))
       .sort((a, b) => Number(a.order) - Number(b.order));
   }
 
@@ -379,6 +387,10 @@
 
   function activeExpensePlanAmount(category, month) {
     return category && !isIncomeCategory(category) && category.active !== false ? planAmount(category.id, month) : 0;
+  }
+
+  function activeIncomePlanAmount(category, month) {
+    return category && isIncomeCategory(category) && category.active !== false ? planAmount(category.id, month) : 0;
   }
 
   function transactionsForMonth(month, direction = null) {
@@ -444,9 +456,9 @@
     const expenseCategories = expenseCategoriesForReporting(month);
     const incomeCategories = incomeCategoriesForReporting(month);
     const expensePlan = expenseCategories.reduce((sum, category) => sum + activeExpensePlanAmount(category, month), 0);
-    const incomePlan = incomeCategories.reduce((sum, category) => sum + planAmount(category.id, month), 0);
+    const incomePlan = incomeCategories.reduce((sum, category) => sum + activeIncomePlanAmount(category, month), 0);
     const incomeForecast = incomeCategories.reduce((sum, category) => {
-      const planned = planAmount(category.id, month);
+      const planned = activeIncomePlanAmount(category, month);
       const actual = actualAmount(category.id, month);
       return sum + (isSignedIncomeCategory(category) ? (actual !== 0 ? actual : planned) : Math.max(actual, planned));
     }, 0);
@@ -690,9 +702,9 @@
     showToast("プロジェクト名を変更しました");
   }
 
-  async function toggleExpenseCategoryActive(categoryId) {
+  async function toggleCategoryActive(categoryId) {
     const category = categoryById(categoryId);
-    if (!category || isIncomeCategory(category)) return;
+    if (!category) return;
     const willEnable = category.active === false;
     category.active = willEnable;
     category.archivedAt = willEnable ? null : localDateKey();
@@ -1330,9 +1342,9 @@
     const incomeMode = analysisMode === "income";
     const categories = incomeMode ? incomeCategoriesForReporting(analysisPeriod) : expenseCategoriesForReporting(analysisPeriod);
     const rows = categories.map((category) => {
-      const plan = incomeMode ? planAmount(category.id, analysisPeriod) : activeExpensePlanAmount(category, analysisPeriod);
+      const plan = incomeMode ? activeIncomePlanAmount(category, analysisPeriod) : activeExpensePlanAmount(category, analysisPeriod);
       const actual = actualAmount(category.id, analysisPeriod);
-      return { category, plan, actual, variance: plan - actual, ratio: plan !== 0 ? Math.abs(actual / plan) : actual !== 0 ? 2 : 0 };
+      return { category, plan, actual, variance: plan - actual, ratio: planProgressRatio(plan, actual) };
     });
     const totalPlan = rows.reduce((sum, row) => sum + row.plan, 0);
     const totalActual = rows.reduce((sum, row) => sum + row.actual, 0);
@@ -1367,7 +1379,7 @@
       <div class="month-switcher"><label class="field-label" for="analysis-period">分析する月</label><select id="analysis-period">${monthOptions(analysisPeriod)}</select></div>
       <section class="card analysis-hero">
         <div><p class="section-kicker">${incomeMode ? "INCOME PROGRESS" : "SPENDING PROGRESS"}</p><h2>${monthLabel(analysisPeriod)}の${incomeMode ? "収入" : "支出"}進捗</h2><p>計画 ${incomeMode ? formatSignedCurrency(totalPlan) : formatCurrency(totalPlan)} を100%として、実績 ${incomeMode ? formatSignedCurrency(totalActual) : formatCurrency(totalActual)} の割合を円で表示します。</p><strong class="${heroTone}">${heroStatus}</strong></div>
-        <div class="donut" style="--donut:${progressDonut.gradient}"><div class="donut-label"><strong>${totalPlan ? Math.round((Math.abs(totalActual) / Math.abs(totalPlan)) * 100) : 0}%</strong><span>計画進捗</span></div></div>
+        <div class="donut" style="--donut:${progressDonut.gradient}"><div class="donut-label"><strong>${progressDonut.percentage}%</strong><span>計画進捗</span></div></div>
       </section>
       <section class="summary-grid">
         ${summaryCard(incomeMode ? "現在の収入" : "現在の支出", totalActual, `${elapsedDays}/${totalDays}日経過`, incomeMode && totalActual < 0 ? "negative" : "", incomeMode)}
@@ -1388,11 +1400,16 @@
     return `<div class="analysis-row"><div class="analysis-row-head"><span><strong>${escapeHtml(row.category.name)}</strong>・実績 ${incomeMode ? formatSignedCurrency(row.actual) : formatCurrency(row.actual)}</span><strong class="${tone}">${difference}</strong></div><div class="analysis-track"><span style="--category-color:${escapeHtml(row.category.color)};--progress:${clamp(row.ratio * 100, 0, 100)}%"></span></div></div>`;
   }
 
+  function planProgressRatio(plan, actual) {
+    if (plan === 0) return actual !== 0 ? 2 : 0;
+    return actual / plan;
+  }
+
   function makePlanProgressDonut(plan, actual, incomeMode) {
-    if (plan === 0) return { gradient: "var(--surface-2) 0 100%" };
-    const progress = clamp((Math.abs(actual) / Math.abs(plan)) * 100, 0, 100);
+    const progress = clamp(planProgressRatio(plan, actual) * 100, 0, 100);
+    if (plan === 0) return { gradient: "var(--surface-2) 0 100%", percentage: 0 };
     const color = incomeMode ? "#2f8057" : "#d66735";
-    return { gradient: `conic-gradient(${color} 0 ${progress.toFixed(2)}%, var(--surface-2) ${progress.toFixed(2)}% 100%)` };
+    return { gradient: `conic-gradient(${color} 0 ${progress.toFixed(2)}%, var(--surface-2) ${progress.toFixed(2)}% 100%)`, percentage: Math.round(progress) };
   }
 
   function createInsights(rows, totalPlan, totalActual, month) {
@@ -1524,7 +1541,7 @@
         <span class="color-dot" aria-hidden="true"></span>
         <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（無効）" : ""}</strong><span>${monthLabel(currentPeriod)} ${isSignedIncomeCategory(category) ? formatSignedCurrency(planAmount(category.id, currentPeriod)) : formatCurrency(planAmount(category.id, currentPeriod))}</span><span>計画合計 ${isSignedIncomeCategory(category) ? formatSignedCurrency(periodPlanTotal(category.id)) : formatCurrency(periodPlanTotal(category.id))}</span></span>
         <button type="button" class="row-action" data-edit-category="${escapeHtml(category.id)}">編集</button>
-        ${!isIncomeCategory(category) ? `<button type="button" class="row-action category-active-toggle ${category.active === false ? "is-inactive" : ""}" data-toggle-category-active="${escapeHtml(category.id)}">${category.active === false ? "有効にする" : "無効にする"}</button>` : ""}
+        <button type="button" class="row-action category-active-toggle ${category.active === false ? "is-inactive" : ""}" data-toggle-category-active="${escapeHtml(category.id)}">${category.active === false ? "有効にする" : "無効にする"}</button>
         ${dailyToggle}
       </article>`;
     }).join("");
@@ -1817,11 +1834,18 @@
     document.querySelector("#transaction-amount").min = isSignedIncomeCategory(category) ? String(-MAX_PLAN_SCALE_MAX) : "1";
   }
 
+  function limitCategoryGroupOptions(select, group) {
+    const groups = isIncomeCategory({ group }) ? INCOME_CATEGORY_GROUPS : EXPENSE_CATEGORY_GROUPS;
+    select.innerHTML = groups.map((value) => `<option value="${value}">${CATEGORY_GROUP_LABELS[value]}</option>`).join("");
+  }
+
   function openCategoryEditor(group = "variable") {
     document.querySelector("#category-dialog-title").textContent = "種別を追加";
     document.querySelector("#category-id").value = "";
     document.querySelector("#category-name").value = "";
-    document.querySelector("#category-group").value = group;
+    const groupSelect = document.querySelector("#category-group");
+    limitCategoryGroupOptions(groupSelect, group);
+    groupSelect.value = group;
     document.querySelector("#category-color").value = isIncomeCategory({ group }) ? "#2b8a63" : "#3f7d5b";
     openDialog(categoryDialog);
   }
@@ -1860,7 +1884,9 @@
     periodMonths().forEach((month) => { planDraft[month] = planAmount(categoryId, month); });
     document.querySelector("#plan-category-name").textContent = category.name;
     document.querySelector("#plan-category-name-input").value = category.name;
-    document.querySelector("#plan-category-group").value = category.group;
+    const groupSelect = document.querySelector("#plan-category-group");
+    limitCategoryGroupOptions(groupSelect, category.group);
+    groupSelect.value = category.group;
     document.querySelector("#plan-category-color").value = category.color;
     updatePlanCategoryKind(category.group);
     document.querySelector("#plan-start-month").innerHTML = monthOptions(planRuleDraft && periodMonths().includes(planRuleDraft.startMonth) ? planRuleDraft.startMonth : periodMonths()[0]);
@@ -2191,7 +2217,7 @@
     else if (target.dataset.addCategory) openCategoryEditor(target.dataset.addCategory);
     else if (target.dataset.editCategory) openPlanEditor(target.dataset.editCategory);
     else if (target.dataset.overviewChartIndex !== undefined) { cumulativeChartSelectedIndex = clamp(toInteger(target.dataset.overviewChartIndex), 0, Math.max(0, periodMonths().length - 1)); render(); }
-    else if (target.dataset.toggleCategoryActive) await toggleExpenseCategoryActive(target.dataset.toggleCategoryActive);
+    else if (target.dataset.toggleCategoryActive) await toggleCategoryActive(target.dataset.toggleCategoryActive);
     else if (target.dataset.action === "toggle-income") { incomeExpanded = !incomeExpanded; render(); }
     else if (target.dataset.action === "toggle-history") { allTransactionsShown = !allTransactionsShown; render(); }
     else if (target.dataset.action === "export-json") await exportJson();
