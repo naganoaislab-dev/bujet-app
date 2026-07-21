@@ -209,7 +209,7 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .income-entry-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.95rem 1rem; border: 1px solid rgba(var(--primary-rgb), 0.34); border-radius: 1rem; color: var(--primary-strong); background: linear-gradient(135deg, var(--primary-soft), var(--surface)); }
 .income-entry-card strong { color: var(--primary-strong); }
 .income-entry-card p { margin-bottom: 0; color: var(--primary-strong); font-size: 0.8rem; opacity: 0.8; }
-.budget-card.needs-entry-reminder, .income-entry-card.needs-entry-reminder { animation: entry-reminder-pulse 1.4s ease-in-out infinite; }
+.budget-card.needs-entry-reminder, .income-entry-card.needs-entry-reminder { animation: entry-reminder-pulse 0.933s ease-in-out infinite; }
 @keyframes entry-reminder-pulse { 0%, 100% { box-shadow: 0 7px 20px rgba(45, 53, 46, 0.05); } 50% { border-color: color-mix(in srgb, var(--danger) 62%, var(--line)); box-shadow: 0 0 0 0.42rem color-mix(in srgb, var(--danger) 12%, transparent), 0 10px 26px color-mix(in srgb, var(--danger) 16%, transparent); } }
 
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; min-height: 3rem; padding: 0.7rem 1rem; border: 1px solid transparent; border-radius: 0.85rem; font-weight: 800; cursor: pointer; }
