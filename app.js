@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.33";
+  const APP_VERSION = "0.5.35";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);

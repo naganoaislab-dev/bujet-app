@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=43">
-  <link rel="icon" href="icons/icon.svg?v=43" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=43">
-  <link rel="stylesheet" href="styles.css?v=43">
-  <script src="db.js?v=43" defer></script>
-  <script src="app.js?v=43" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=45">
+  <link rel="icon" href="icons/icon.svg?v=45" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=45">
+  <link rel="stylesheet" href="styles.css?v=45">
+  <script src="db.js?v=45" defer></script>
+  <script src="app.js?v=45" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -209,10 +209,10 @@
           <span class="daily-budget-switch" aria-hidden="true"></span>
         </label>
         <div id="plan-reminder-options" class="plan-reminder-options" hidden>
-          <label><span class="field-label">通知日</span><select id="plan-reminder-schedule"><option value="day">毎月N日</option><option value="weekday">第Mの曜日</option></select></label>
-          <label id="plan-reminder-day-field"><span class="field-label">毎月</span><select id="plan-reminder-day"></select></label>
+          <label><span class="field-label">通知方法</span><select id="plan-reminder-schedule"><option value="day">毎月決まった日に通知</option><option value="weekday">毎月特定の週の曜日に通知</option></select></label>
+          <label id="plan-reminder-day-field"><span class="field-label">日にち</span><select id="plan-reminder-day"></select></label>
           <div id="plan-reminder-weekday-fields" class="form-grid two-columns" hidden>
-            <label><span class="field-label">第M</span><select id="plan-reminder-week"></select></label>
+            <label><span class="field-label">何週目</span><select id="plan-reminder-week"></select></label>
             <label><span class="field-label">曜日</span><select id="plan-reminder-weekday"></select></label>
           </div>
           <p id="plan-reminder-help" class="help-text"></p>
