@@ -460,6 +460,7 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .plan-notification-toggle { display: flex; align-items: center; justify-content: space-between; gap: 0.7rem; min-height: 3.4rem; padding: 0.55rem 0.65rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--surface); cursor: pointer; }
 .plan-reminder-options { display: grid; gap: 0.7rem; padding: 0.75rem; border-radius: 0.75rem; background: var(--surface); }
 .plan-reminder-options[hidden] { display: none; }
+.plan-reminder-options #plan-reminder-day-field[hidden], .plan-reminder-options #plan-reminder-weekday-fields[hidden] { display: none !important; }
 .bulk-plan-panel { padding: 0.9rem; border-radius: 1rem; background: var(--surface-2); }
 .bulk-plan-panel p, .plan-editor-head p { margin-bottom: 0; font-size: 0.72rem; }
 .plan-controls { grid-template-columns: 1.2fr 1fr 1.1fr; margin-top: 0.75rem; }
