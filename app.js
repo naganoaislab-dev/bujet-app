@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.35";
+  const APP_VERSION = "0.5.36";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
@@ -46,11 +46,11 @@
     { id: "slate", name: "スレート", primary: "#566d7e", strong: "#405362", soft: "#e0e9ed", page: "#f4f8fa", dark: "#12191d" }
   ]);
   const VIEW_TITLES = {
-    entry: "支出入力",
-    overview: "状況確認",
-    analysis: "分析",
-    settings: "設定",
-    data: "データ管理"
+    entry: "入力",
+    overview: "全体状況",
+    analysis: "月次状況",
+    settings: "設計/計画",
+    data: "データ"
   };
 
   const viewHost = document.querySelector("#view-host");
@@ -726,7 +726,7 @@
     projects = result.projects;
     defaultProjectId = result.workspace.defaultProjectId;
     render();
-    showToast(`${currentProject.name}を既定のプロジェクトにしました`);
+    showToast(`${currentProject.name}を規定のプロジェクトに設定しました`);
   }
 
   async function createAndLoadProject() {
@@ -1495,7 +1495,7 @@
 
   function renderSettings() {
     const paneButtons = [
-      ["basic", "基本"], ["expense", "支出"], ["income", "収入"], ["projects", "プロジェクト"]
+      ["basic", "基本設定"], ["expense", "支出計画"], ["income", "収入計画"], ["projects", "プロジェクト切り替え"]
     ].map(([id, label]) => `<button type="button" class="segment-button ${settingsPane === id ? "active" : ""}" data-settings-pane="${id}">${label}</button>`).join("");
     let content;
     if (settingsPane === "basic") content = renderBasicSettings();
@@ -1541,16 +1541,16 @@
     const isSample = project.isSample === true;
     return `<div class="view-stack">
       <section class="card project-current-card">
-        <div class="section-copy"><p class="section-kicker">CURRENT PROJECT</p><h2>${escapeHtml(project.name)}${project.isSample ? "（サンプル）" : ""}</h2><p>${projectDateLabel(project.startDate)}〜${projectDateLabel(project.endDate)}・${project.closingDay}日締め</p></div>
-        <label><span class="field-label">プロジェクトを読み込む</span><select id="project-load-select">${projectOptions}</select></label>
+        <div class="section-copy"><p class="section-kicker">現在のプロジェクト</p><h2>${escapeHtml(project.name)}${project.isSample ? "（サンプル）" : ""}</h2><p>${projectDateLabel(project.startDate)}〜${projectDateLabel(project.endDate)}・${project.closingDay}日締め</p></div>
+        <label><span class="field-label">プロジェクトを切り替える</span><select id="project-load-select">${projectOptions}</select></label>
         <div class="dialog-actions">
-          <button type="button" class="button secondary" data-action="load-project">読み込む</button>
-          <button type="button" class="button primary" data-action="set-default-project"${isDefault ? " disabled" : ""}>${isDefault ? "既定のプロジェクト" : "既定にする"}</button>
+          <button type="button" class="button secondary" data-action="load-project">切り替える</button>
+          <button type="button" class="button primary" data-action="set-default-project"${isDefault ? " disabled" : ""}>${isDefault ? "規定のプロジェクト" : "規定のプロジェクトに設定する"}</button>
         </div>
-        <p class="help-text">既定にすると、次回アプリを開いたときにこのプロジェクトを自動で読み込みます。</p>
+        <p class="help-text">規定のプロジェクトに設定すると、次回アプリを開いたときにこのプロジェクトを自動で読み込みます。</p>
       </section>
       ${isSample ? `<section class="card"><p class="help-text">サンプルプロジェクトはいつでも操作を試せるよう、名前の変更と削除はできません。</p></section>` : `<form id="project-rename-form" class="card settings-form">
-        <div class="section-copy"><p class="section-kicker">PROJECT NAME</p><h2>プロジェクト名を変更</h2></div>
+        <div class="section-copy"><p class="section-kicker">プロジェクト名変更</p><h2>現在のプロジェクト名を変更する</h2></div>
         <label><span class="field-label">プロジェクト名</span><input id="project-current-name" type="text" maxlength="40" value="${escapeHtml(project.name)}" required></label>
         <div class="dialog-actions">
           <button type="submit" class="button primary">名前を保存</button>
@@ -1559,7 +1559,7 @@
         <p class="help-text">削除すると、このプロジェクトの計画・実績も端末から削除されます。</p>
       </form>`}
       <form id="project-create-form" class="card settings-form">
-        <div class="section-copy"><p class="section-kicker">NEW PROJECT</p><h2>新しいプロジェクトを作成</h2><p>現在のプロジェクトとは別に、将来の家計簿期間をあらかじめ作成できます。</p></div>
+        <div class="section-copy"><p class="section-kicker">新しいプロジェクトを作成</p><h2>新しいプロジェクトを作成</h2><p>現在のプロジェクトとは別に、将来の家計簿期間をあらかじめ作成できます。</p></div>
         <label><span class="field-label">プロジェクト名</span><input id="project-name-input" type="text" maxlength="40" placeholder="例：2026年度の家計簿" required></label>
         <div class="form-grid two-columns">
           <label><span class="field-label">開始日</span><input id="project-start-date" type="date" value="${defaultStart}" required></label>
@@ -1568,7 +1568,6 @@
         <p class="help-text">開始日を変えると、終了日は3年後の前日に自動調整されます。作成後は新しいプロジェクトを読み込みます。</p>
         <button type="submit" class="button primary">プロジェクトを作成して読み込む</button>
       </form>
-      <section class="card sample-project-note"><p class="section-kicker">TRY IT</p><h2>サンプルプロジェクト</h2><p>プロジェクト一覧に、操作感を試せるサンプルデータを用意しています。読み込んで自由に操作できます。</p></section>
     </div>`;
   }
 
