@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.36";
+  const APP_VERSION = "0.5.37";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
@@ -431,28 +431,58 @@
       }, "");
   }
 
-  function reminderDueDate(year, month, reminder) {
-    const config = normalizeReminderConfig(reminder);
+  function clampReminderDateToPeriod(date, range) {
+    if (date < range.start) return range.start;
+    if (date > range.end) return range.end;
+    return date;
+  }
+
+  function weekdayOnOrAfter(date, weekday) {
+    const candidate = parseLocalDate(date);
+    candidate.setDate(candidate.getDate() + ((weekday - candidate.getDay() + 7) % 7));
+    return localDateKey(candidate);
+  }
+
+  function weekdayOnOrBefore(date, weekday) {
+    const candidate = parseLocalDate(date);
+    candidate.setDate(candidate.getDate() - ((candidate.getDay() - weekday + 7) % 7));
+    return localDateKey(candidate);
+  }
+
+  function nthWeekdayOfCalendarMonth(year, month, reminder) {
     const days = daysInMonth(year, month);
-    if (config.schedule === REMINDER_SCHEDULE_DAY) {
-      return `${year}-${pad(month)}-${pad(Math.min(config.dayOfMonth, days))}`;
-    }
     const firstDay = new Date(year, month - 1, 1).getDay();
-    const firstOccurrence = 1 + ((config.weekday - firstDay + 7) % 7);
-    let day = firstOccurrence + (config.weekOfMonth - 1) * 7;
+    const firstOccurrence = 1 + ((reminder.weekday - firstDay + 7) % 7);
+    let day = firstOccurrence + (reminder.weekOfMonth - 1) * 7;
     if (day > days) {
       const lastDay = new Date(year, month, 0).getDay();
-      day = days - ((lastDay - config.weekday + 7) % 7);
+      day = days - ((lastDay - reminder.weekday + 7) % 7);
     }
     return `${year}-${pad(month)}-${pad(day)}`;
+  }
+
+  function reminderDueDate(periodMonth, reminder) {
+    const config = normalizeReminderConfig(reminder);
+    const range = periodRange(periodMonth);
+    const { year, month } = monthParts(periodMonth);
+    if (config.schedule === REMINDER_SCHEDULE_DAY) {
+      const configuredClosingDay = clamp(toInteger(state.settings.closingDay, 31), 1, 31);
+      const targetMonth = config.dayOfMonth > configuredClosingDay ? addMonthsToKey(periodMonth, -1) : periodMonth;
+      const targetParts = monthParts(targetMonth);
+      const day = Math.min(config.dayOfMonth, daysInMonth(targetParts.year, targetParts.month));
+      return clampReminderDateToPeriod(`${targetParts.year}-${pad(targetParts.month)}-${pad(day)}`, range);
+    }
+    const dueDate = nthWeekdayOfCalendarMonth(year, month, config);
+    if (dueDate < range.start) return clampReminderDateToPeriod(weekdayOnOrAfter(range.start, config.weekday), range);
+    if (dueDate > range.end) return clampReminderDateToPeriod(weekdayOnOrBefore(range.end, config.weekday), range);
+    return dueDate;
   }
 
   function needsEntryReminder(category, month, today = localDateKey()) {
     const reminder = normalizeReminderConfig(category && category.reminder);
     if (!category || category.active === false || !reminder.enabled || latestCategoryEntryDate(category.id, month)) return false;
     if (today < state.settings.startDate || today > state.settings.endDate || periodForDate(today) !== month) return false;
-    const { year, month: calendarMonth } = monthParts(today.slice(0, 7));
-    return today >= reminderDueDate(year, calendarMonth, reminder);
+    return today >= reminderDueDate(month, reminder);
   }
 
   function carryAmount(categoryId, month) {
@@ -1901,8 +1931,8 @@
     document.querySelector("#plan-reminder-help").textContent = !enabled
       ? "通知は無効です。"
       : useWeekday
-        ? "第5の曜日がない月は、その月の最後の同じ曜日に読み替えます。"
-        : "31日など、その月に存在しない日は月末日に読み替えます。";
+        ? "締日に合わせ、対象月度の範囲内で選んだ週・曜日に通知します。対象月度内にない場合は、最も近い同じ曜日に読み替えます。"
+        : "締日に合わせ、対象月度の範囲内にある同じ日に通知します。存在しない日は月末日に読み替えます。";
   }
 
   function setPlanReminderControls(reminder) {
