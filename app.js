@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.26";
+  const APP_VERSION = "0.5.28";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const PLAN_AMOUNT_STEP = 100;
@@ -1617,6 +1617,7 @@
     }
     document.querySelector("#calculator-category").textContent = category.name;
     document.querySelector("#calculator-kind").textContent = calculatorContext.allowsNegative ? "収入（マイナス込み）を入力" : calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
+    document.querySelector('[data-calc="subtract"]').hidden = !calculatorContext.allowsNegative;
     resetCalculatorShiftPanel(category);
     updateCalculatorDisplay();
     openDialog(calculatorDialog);
@@ -1625,8 +1626,9 @@
   function updateCalculatorDisplay() {
     const value = calculatorContext && calculatorContext.allowsNegative ? toInteger(Number(calculator.current)) : Math.max(0, toInteger(Number(calculator.current)));
     const display = document.querySelector("#calculator-display");
-    display.textContent = calculatorContext && calculatorContext.allowsNegative ? formatSignedCurrency(value) : formatCurrency(value);
-    display.classList.toggle("negative", value < 0);
+    const pendingNegative = calculatorContext && calculatorContext.allowsNegative && calculator.current === "-0";
+    display.textContent = pendingNegative ? `−${formatCurrency(0)}` : calculatorContext && calculatorContext.allowsNegative ? formatSignedCurrency(value) : formatCurrency(value);
+    display.classList.toggle("negative", value < 0 || pendingNegative);
     document.querySelector("#calculator-expression").textContent = calculator.expression;
     document.querySelector("#calculator-ok").disabled = calculatorContext && calculatorContext.allowsNegative ? value === 0 : value <= 0;
   }
@@ -1635,8 +1637,9 @@
     if (calculator.waitingForOperand) {
       calculator.current = digit === "00" ? "0" : digit;
       calculator.waitingForOperand = false;
-    } else if (calculator.current === "0") {
-      calculator.current = digit === "00" ? "0" : digit;
+    } else if (calculator.current === "0" || calculator.current === "-0") {
+      const prefix = calculator.current === "-0" ? "-" : "";
+      calculator.current = digit === "00" ? `${prefix}0` : `${prefix}${digit}`;
     } else if (calculator.current.length < 10) {
       calculator.current += digit;
     }
@@ -1651,6 +1654,12 @@
   }
 
   function calculatorOperation(nextOperation) {
+    if (nextOperation === "subtract" && calculatorContext && calculatorContext.allowsNegative && calculator.accumulator === null && calculator.operation === null && (calculator.current === "0" || calculator.current === "-0")) {
+      calculator.current = calculator.current === "-0" ? "0" : "-0";
+      calculator.waitingForOperand = false;
+      calculator.expression = "";
+      return;
+    }
     const inputValue = Number(calculator.current);
     const symbols = { add: "+", subtract: "−", multiply: "×", divide: "÷" };
     if (calculator.operation && !calculator.waitingForOperand) {
@@ -1676,10 +1685,24 @@
     calculator.waitingForOperand = true;
   }
 
+  function toggleCalculatorNegative() {
+    if (!calculatorContext || !calculatorContext.allowsNegative) return;
+    if (calculator.waitingForOperand) {
+      calculator.current = "-0";
+      calculator.waitingForOperand = false;
+    } else if (calculator.current.startsWith("-")) {
+      calculator.current = calculator.current.slice(1) || "0";
+    } else {
+      calculator.current = `-${calculator.current}`;
+    }
+    calculator.accumulator = null;
+    calculator.operation = null;
+    calculator.expression = "";
+  }
+
   function handleCalculatorKey(key) {
     if (/^\d+$/.test(key)) calculatorInputDigit(key);
-    else if (["add", "subtract", "multiply", "divide"].includes(key)) calculatorOperation(key);
-    else if (key === "equals") calculatorEquals();
+    else if (key === "subtract") toggleCalculatorNegative();
     else if (key === "clear") calculator = createCalculatorState();
     else if (key === "backspace") {
       if (!calculator.waitingForOperand) {
