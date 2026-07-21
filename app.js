@@ -2,8 +2,9 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.25";
+  const APP_VERSION = "0.5.26";
   const BACKUP_VERSION = 2;
+  const SIGNED_INCOME_GROUP = "income-signed";
   const PLAN_AMOUNT_STEP = 100;
   const MIN_PLAN_SCALE_MAX = 100;
   const PLAN_BAR_STEPS = Object.freeze([
@@ -133,6 +134,11 @@
     return Math.max(0, Math.round(toInteger(value) / normalizedStep) * normalizedStep);
   }
 
+  function roundSignedAmountToStep(value, step) {
+    const normalizedStep = Math.max(1, toInteger(step, 1));
+    return Math.round(toInteger(value) / normalizedStep) * normalizedStep;
+  }
+
   function normalizePlanScaleMax(value) {
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount <= 0) return DEFAULT_PLAN_SCALE_MAX;
@@ -144,17 +150,25 @@
     return (PLAN_BAR_STEPS.find((range) => normalizedScale <= range.maximum) || PLAN_BAR_STEPS[PLAN_BAR_STEPS.length - 1]).step;
   }
 
-  function planBarPositionAmount(amount, scaleMaximum = planScaleDraft) {
+  function planBarPositionAmount(amount, scaleMaximum = planScaleDraft, allowNegative = false) {
     const maximum = Math.max(MIN_PLAN_SCALE_MAX, normalizePlanScaleMax(scaleMaximum));
-    const normalizedAmount = Math.max(0, toInteger(amount));
-    if (normalizedAmount >= maximum) return maximum;
-    return clamp(roundAmountToStep(normalizedAmount, planBarStep(maximum)), 0, maximum);
+    const normalizedAmount = allowNegative ? toInteger(amount) : Math.max(0, toInteger(amount));
+    const magnitude = Math.abs(normalizedAmount);
+    if (magnitude >= maximum) return allowNegative && normalizedAmount < 0 ? -maximum : maximum;
+    const roundedMagnitude = clamp(roundAmountToStep(magnitude, planBarStep(maximum)), 0, maximum);
+    return allowNegative && normalizedAmount < 0 ? -roundedMagnitude : roundedMagnitude;
   }
 
-  function planBarHeight(amount, scaleMaximum = planScaleDraft) {
-    const displayedAmount = planBarPositionAmount(amount, scaleMaximum);
+  function planBarHeight(amount, scaleMaximum = planScaleDraft, allowNegative = false) {
+    const displayedAmount = planBarPositionAmount(amount, scaleMaximum, allowNegative);
     if (displayedAmount <= 0) return 0;
     return clamp((displayedAmount / Math.max(MIN_PLAN_SCALE_MAX, scaleMaximum)) * 100, 0, 100);
+  }
+
+  function planSignedBarHeight(amount, scaleMaximum = planScaleDraft) {
+    const displayedAmount = Math.abs(planBarPositionAmount(amount, scaleMaximum, true));
+    if (displayedAmount <= 0) return 0;
+    return clamp((displayedAmount / Math.max(MIN_PLAN_SCALE_MAX, scaleMaximum)) * 50, 0, 50);
   }
 
   function pad(value) {
@@ -312,20 +326,43 @@
       .sort((a, b) => Number(a.order) - Number(b.order));
   }
 
+  function incomeCategories(includeArchived = false) {
+    return state.categories
+      .filter((category) => isIncomeCategory(category) && (includeArchived || category.active !== false))
+      .sort((a, b) => Number(a.order) - Number(b.order));
+  }
+
   function expenseCategoriesForReporting(month) {
     return state.categories
-      .filter((category) => category.group !== "income" && (category.active !== false || actualAmount(category.id, month) > 0))
+      .filter((category) => !isIncomeCategory(category) && (category.active !== false || actualAmount(category.id, month) !== 0))
       .sort((a, b) => Number(a.order) - Number(b.order));
   }
 
   function incomeCategoriesForReporting(month) {
     return state.categories
-      .filter((category) => category.group === "income" && (category.active !== false || planAmount(category.id, month) > 0 || actualAmount(category.id, month) > 0))
+      .filter((category) => isIncomeCategory(category) && (category.active !== false || planAmount(category.id, month) !== 0 || actualAmount(category.id, month) !== 0))
       .sort((a, b) => Number(a.order) - Number(b.order));
   }
 
   function isIncomeCategory(category) {
-    return category && category.group === "income";
+    return category && ["income", SIGNED_INCOME_GROUP].includes(category.group);
+  }
+
+  function isSignedIncomeCategory(category) {
+    return category && category.group === SIGNED_INCOME_GROUP;
+  }
+
+  function isSignedIncomeGroup(group) {
+    return group === SIGNED_INCOME_GROUP;
+  }
+
+  function planAllowsNegative(category) {
+    return isSignedIncomeCategory(category);
+  }
+
+  function normalizePlanAmount(category, amount) {
+    const normalized = toInteger(amount);
+    return planAllowsNegative(category) ? normalized : Math.max(0, normalized);
   }
 
   function directionForCategory(category) {
@@ -333,7 +370,7 @@
   }
 
   function planAmount(categoryId, month) {
-    return Math.max(0, toInteger(state.plans[categoryId] && state.plans[categoryId][month], 0));
+    return toInteger(state.plans[categoryId] && state.plans[categoryId][month], 0);
   }
 
   function periodPlanTotal(categoryId) {
@@ -341,7 +378,7 @@
   }
 
   function activeExpensePlanAmount(category, month) {
-    return category && category.group !== "income" && category.active !== false ? planAmount(category.id, month) : 0;
+    return category && !isIncomeCategory(category) && category.active !== false ? planAmount(category.id, month) : 0;
   }
 
   function transactionsForMonth(month, direction = null) {
@@ -408,12 +445,18 @@
     const incomeCategories = incomeCategoriesForReporting(month);
     const expensePlan = expenseCategories.reduce((sum, category) => sum + activeExpensePlanAmount(category, month), 0);
     const incomePlan = incomeCategories.reduce((sum, category) => sum + planAmount(category.id, month), 0);
+    const incomeForecast = incomeCategories.reduce((sum, category) => {
+      const planned = planAmount(category.id, month);
+      const actual = actualAmount(category.id, month);
+      return sum + (isSignedIncomeCategory(category) ? (actual !== 0 ? actual : planned) : Math.max(actual, planned));
+    }, 0);
     const expenseActual = transactionsForMonth(month, "expense").reduce((sum, item) => sum + toInteger(item.amount), 0);
     const incomeActual = transactionsForMonth(month, "income").reduce((sum, item) => sum + toInteger(item.amount), 0);
     return {
       month,
       expensePlan,
       incomePlan,
+      incomeForecast,
       expenseActual,
       incomeActual,
       plannedNet: incomePlan - expensePlan,
@@ -649,7 +692,7 @@
 
   async function toggleExpenseCategoryActive(categoryId) {
     const category = categoryById(categoryId);
-    if (!category || category.group === "income") return;
+    if (!category || isIncomeCategory(category)) return;
     const willEnable = category.active === false;
     category.active = willEnable;
     category.archivedAt = willEnable ? null : localDateKey();
@@ -764,13 +807,13 @@
 
       <section class="summary-grid" aria-label="今月の集計">
         ${summaryCard("支出実績", monthStats.expenseActual, `予定 ${formatCurrency(monthStats.expensePlan)}`)}
-        ${summaryCard("収入実績", monthStats.incomeActual, `予定 ${formatCurrency(monthStats.incomePlan)}`)}
+        ${summaryCard("収入実績", monthStats.incomeActual, `予定 ${formatSignedCurrency(monthStats.incomePlan)}`, monthStats.incomeActual < 0 ? "negative" : "", true)}
       </section>
     </div>`;
   }
 
-  function summaryCard(label, value, subvalue, tone = "") {
-    return `<article class="summary-card"><span class="label">${escapeHtml(label)}</span><strong class="${tone}">${formatCurrency(value)}</strong><span class="subvalue">${escapeHtml(subvalue)}</span></article>`;
+  function summaryCard(label, value, subvalue, tone = "", signed = false) {
+    return `<article class="summary-card"><span class="label">${escapeHtml(label)}</span><strong class="${tone}">${signed ? formatSignedCurrency(value) : formatCurrency(value)}</strong><span class="subvalue">${escapeHtml(subvalue)}</span></article>`;
   }
 
   function renderBudgetCards(categories, month) {
@@ -810,7 +853,7 @@
   }
 
   function renderIncomeCards(month) {
-    const categories = categoriesForGroup("income");
+    const categories = incomeCategories();
     if (!categories.length) return '<div class="empty-state">収入種別を設定画面で追加してください。</div>';
     return categories.map((category) => {
       const planned = planAmount(category.id, month);
@@ -818,8 +861,8 @@
       return `<button type="button" class="budget-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
         <span class="budget-card-name">${escapeHtml(category.name)}</span>
         <span class="budget-card-label">今月の収入実績</span>
-        <strong class="budget-card-amount positive">${formatCurrency(actual)}</strong>
-        <span class="budget-card-carry"><span>予定</span><strong>${formatCurrency(planned)}</strong></span>
+        <strong class="budget-card-amount ${actual < 0 ? "negative" : "positive"}">${formatSignedCurrency(actual)}</strong>
+        <span class="budget-card-carry"><span>予定</span><strong class="${planned < 0 ? "negative" : ""}">${formatSignedCurrency(planned)}</strong></span>
       </button>`;
     }).join("");
   }
@@ -1077,11 +1120,11 @@
     const category = categoryById(transaction.categoryId);
     const categoryName = category ? category.name : "削除済み種別";
     const color = category ? category.color : "#777777";
-    const prefix = transaction.direction === "income" ? "+" : "−";
+    const signedAmount = transaction.direction === "income" ? transaction.amount : -transaction.amount;
     return `<button type="button" class="transaction-row" data-transaction-id="${escapeHtml(transaction.id)}" style="--category-color:${escapeHtml(color)}">
       <span class="transaction-dot" aria-hidden="true"></span>
       <span class="transaction-main"><strong>${escapeHtml(categoryName)}</strong><span>${dateTimeLabel(transaction.date)}${transaction.memo ? `・${escapeHtml(transaction.memo)}` : ""}</span></span>
-      <strong class="transaction-amount ${transaction.direction === "income" ? "positive" : ""}">${prefix}${formatCurrency(transaction.amount)}</strong>
+      <strong class="transaction-amount ${signedAmount < 0 ? "negative" : "positive"}">${formatSignedCurrency(signedAmount)}</strong>
     </button>`;
   }
 
@@ -1104,7 +1147,7 @@
       : aggregates.reduce((sum, item, index) => {
         if (index < activePeriodIndex) return sum + item.actualNet;
         if (index > activePeriodIndex) return sum + item.plannedNet;
-        return sum + Math.max(item.incomeActual, item.incomePlan) - Math.max(item.expenseActual, item.expensePlan);
+        return sum + item.incomeForecast - Math.max(item.expenseActual, item.expensePlan);
       }, 0);
     const projectEndTone = projectEndForecast < 0 ? "negative" : projectEndForecast > 0 ? "positive" : "";
     const preferredCumulativeIndex = aggregates.findIndex((item) => item.month === currentPeriod);
@@ -1161,7 +1204,7 @@
       <section class="card" aria-labelledby="monthly-table-title">
         <div class="section-copy"><h2 id="monthly-table-title">月別の数値</h2><p>グラフと同じ内容を表形式で確認できます。</p></div>
         <div class="table-scroll"><table class="data-table"><thead><tr><th>月</th><th>収入予定</th><th>収入実績</th><th>支出予定</th><th>支出実績</th><th>予定収支</th><th>実績収支</th><th>累積予定</th><th>累積実績</th></tr></thead><tbody>
-          ${aggregates.map((item) => `<tr><td>${monthLabel(item.month)}</td><td>${formatCurrency(item.incomePlan)}</td><td>${formatCurrency(item.incomeActual)}</td><td>${formatCurrency(item.expensePlan)}</td><td>${formatCurrency(item.expenseActual)}</td><td>${formatSignedCurrency(item.plannedNet)}</td><td>${formatSignedCurrency(item.actualNet)}</td><td>${formatSignedCurrency(item.plannedCumulative)}</td><td>${formatSignedCurrency(item.actualCumulative)}</td></tr>`).join("")}
+          ${aggregates.map((item) => `<tr><td>${monthLabel(item.month)}</td><td>${formatSignedCurrency(item.incomePlan)}</td><td>${formatSignedCurrency(item.incomeActual)}</td><td>${formatCurrency(item.expensePlan)}</td><td>${formatCurrency(item.expenseActual)}</td><td>${formatSignedCurrency(item.plannedNet)}</td><td>${formatSignedCurrency(item.actualNet)}</td><td>${formatSignedCurrency(item.plannedCumulative)}</td><td>${formatSignedCurrency(item.actualCumulative)}</td></tr>`).join("")}
         </tbody></table></div>
       </section>
     </div>`;
@@ -1289,7 +1332,7 @@
     const rows = categories.map((category) => {
       const plan = incomeMode ? planAmount(category.id, analysisPeriod) : activeExpensePlanAmount(category, analysisPeriod);
       const actual = actualAmount(category.id, analysisPeriod);
-      return { category, plan, actual, variance: plan - actual, ratio: plan > 0 ? actual / plan : actual > 0 ? 2 : 0 };
+      return { category, plan, actual, variance: plan - actual, ratio: plan !== 0 ? Math.abs(actual / plan) : actual !== 0 ? 2 : 0 };
     });
     const totalPlan = rows.reduce((sum, row) => sum + row.plan, 0);
     const totalActual = rows.reduce((sum, row) => sum + row.actual, 0);
@@ -1323,12 +1366,12 @@
       </div>
       <div class="month-switcher"><label class="field-label" for="analysis-period">分析する月</label><select id="analysis-period">${monthOptions(analysisPeriod)}</select></div>
       <section class="card analysis-hero">
-        <div><p class="section-kicker">${incomeMode ? "INCOME PROGRESS" : "SPENDING PROGRESS"}</p><h2>${monthLabel(analysisPeriod)}の${incomeMode ? "収入" : "支出"}進捗</h2><p>計画 ${formatCurrency(totalPlan)} を100%として、実績 ${formatCurrency(totalActual)} の割合を円で表示します。</p><strong class="${heroTone}">${heroStatus}</strong></div>
-        <div class="donut" style="--donut:${progressDonut.gradient}"><div class="donut-label"><strong>${totalPlan ? Math.round((totalActual / totalPlan) * 100) : 0}%</strong><span>計画進捗</span></div></div>
+        <div><p class="section-kicker">${incomeMode ? "INCOME PROGRESS" : "SPENDING PROGRESS"}</p><h2>${monthLabel(analysisPeriod)}の${incomeMode ? "収入" : "支出"}進捗</h2><p>計画 ${incomeMode ? formatSignedCurrency(totalPlan) : formatCurrency(totalPlan)} を100%として、実績 ${incomeMode ? formatSignedCurrency(totalActual) : formatCurrency(totalActual)} の割合を円で表示します。</p><strong class="${heroTone}">${heroStatus}</strong></div>
+        <div class="donut" style="--donut:${progressDonut.gradient}"><div class="donut-label"><strong>${totalPlan ? Math.round((Math.abs(totalActual) / Math.abs(totalPlan)) * 100) : 0}%</strong><span>計画進捗</span></div></div>
       </section>
       <section class="summary-grid">
-        ${summaryCard(incomeMode ? "現在の収入" : "現在の支出", totalActual, `${elapsedDays}/${totalDays}日経過`)}
-        ${summaryCard(incomeMode ? "計画上の収入合計" : "計画上の支出合計", totalPlan, `${monthLabel(analysisPeriod)}の計画`)}
+        ${summaryCard(incomeMode ? "現在の収入" : "現在の支出", totalActual, `${elapsedDays}/${totalDays}日経過`, incomeMode && totalActual < 0 ? "negative" : "", incomeMode)}
+        ${summaryCard(incomeMode ? "計画上の収入合計" : "計画上の支出合計", totalPlan, `${monthLabel(analysisPeriod)}の計画`, incomeMode && totalPlan < 0 ? "negative" : "", incomeMode)}
       </section>
       <section class="card"><div class="section-copy"><p class="section-kicker">BY CATEGORY</p><h2>種別ごとの計画差</h2><p>${incomeMode ? "設定した並び順で表示しています。" : "変動支出・固定支出を、入力画面と同じ並び順で表示しています。"}</p></div>${analysisRows}</section>
       <section class="card"><div class="section-copy"><p class="section-kicker">INSIGHTS</p><h2>今月の気づき</h2></div><ul class="insight-list">${insights.map((item) => `<li class="insight-item"><span class="insight-icon" aria-hidden="true">${item.icon}</span><span><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body)}</span></span></li>`).join("")}</ul></section>
@@ -1342,12 +1385,12 @@
     else if (incomeMode && row.variance < 0) { difference = `${formatCurrency(Math.abs(row.variance))}上振れ`; tone = "positive"; }
     else if (!incomeMode && row.variance < 0) { difference = `${formatCurrency(Math.abs(row.variance))}超過`; tone = "negative"; }
     else if (!incomeMode && row.variance > 0) difference = `${formatCurrency(row.variance)}残り`;
-    return `<div class="analysis-row"><div class="analysis-row-head"><span><strong>${escapeHtml(row.category.name)}</strong>・実績 ${formatCurrency(row.actual)}</span><strong class="${tone}">${difference}</strong></div><div class="analysis-track"><span style="--category-color:${escapeHtml(row.category.color)};--progress:${clamp(row.ratio * 100, 0, 100)}%"></span></div></div>`;
+    return `<div class="analysis-row"><div class="analysis-row-head"><span><strong>${escapeHtml(row.category.name)}</strong>・実績 ${incomeMode ? formatSignedCurrency(row.actual) : formatCurrency(row.actual)}</span><strong class="${tone}">${difference}</strong></div><div class="analysis-track"><span style="--category-color:${escapeHtml(row.category.color)};--progress:${clamp(row.ratio * 100, 0, 100)}%"></span></div></div>`;
   }
 
   function makePlanProgressDonut(plan, actual, incomeMode) {
-    if (plan <= 0) return { gradient: "var(--surface-2) 0 100%" };
-    const progress = clamp((actual / plan) * 100, 0, 100);
+    if (plan === 0) return { gradient: "var(--surface-2) 0 100%" };
+    const progress = clamp((Math.abs(actual) / Math.abs(plan)) * 100, 0, 100);
     const color = incomeMode ? "#2f8057" : "#d66735";
     return { gradient: `conic-gradient(${color} 0 ${progress.toFixed(2)}%, var(--surface-2) ${progress.toFixed(2)}% 100%)` };
   }
@@ -1461,7 +1504,7 @@
 
   function renderCategorySettings(direction) {
     if (direction === "income") {
-      return `<section class="section"><div class="section-header"><div><p class="section-kicker">INCOME</p><h2>収入種別と月別予定</h2></div><button type="button" class="button small primary" data-add-category="income">＋ 追加</button></div><div class="category-settings-list">${renderCategoryRows(categoriesForGroup("income", true))}</div></section>`;
+      return `<section class="section"><div class="section-header"><div><p class="section-kicker">INCOME</p><h2>収入種別と月別予定</h2></div><button type="button" class="button small primary" data-add-category="income">＋ 追加</button></div><p class="help-text">資産運用などは「収入（マイナス込み）」を選ぶと、月別計画を0円から上下に設定できます。</p><div class="category-settings-list">${renderCategoryRows(incomeCategories(true))}</div></section>`;
     }
     return `<div class="view-stack">
       <section class="section"><div class="section-header"><div><p class="section-kicker">VARIABLE</p><h2>変動支出</h2></div><button type="button" class="button small primary" data-add-category="variable">＋ 追加</button></div><div class="category-settings-list">${renderCategoryRows(categoriesForGroup("variable", true))}</div></section>
@@ -1479,9 +1522,9 @@
       </label>` : "";
       return `<article class="category-setting-row" style="--category-color:${escapeHtml(category.color)}">
         <span class="color-dot" aria-hidden="true"></span>
-        <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（無効）" : ""}</strong><span>${monthLabel(currentPeriod)} ${formatCurrency(planAmount(category.id, currentPeriod))}</span><span>計画合計 ${formatCurrency(periodPlanTotal(category.id))}</span></span>
+        <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（無効）" : ""}</strong><span>${monthLabel(currentPeriod)} ${isSignedIncomeCategory(category) ? formatSignedCurrency(planAmount(category.id, currentPeriod)) : formatCurrency(planAmount(category.id, currentPeriod))}</span><span>計画合計 ${isSignedIncomeCategory(category) ? formatSignedCurrency(periodPlanTotal(category.id)) : formatCurrency(periodPlanTotal(category.id))}</span></span>
         <button type="button" class="row-action" data-edit-category="${escapeHtml(category.id)}">編集</button>
-        ${category.group !== "income" ? `<button type="button" class="row-action category-active-toggle ${category.active === false ? "is-inactive" : ""}" data-toggle-category-active="${escapeHtml(category.id)}">${category.active === false ? "有効にする" : "無効にする"}</button>` : ""}
+        ${!isIncomeCategory(category) ? `<button type="button" class="row-action category-active-toggle ${category.active === false ? "is-inactive" : ""}" data-toggle-category-active="${escapeHtml(category.id)}">${category.active === false ? "有効にする" : "無効にする"}</button>` : ""}
         ${dailyToggle}
       </article>`;
     }).join("");
@@ -1562,6 +1605,7 @@
       categoryId,
       direction: directionForCategory(category),
       isFixed: category.group === "fixed",
+      allowsNegative: isSignedIncomeCategory(category),
       canShiftBudget: ["variable", "fixed"].includes(category.group),
       sourceMonth: currentPeriod
     };
@@ -1572,17 +1616,19 @@
       calculator.expression = `${monthLabel(currentPeriod)}の予定額`;
     }
     document.querySelector("#calculator-category").textContent = category.name;
-    document.querySelector("#calculator-kind").textContent = calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
+    document.querySelector("#calculator-kind").textContent = calculatorContext.allowsNegative ? "収入（マイナス込み）を入力" : calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
     resetCalculatorShiftPanel(category);
     updateCalculatorDisplay();
     openDialog(calculatorDialog);
   }
 
   function updateCalculatorDisplay() {
-    const value = Math.max(0, toInteger(Number(calculator.current)));
-    document.querySelector("#calculator-display").textContent = formatCurrency(value);
+    const value = calculatorContext && calculatorContext.allowsNegative ? toInteger(Number(calculator.current)) : Math.max(0, toInteger(Number(calculator.current)));
+    const display = document.querySelector("#calculator-display");
+    display.textContent = calculatorContext && calculatorContext.allowsNegative ? formatSignedCurrency(value) : formatCurrency(value);
+    display.classList.toggle("negative", value < 0);
     document.querySelector("#calculator-expression").textContent = calculator.expression;
-    document.querySelector("#calculator-ok").disabled = value <= 0;
+    document.querySelector("#calculator-ok").disabled = calculatorContext && calculatorContext.allowsNegative ? value === 0 : value <= 0;
   }
 
   function calculatorInputDigit(digit) {
@@ -1609,20 +1655,21 @@
     const symbols = { add: "+", subtract: "−", multiply: "×", divide: "÷" };
     if (calculator.operation && !calculator.waitingForOperand) {
       const result = performCalculation(calculator.accumulator, inputValue, calculator.operation);
-      calculator.current = String(Math.max(0, Math.round(result)));
-      calculator.accumulator = Math.max(0, Math.round(result));
+      const normalizedResult = calculatorContext && calculatorContext.allowsNegative ? Math.round(result) : Math.max(0, Math.round(result));
+      calculator.current = String(normalizedResult);
+      calculator.accumulator = normalizedResult;
     } else if (calculator.accumulator === null) {
       calculator.accumulator = inputValue;
     }
     calculator.operation = nextOperation;
     calculator.waitingForOperand = true;
-    calculator.expression = `${formatCurrency(calculator.accumulator)} ${symbols[nextOperation]}`;
+    calculator.expression = `${calculatorContext && calculatorContext.allowsNegative ? formatSignedCurrency(calculator.accumulator) : formatCurrency(calculator.accumulator)} ${symbols[nextOperation]}`;
   }
 
   function calculatorEquals() {
     if (!calculator.operation || calculator.waitingForOperand) return;
     const result = performCalculation(calculator.accumulator, Number(calculator.current), calculator.operation);
-    calculator.current = String(Math.max(0, Math.round(result)));
+    calculator.current = String(calculatorContext && calculatorContext.allowsNegative ? Math.round(result) : Math.max(0, Math.round(result)));
     calculator.expression = "";
     calculator.accumulator = null;
     calculator.operation = null;
@@ -1635,15 +1682,18 @@
     else if (key === "equals") calculatorEquals();
     else if (key === "clear") calculator = createCalculatorState();
     else if (key === "backspace") {
-      if (!calculator.waitingForOperand) calculator.current = calculator.current.length > 1 ? calculator.current.slice(0, -1) : "0";
+      if (!calculator.waitingForOperand) {
+        const nextValue = calculator.current.length > 1 ? calculator.current.slice(0, -1) : "0";
+        calculator.current = nextValue === "-" ? "0" : nextValue;
+      }
     }
     updateCalculatorDisplay();
   }
 
   async function acceptCalculator() {
     calculatorEquals();
-    const amount = Math.max(0, toInteger(calculator.current));
-    if (!calculatorContext || amount <= 0) return;
+    const amount = calculatorContext && calculatorContext.allowsNegative ? toInteger(calculator.current) : Math.max(0, toInteger(calculator.current));
+    if (!calculatorContext || (calculatorContext.allowsNegative ? amount === 0 : amount <= 0)) return;
     const category = categoryById(calculatorContext.categoryId);
     const transaction = {
       id: makeId("tx"),
@@ -1669,7 +1719,7 @@
       return;
     }
     render();
-    document.querySelector("#memo-summary").textContent = `${category.name}・${formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
+    document.querySelector("#memo-summary").textContent = `${category.name}・${calculatorContext.allowsNegative ? formatSignedCurrency(amount) : formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
     document.querySelector("#memo-input").value = "";
     openDialog(memoDialog);
   }
@@ -1717,17 +1767,20 @@
     const amount = pendingTransaction.amount;
     pendingTransaction = null;
     closeDialog(memoDialog);
-    await persist(`${category ? category.name : "記録"} ${formatCurrency(amount)}を保存しました`);
+    await persist(`${category ? category.name : "記録"} ${category && isSignedIncomeCategory(category) ? formatSignedCurrency(amount) : formatCurrency(amount)}を保存しました`);
     render();
   }
 
   function openTransactionEditor(id) {
     const transaction = state.transactions.find((item) => item.id === id);
     if (!transaction) return;
+    const category = categoryById(transaction.categoryId);
     const categories = state.categories.filter((category) => directionForCategory(category) === transaction.direction);
     document.querySelector("#transaction-id").value = transaction.id;
     document.querySelector("#transaction-category").innerHTML = categories.map((category) => `<option value="${escapeHtml(category.id)}"${category.id === transaction.categoryId ? " selected" : ""}>${escapeHtml(category.name)}${category.active === false ? "（非表示）" : ""}</option>`).join("");
-    document.querySelector("#transaction-amount").value = transaction.amount;
+    const amountInput = document.querySelector("#transaction-amount");
+    amountInput.value = transaction.amount;
+    amountInput.min = isSignedIncomeCategory(category) ? String(-MAX_PLAN_SCALE_MAX) : "1";
     const dateInput = document.querySelector("#transaction-date");
     dateInput.min = state.settings.startDate;
     dateInput.max = state.settings.endDate;
@@ -1736,18 +1789,40 @@
     openDialog(transactionDialog);
   }
 
+  function updateTransactionAmountInputConstraints() {
+    const category = categoryById(document.querySelector("#transaction-category").value);
+    document.querySelector("#transaction-amount").min = isSignedIncomeCategory(category) ? String(-MAX_PLAN_SCALE_MAX) : "1";
+  }
+
   function openCategoryEditor(group = "variable") {
     document.querySelector("#category-dialog-title").textContent = "種別を追加";
     document.querySelector("#category-id").value = "";
     document.querySelector("#category-name").value = "";
     document.querySelector("#category-group").value = group;
-    document.querySelector("#category-color").value = group === "income" ? "#2b8a63" : "#3f7d5b";
+    document.querySelector("#category-color").value = isIncomeCategory({ group }) ? "#2b8a63" : "#3f7d5b";
     openDialog(categoryDialog);
   }
 
   function updatePlanCategoryKind(group) {
     const planLength = periodMonths().length;
-    document.querySelector("#plan-kind").textContent = group === "income" ? `収入予定・${planLength}ヶ月` : group === "fixed" ? `固定支出・${planLength}ヶ月` : `変動支出・${planLength}ヶ月`;
+    document.querySelector("#plan-kind").textContent = isSignedIncomeGroup(group) ? `収入（マイナス込み）予定・${planLength}ヶ月` : group === "income" ? `収入予定・${planLength}ヶ月` : group === "fixed" ? `固定支出・${planLength}ヶ月` : `変動支出・${planLength}ヶ月`;
+    document.querySelector("#plan-editor-help").textContent = isSignedIncomeGroup(group)
+      ? "月名をタップして選択。中央の0円から、上へ黒字・下へ赤字として概算入力できます。横スクロールは余白から操作できます。"
+      : "月名をタップして選択。棒の上は上下で概算入力、横スクロールは余白から操作できます。";
+    const bulkAmount = document.querySelector("#plan-bulk-amount");
+    if (bulkAmount) bulkAmount.min = isSignedIncomeGroup(group) ? String(-MAX_PLAN_SCALE_MAX) : "0";
+  }
+
+  function planEditorAllowsNegative() {
+    return isSignedIncomeGroup(document.querySelector("#plan-category-group").value);
+  }
+
+  function normalizePlanEditorAmount(amount) {
+    return planEditorAllowsNegative() ? toInteger(amount) : Math.max(0, toInteger(amount));
+  }
+
+  function formatPlanAmount(amount) {
+    return planEditorAllowsNegative() ? formatSignedCurrency(amount) : formatCurrency(amount);
   }
 
   function openPlanEditor(categoryId) {
@@ -1756,10 +1831,10 @@
     cancelPlanPointerTracking();
     editingPlanCategoryId = categoryId;
     planDraft = {};
-    planRuleDraft = category.planRule ? { ...category.planRule, amount: Math.max(0, toInteger(category.planRule.amount)) } : null;
+    planRuleDraft = category.planRule ? { ...category.planRule, amount: normalizePlanAmount(category, category.planRule.amount) } : null;
     planScaleDraft = normalizePlanScaleMax(category.planScaleMax);
     selectedPlanMonth = null;
-    periodMonths().forEach((month) => { planDraft[month] = Math.max(0, toInteger(planAmount(categoryId, month))); });
+    periodMonths().forEach((month) => { planDraft[month] = planAmount(categoryId, month); });
     document.querySelector("#plan-category-name").textContent = category.name;
     document.querySelector("#plan-category-name-input").value = category.name;
     document.querySelector("#plan-category-group").value = category.group;
@@ -1776,21 +1851,23 @@
   function renderPlanEditor() {
     const category = categoryById(editingPlanCategoryId);
     if (!category || !planDraft) return;
+    const allowsNegative = planEditorAllowsNegative();
     updatePlanScaleSummary();
     monthlyPlanEditor.innerHTML = periodMonths().map((month) => {
-      const amount = Math.max(0, toInteger(planDraft[month]));
-      const height = planBarHeight(amount);
-      const overScale = amount > planScaleDraft;
-      const sliderValue = planBarPositionAmount(amount);
-      const valueText = `${formatCurrency(amount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`;
+      const amount = normalizePlanEditorAmount(planDraft[month]);
+      const height = allowsNegative ? planSignedBarHeight(amount) : planBarHeight(amount);
+      const overScale = allowsNegative ? Math.abs(amount) > planScaleDraft : amount > planScaleDraft;
+      const sliderValue = planBarPositionAmount(amount, planScaleDraft, allowsNegative);
+      const valueText = `${formatPlanAmount(amount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`;
       const selected = month === selectedPlanMonth;
-      return `<article class="month-plan-column ${selected ? "selected" : ""} ${overScale ? "over-scale" : ""}" data-plan-column="${month}" style="--category-color:${escapeHtml(category.color)}">
+      return `<article class="month-plan-column ${selected ? "selected" : ""} ${overScale ? "over-scale" : ""} ${allowsNegative ? "signed-plan" : ""}" data-plan-column="${month}" style="--category-color:${escapeHtml(category.color)}">
         <button type="button" class="month-plan-label" data-plan-select="${month}" aria-pressed="${selected}">${monthLabel(month, false)}<br>${monthParts(month).year}<span class="month-plan-selected-indicator"${selected ? "" : " hidden"}>選択中</span></button>
-        <div class="month-plan-bar-area" data-plan-slider="${month}" role="slider" tabindex="0" aria-label="${monthLabel(month)}の計画金額" aria-describedby="plan-scale-step" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="${planScaleDraft}" aria-valuenow="${sliderValue}" aria-valuetext="${escapeHtml(valueText)}"${selected ? ' aria-current="true"' : ""}>
+        <div class="month-plan-bar-area${allowsNegative ? " is-signed" : ""}" data-plan-slider="${month}" role="slider" tabindex="0" aria-label="${monthLabel(month)}の計画金額" aria-describedby="plan-scale-step" aria-orientation="vertical" aria-valuemin="${allowsNegative ? -planScaleDraft : 0}" aria-valuemax="${planScaleDraft}" aria-valuenow="${sliderValue}" aria-valuetext="${escapeHtml(valueText)}"${selected ? ' aria-current="true"' : ""}>
           <span class="month-plan-overflow"${overScale ? "" : " hidden"}>上限超過</span>
-          <span class="month-plan-bar" style="--bar-height:${height}%"></span>
+          ${allowsNegative ? '<span class="month-plan-zero-line" aria-hidden="true"></span>' : ""}
+          <span class="month-plan-bar${allowsNegative ? ` is-signed ${amount < 0 ? "is-negative" : "is-positive"}${amount === 0 ? " is-zero" : ""}` : ""}" style="--bar-height:${height}%"></span>
         </div>
-        <input class="month-plan-input" data-plan-month="${month}" type="number" min="0" step="any" inputmode="numeric" value="${amount}" aria-label="${monthLabel(month)}の計画金額">
+        <input class="month-plan-input" data-plan-month="${month}" type="number" min="${allowsNegative ? -MAX_PLAN_SCALE_MAX : 0}" step="any" inputmode="numeric" value="${amount}" aria-label="${monthLabel(month)}の計画金額">
       </article>`;
     }).join("");
     updatePlanSelectionUi();
@@ -1835,13 +1912,15 @@
   }
 
   function updatePlanScaleSummary() {
-    document.querySelector("#plan-scale-summary").textContent = `上端 ${formatCurrency(planScaleDraft)}`;
-    document.querySelector("#plan-scale-step").textContent = `棒は${formatCurrency(planBarStep())}刻み`;
+    const allowsNegative = planEditorAllowsNegative();
+    document.querySelector("#plan-scale-summary").textContent = allowsNegative ? `0円を中心に上下 ${formatCurrency(planScaleDraft)}` : `上端 ${formatCurrency(planScaleDraft)}`;
+    document.querySelector("#plan-scale-step").textContent = allowsNegative ? `上下とも${formatCurrency(planBarStep())}刻み` : `棒は${formatCurrency(planBarStep())}刻み`;
   }
 
   function updatePlanColumn(month, amount, syncInput = true) {
     if (!planDraft || !Object.prototype.hasOwnProperty.call(planDraft, month)) return;
-    const normalizedAmount = Math.max(0, toInteger(amount));
+    const allowsNegative = planEditorAllowsNegative();
+    const normalizedAmount = normalizePlanEditorAmount(amount);
     planDraft[month] = normalizedAmount;
     const column = monthlyPlanEditor.querySelector(`[data-plan-column="${month}"]`);
     if (!column) return;
@@ -1849,11 +1928,15 @@
     const bar = column.querySelector(".month-plan-bar");
     const input = column.querySelector(".month-plan-input");
     const overflow = column.querySelector(".month-plan-overflow");
-    const overScale = normalizedAmount > planScaleDraft;
-    bar.style.setProperty("--bar-height", `${planBarHeight(normalizedAmount)}%`);
+    const overScale = allowsNegative ? Math.abs(normalizedAmount) > planScaleDraft : normalizedAmount > planScaleDraft;
+    bar.style.setProperty("--bar-height", `${allowsNegative ? planSignedBarHeight(normalizedAmount) : planBarHeight(normalizedAmount)}%`);
+    bar.classList.toggle("is-negative", allowsNegative && normalizedAmount < 0);
+    bar.classList.toggle("is-positive", allowsNegative && normalizedAmount >= 0);
+    bar.classList.toggle("is-zero", allowsNegative && normalizedAmount === 0);
+    barArea.setAttribute("aria-valuemin", String(allowsNegative ? -planScaleDraft : 0));
     barArea.setAttribute("aria-valuemax", String(planScaleDraft));
-    barArea.setAttribute("aria-valuenow", String(planBarPositionAmount(normalizedAmount)));
-    barArea.setAttribute("aria-valuetext", `${formatCurrency(normalizedAmount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`);
+    barArea.setAttribute("aria-valuenow", String(planBarPositionAmount(normalizedAmount, planScaleDraft, allowsNegative)));
+    barArea.setAttribute("aria-valuetext", `${formatPlanAmount(normalizedAmount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`);
     column.classList.toggle("over-scale", overScale);
     overflow.hidden = !overScale;
     if (syncInput) input.value = String(normalizedAmount);
@@ -1869,6 +1952,12 @@
     if (!bounds.height) return 0;
     const ratio = clamp((bounds.bottom - clientY) / bounds.height, 0, 1);
     const step = planBarStep();
+    if (planEditorAllowsNegative()) {
+      const rawAmount = (ratio - 0.5) * 2 * planScaleDraft;
+      if (rawAmount >= planScaleDraft - (step / 2)) return planScaleDraft;
+      if (rawAmount <= -planScaleDraft + (step / 2)) return -planScaleDraft;
+      return clamp(roundSignedAmountToStep(rawAmount, step), -planScaleDraft, planScaleDraft);
+    }
     const rawAmount = ratio * planScaleDraft;
     if (rawAmount >= planScaleDraft - (step / 2)) return planScaleDraft;
     return clamp(roundAmountToStep(rawAmount, step), 0, planScaleDraft);
@@ -1951,7 +2040,7 @@
 
   function commitPlanInput(event) {
     if (!event.target.dataset.planMonth) return;
-    updatePlanColumn(event.target.dataset.planMonth, Math.max(0, toInteger(event.target.value)));
+    updatePlanColumn(event.target.dataset.planMonth, event.target.value);
   }
 
   function applyPlanPattern() {
@@ -1959,7 +2048,7 @@
     const startMonth = document.querySelector("#plan-start-month").value;
     const startIndex = months.indexOf(startMonth);
     const interval = clamp(toInteger(document.querySelector("#plan-interval").value, 1), 1, 36);
-    const amount = Math.max(0, toInteger(document.querySelector("#plan-bulk-amount").value));
+    const amount = normalizePlanEditorAmount(document.querySelector("#plan-bulk-amount").value);
     document.querySelector("#plan-bulk-amount").value = String(amount);
     planRuleDraft = { startMonth, interval, amount };
     months.forEach((month, index) => {
@@ -1999,7 +2088,7 @@
   }
 
   function directionForImportedCategory(category) {
-    return category && category.group === "income" ? "income" : "expense";
+    return isIncomeCategory(category) ? "income" : "expense";
   }
 
   async function exportJson() {
@@ -2031,20 +2120,22 @@
     }
     const ids = new Set();
     imported.categories.forEach((category) => {
-      if (!category || !isSafeImportedId(category.id) || ids.has(String(category.id)) || !["variable", "fixed", "income"].includes(category.group)) throw new Error("バックアップの種別データが不正です。");
+      if (!category || !isSafeImportedId(category.id) || ids.has(String(category.id)) || !["variable", "fixed", "income", SIGNED_INCOME_GROUP].includes(category.group)) throw new Error("バックアップの種別データが不正です。");
       if (category.planScaleMax !== undefined && (!Number.isFinite(Number(category.planScaleMax)) || Number(category.planScaleMax) <= 0 || Number(category.planScaleMax) > MAX_PLAN_SCALE_MAX)) throw new Error(`${category.name || "種別"}の棒上限額が不正です。`);
       if (category.dailyBudgetEnabled !== undefined && typeof category.dailyBudgetEnabled !== "boolean") throw new Error(`${category.name || "種別"}の日毎予算設定が不正です。`);
       ids.add(String(category.id));
       const categoryPlans = imported.plans[category.id] || {};
       Object.entries(categoryPlans).forEach(([month, amount]) => {
-        if (!isValidMonthKey(month) || toInteger(amount, -1) < 0) throw new Error(`${category.name || "種別"}の月別計画が不正です。`);
+        if (!isValidMonthKey(month) || (!isSignedIncomeCategory(category) && toInteger(amount, -1) < 0)) throw new Error(`${category.name || "種別"}の月別計画が不正です。`);
       });
-      if (category.planRule && (!isValidMonthKey(category.planRule.startMonth) || toInteger(category.planRule.interval) < 1 || toInteger(category.planRule.interval) > 36 || toInteger(category.planRule.amount, -1) < 0)) throw new Error(`${category.name || "種別"}の一括設定ルールが不正です。`);
+      if (category.planRule && (!isValidMonthKey(category.planRule.startMonth) || toInteger(category.planRule.interval) < 1 || toInteger(category.planRule.interval) > 36 || (!isSignedIncomeCategory(category) && toInteger(category.planRule.amount, -1) < 0))) throw new Error(`${category.name || "種別"}の一括設定ルールが不正です。`);
     });
     const transactionIds = new Set();
     imported.transactions.forEach((transaction) => {
-      if (!transaction || !isSafeImportedId(transaction.id) || transactionIds.has(String(transaction.id)) || !ids.has(String(transaction.categoryId)) || !["expense", "income"].includes(transaction.direction) || !isValidDateKey(transaction.date) || toInteger(transaction.amount) <= 0) throw new Error("バックアップの実績データが不正です。");
+      if (!transaction) throw new Error("バックアップの実績データが不正です。");
       const category = imported.categories.find((item) => String(item.id) === String(transaction.categoryId));
+      const allowsNegative = isSignedIncomeCategory(category);
+      if (!isSafeImportedId(transaction.id) || transactionIds.has(String(transaction.id)) || !ids.has(String(transaction.categoryId)) || !["expense", "income"].includes(transaction.direction) || !isValidDateKey(transaction.date) || (allowsNegative ? toInteger(transaction.amount) === 0 : toInteger(transaction.amount) <= 0)) throw new Error("バックアップの実績データが不正です。");
       if (directionForImportedCategory(category) !== transaction.direction) throw new Error("バックアップの実績区分と種別が一致しません。");
       transactionIds.add(String(transaction.id));
     });
@@ -2233,7 +2324,14 @@
     const transaction = state.transactions.find((item) => item.id === id);
     if (!transaction) return;
     const categoryId = document.querySelector("#transaction-category").value;
-    const amount = Math.max(1, toInteger(document.querySelector("#transaction-amount").value, 1));
+    const category = categoryById(categoryId);
+    if (!category) return;
+    const rawAmount = toInteger(document.querySelector("#transaction-amount").value);
+    const amount = isSignedIncomeCategory(category) ? rawAmount : Math.max(1, rawAmount);
+    if (isSignedIncomeCategory(category) && amount === 0) {
+      showToast("収入（マイナス込み）の実績は0円以外で入力してください");
+      return;
+    }
     const date = document.querySelector("#transaction-date").value;
     if (date < state.settings.startDate || date > state.settings.endDate) {
       showToast("日付は管理期間内にしてください");
@@ -2315,7 +2413,12 @@
 
   document.querySelector("#apply-plan-pattern").addEventListener("click", applyPlanPattern);
   document.querySelector("#copy-next-plan").addEventListener("click", copyPlanToNextMonth);
-  document.querySelector("#plan-category-group").addEventListener("change", (event) => updatePlanCategoryKind(event.target.value));
+  document.querySelector("#plan-category-group").addEventListener("change", (event) => {
+    updatePlanCategoryKind(event.target.value);
+    renderPlanEditor();
+  });
+
+  document.querySelector("#transaction-category").addEventListener("change", updateTransactionAmountInputConstraints);
   document.querySelector("#plan-category-delete").addEventListener("click", () => deleteCategory(editingPlanCategoryId, planDialog).catch((error) => showToast(error.message)));
   document.querySelector("#plan-scale-max").addEventListener("input", (event) => {
     if (!Number.isFinite(Number(event.target.value)) || Number(event.target.value) <= 0) return;
@@ -2330,7 +2433,7 @@
   monthlyPlanEditor.addEventListener("input", (event) => {
     if (!event.target.dataset.planMonth) return;
     selectPlanMonth(event.target.dataset.planMonth);
-    updatePlanColumn(event.target.dataset.planMonth, Math.max(0, toInteger(event.target.value)), false);
+    updatePlanColumn(event.target.dataset.planMonth, event.target.value, false);
   });
   monthlyPlanEditor.addEventListener("focusin", (event) => {
     if (event.target.dataset.planMonth) selectPlanMonth(event.target.dataset.planMonth);
@@ -2368,7 +2471,8 @@
     const barArea = event.target.closest(".month-plan-bar-area");
     if (!barArea) return;
     const month = barArea.dataset.planSlider;
-    const currentAmount = Math.max(0, toInteger(planDraft[month]));
+    const allowsNegative = planEditorAllowsNegative();
+    const currentAmount = normalizePlanEditorAmount(planDraft[month]);
     const barStep = planBarStep();
     const pageStep = Math.max(barStep, roundAmountToStep(planScaleDraft / 10, barStep));
     let nextAmount;
@@ -2376,13 +2480,15 @@
     else if (event.key === "ArrowDown" || event.key === "ArrowLeft") nextAmount = currentAmount - barStep;
     else if (event.key === "PageUp") nextAmount = currentAmount + pageStep;
     else if (event.key === "PageDown") nextAmount = currentAmount - pageStep;
-    else if (event.key === "Home") nextAmount = 0;
+    else if (event.key === "Home") nextAmount = allowsNegative ? -planScaleDraft : 0;
     else if (event.key === "End") nextAmount = planScaleDraft;
     else return;
     event.preventDefault();
     selectPlanMonth(month);
-    const maximum = currentAmount > planScaleDraft ? MAX_PLAN_SCALE_MAX : planScaleDraft;
-    updatePlanColumn(month, clamp(roundAmountToStep(nextAmount, barStep), 0, maximum));
+    const maximum = Math.abs(currentAmount) > planScaleDraft ? MAX_PLAN_SCALE_MAX : planScaleDraft;
+    const minimum = allowsNegative ? -maximum : 0;
+    const roundedAmount = allowsNegative ? roundSignedAmountToStep(nextAmount, barStep) : roundAmountToStep(nextAmount, barStep);
+    updatePlanColumn(month, clamp(roundedAmount, minimum, maximum));
   });
   document.querySelector("#plan-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2401,8 +2507,9 @@
       return;
     }
     planScaleDraft = normalizePlanScaleMax(document.querySelector("#plan-scale-max").value);
+    const allowsNegative = isSignedIncomeGroup(group);
     const normalizedPlanDraft = {};
-    Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = Math.max(0, toInteger(amount)); });
+    Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = allowsNegative ? toInteger(amount) : Math.max(0, toInteger(amount)); });
     state.plans[editingPlanCategoryId] = { ...(state.plans[editingPlanCategoryId] || {}), ...normalizedPlanDraft };
     category.name = name;
     category.group = group;
@@ -2410,8 +2517,8 @@
     category.active = true;
     category.archivedAt = null;
     if (group !== "variable") category.dailyBudgetEnabled = false;
-    category.defaultAmount = Math.max(0, toInteger(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]));
-    category.planRule = planRuleDraft ? { ...planRuleDraft, amount: Math.max(0, toInteger(planRuleDraft.amount)) } : null;
+    category.defaultAmount = allowsNegative ? toInteger(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]) : Math.max(0, toInteger(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]));
+    category.planRule = planRuleDraft ? { ...planRuleDraft, amount: allowsNegative ? toInteger(planRuleDraft.amount) : Math.max(0, toInteger(planRuleDraft.amount)) } : null;
     category.planScaleMax = planScaleDraft;
     cancelPlanPointerTracking();
     closeDialog(planDialog);

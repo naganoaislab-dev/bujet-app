@@ -282,6 +282,8 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .interactive-chart-bar.expense-actual { background: #d66735; }
 .interactive-chart-bar.income-plan { background: #a8ceba; }
 .interactive-chart-bar.income-actual { background: #2f8057; }
+.interactive-chart-bar.income-plan.is-negative { background: #e8b59b; }
+.interactive-chart-bar.income-actual.is-negative { background: #d66735; }
 .interactive-chart-bar.monthly-net-planned { background: #7f9dc2; }
 .interactive-chart-bar.monthly-net-actual { background: #3c69a1; }
 .interactive-chart-selection-guide, .cumulative-chart-selection-guide { top: 0; bottom: 0; left: var(--selection-left); }
@@ -463,6 +465,15 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .month-plan-bar-area.is-dragging { cursor: grabbing; }
 .month-plan-bar { position: relative; width: 100%; min-height: 2px; height: var(--bar-height); border-radius: 0.35rem 0.35rem 0 0; background: var(--category-color); transition: height 100ms ease; pointer-events: none; }
 .month-plan-bar::before { position: absolute; top: -0.22rem; left: 50%; width: calc(100% + 0.65rem); height: 0.42rem; border: 2px solid var(--surface); border-radius: 99px; background: var(--category-color); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); content: ""; transform: translateX(-50%); }
+.month-plan-bar-area.is-signed { display: block; padding: 0 1.15rem; }
+.month-plan-zero-line { position: absolute; z-index: 1; top: 50%; right: 0.45rem; left: 0.45rem; border-top: 1px solid var(--muted); opacity: 0.75; pointer-events: none; }
+.month-plan-bar.is-signed { position: absolute; right: 1.15rem; left: 1.15rem; width: auto; min-height: 0; background: #202124; }
+.month-plan-bar.is-signed.is-positive { top: calc(50% - var(--bar-height)); height: var(--bar-height); border-radius: 0.35rem 0.35rem 0 0; }
+.month-plan-bar.is-signed.is-negative { top: 50%; height: var(--bar-height); border-radius: 0 0 0.35rem 0.35rem; background: var(--danger); }
+.month-plan-bar.is-signed::before { background: currentColor; }
+.month-plan-bar.is-signed.is-positive::before { top: -0.22rem; background: #202124; }
+.month-plan-bar.is-signed.is-negative::before { top: auto; bottom: -0.22rem; background: var(--danger); }
+.month-plan-bar.is-signed.is-zero::before { display: none; }
 .month-plan-bar-area.is-dragging .month-plan-bar, .month-plan-bar-area.is-pointer-active .month-plan-bar { transition: none; }
 .month-plan-overflow { position: absolute; z-index: 1; top: 0.4rem; right: 0.25rem; left: 0.25rem; padding: 0.18rem 0.2rem; border-radius: 0.35rem; color: #fff; background: #a64831; font-size: 0.55rem; font-weight: 850; line-height: 1.2; text-align: center; pointer-events: none; }
 .month-plan-overflow[hidden] { display: none; }

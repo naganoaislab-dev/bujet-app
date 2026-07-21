@@ -9,6 +9,7 @@
   const LEGACY_STATE_ID = "main";
   const WORKSPACE_ID = "workspace";
   const SAMPLE_PROJECT_ID = "sample-project";
+  const SIGNED_INCOME_GROUP = "income-signed";
   const MIN_PLAN_SCALE_MAX = 100;
   const DEFAULT_PLAN_SCALE_MAX = 100000;
   const MAX_PLAN_SCALE_MAX = 1000000000;
@@ -45,6 +46,23 @@
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount <= 0) return DEFAULT_PLAN_SCALE_MAX;
     return Math.min(MAX_PLAN_SCALE_MAX, Math.max(MIN_PLAN_SCALE_MAX, Math.round(amount)));
+  }
+
+  function isSignedIncomeCategory(category) {
+    return category && category.group === SIGNED_INCOME_GROUP;
+  }
+
+  function normalizePlanAmount(category, value) {
+    const parsed = Number(value);
+    const amount = Number.isFinite(parsed) ? Math.round(parsed) : 0;
+    return isSignedIncomeCategory(category) ? amount : Math.max(0, amount);
+  }
+
+  function normalizeTransactionAmount(category, value) {
+    const parsed = Number(value);
+    const amount = Number.isFinite(parsed) ? Math.round(parsed) : 0;
+    if (isSignedIncomeCategory(category)) return amount === 0 ? 1 : amount;
+    return Math.max(1, amount);
   }
 
   function monthsBetween(startDate, endDate) {
@@ -200,11 +218,11 @@
     state.categories.forEach((category, index) => {
       category.id = String(category.id || `category-${index}`);
       category.name = String(category.name || "名称未設定").slice(0, 40);
-      category.group = ["variable", "fixed", "income"].includes(category.group) ? category.group : "variable";
+      category.group = ["variable", "fixed", "income", SIGNED_INCOME_GROUP].includes(category.group) ? category.group : "variable";
       category.color = /^#[0-9a-f]{6}$/i.test(category.color) ? category.color : "#3f7d5b";
       category.order = Number.isFinite(Number(category.order)) ? Number(category.order) : index * 10;
       category.active = category.active !== false;
-      category.defaultAmount = Math.max(0, Math.round(Number(category.defaultAmount) || 0));
+      category.defaultAmount = normalizePlanAmount(category, category.defaultAmount);
       category.planScaleMax = normalizePlanScaleMax(category.planScaleMax);
       category.dailyBudgetEnabled = category.group === "variable" && (
         typeof category.dailyBudgetEnabled === "boolean"
@@ -215,12 +233,15 @@
         category.planRule = {
           startMonth: /^\d{4}-\d{2}$/.test(category.planRule.startMonth) ? category.planRule.startMonth : monthKey(new Date()),
           interval: Math.min(36, Math.max(1, Math.round(Number(category.planRule.interval) || 1))),
-          amount: Math.max(0, Math.round(Number(category.planRule.amount) || 0))
+          amount: normalizePlanAmount(category, category.planRule.amount)
         };
       } else {
         category.planRule = null;
       }
       if (!state.plans[category.id]) state.plans[category.id] = {};
+      Object.keys(state.plans[category.id]).forEach((month) => {
+        state.plans[category.id][month] = normalizePlanAmount(category, state.plans[category.id][month]);
+      });
     });
     state.transactions = state.transactions.filter((transaction) => transaction && typeof transaction === "object").map((transaction, index) => {
       const date = validDateKey(transaction.date) ? transaction.date : dateKey(new Date());
@@ -229,13 +250,14 @@
       const enteredOn = validDateKey(transaction.enteredOn)
         ? transaction.enteredOn
         : (Number.isNaN(createdDate.getTime()) ? date : dateKey(createdDate));
+      const category = state.categories.find((item) => String(item.id) === String(transaction.categoryId));
       return {
         id: String(transaction.id || `transaction-${index}`),
         direction: transaction.direction === "income" ? "income" : "expense",
         categoryId: String(transaction.categoryId || ""),
         date,
         enteredOn,
-        amount: Math.max(1, Math.round(Number(transaction.amount) || 1)),
+        amount: normalizeTransactionAmount(category, transaction.amount),
         memo: String(transaction.memo || "").slice(0, 500),
         createdAt,
         updatedAt: transaction.updatedAt || new Date().toISOString()
