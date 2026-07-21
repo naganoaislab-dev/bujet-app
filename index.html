@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=41">
-  <link rel="icon" href="icons/icon.svg?v=41" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=41">
-  <link rel="stylesheet" href="styles.css?v=41">
-  <script src="db.js?v=41" defer></script>
-  <script src="app.js?v=41" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=42">
+  <link rel="icon" href="icons/icon.svg?v=42" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=42">
+  <link rel="stylesheet" href="styles.css?v=42">
+  <script src="db.js?v=42" defer></script>
+  <script src="app.js?v=42" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -201,6 +201,23 @@
         <p><strong id="plan-scale-summary">上端 ￥100,000</strong><span id="plan-scale-step">棒は￥1,000刻み</span><span>金額欄は1円単位。棒は目盛り単位に丸めて表示します。</span></p>
       </div>
       <div id="monthly-plan-editor" class="monthly-plan-editor" aria-label="月ごとの計画金額"></div>
+      <section class="plan-notification-panel" aria-labelledby="plan-notification-title">
+        <div class="section-copy"><p class="section-kicker">REMINDER</p><h3 id="plan-notification-title">通知設定</h3><p>設定日を過ぎても当月の入力がないとき、入力画面の項目をやんわり点滅させます。</p></div>
+        <label class="plan-notification-toggle">
+          <span class="category-daily-copy"><strong>入力リマインドを有効にする</strong><span>初期状態では無効です。</span></span>
+          <input id="plan-reminder-enabled" class="daily-budget-toggle-input" type="checkbox" role="switch">
+          <span class="daily-budget-switch" aria-hidden="true"></span>
+        </label>
+        <div id="plan-reminder-options" class="plan-reminder-options" hidden>
+          <label><span class="field-label">通知日</span><select id="plan-reminder-schedule"><option value="day">毎月N日</option><option value="weekday">第Mの曜日</option></select></label>
+          <label id="plan-reminder-day-field"><span class="field-label">毎月</span><select id="plan-reminder-day"></select></label>
+          <div id="plan-reminder-weekday-fields" class="form-grid two-columns" hidden>
+            <label><span class="field-label">第M</span><select id="plan-reminder-week"></select></label>
+            <label><span class="field-label">曜日</span><select id="plan-reminder-weekday"></select></label>
+          </div>
+          <p id="plan-reminder-help" class="help-text"></p>
+        </div>
+      </section>
       <div class="dialog-actions three-actions sticky-dialog-actions">
         <button id="plan-category-delete" type="button" class="button danger">削除</button>
         <button type="button" class="button secondary" data-close="plan-dialog">キャンセル</button>

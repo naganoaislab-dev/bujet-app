@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.31";
+  const APP_VERSION = "0.5.32";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
@@ -13,6 +13,9 @@
     income: "収入",
     [SIGNED_INCOME_GROUP]: "収入（マイナス込み）"
   });
+  const REMINDER_SCHEDULE_DAY = "day";
+  const REMINDER_SCHEDULE_WEEKDAY = "weekday";
+  const REMINDER_WEEKDAY_LABELS = Object.freeze(["日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"]);
   const PLAN_AMOUNT_STEP = 100;
   const MIN_PLAN_SCALE_MAX = 100;
   const PLAN_BAR_STEPS = Object.freeze([
@@ -92,6 +95,7 @@
   let calculatorContext = null;
   let calculator = createCalculatorState();
   let lastRenderedDate = "";
+  let nextDayRenderTimer = null;
   let serviceWorkerRegistration = null;
   let serviceWorkerUpdateRequested = false;
 
@@ -405,6 +409,50 @@
     return transactionsForMonth(month)
       .filter((transaction) => transaction.categoryId === categoryId)
       .reduce((sum, transaction) => sum + toInteger(transaction.amount), 0);
+  }
+
+  function normalizeReminderConfig(value) {
+    const source = value && typeof value === "object" ? value : {};
+    return {
+      enabled: source.enabled === true,
+      schedule: source.schedule === REMINDER_SCHEDULE_WEEKDAY ? REMINDER_SCHEDULE_WEEKDAY : REMINDER_SCHEDULE_DAY,
+      dayOfMonth: clamp(toInteger(source.dayOfMonth, 1), 1, 31),
+      weekOfMonth: clamp(toInteger(source.weekOfMonth, 1), 1, 5),
+      weekday: clamp(toInteger(source.weekday, 1), 0, 6)
+    };
+  }
+
+  function latestCategoryEntryDate(categoryId, month) {
+    return transactionsForMonth(month)
+      .filter((transaction) => transaction.categoryId === categoryId)
+      .reduce((latest, transaction) => {
+        const enteredOn = isValidDateKey(transaction.enteredOn) ? transaction.enteredOn : transaction.date;
+        return enteredOn > latest ? enteredOn : latest;
+      }, "");
+  }
+
+  function reminderDueDate(year, month, reminder) {
+    const config = normalizeReminderConfig(reminder);
+    const days = daysInMonth(year, month);
+    if (config.schedule === REMINDER_SCHEDULE_DAY) {
+      return `${year}-${pad(month)}-${pad(Math.min(config.dayOfMonth, days))}`;
+    }
+    const firstDay = new Date(year, month - 1, 1).getDay();
+    const firstOccurrence = 1 + ((config.weekday - firstDay + 7) % 7);
+    let day = firstOccurrence + (config.weekOfMonth - 1) * 7;
+    if (day > days) {
+      const lastDay = new Date(year, month, 0).getDay();
+      day = days - ((lastDay - config.weekday + 7) % 7);
+    }
+    return `${year}-${pad(month)}-${pad(day)}`;
+  }
+
+  function needsEntryReminder(category, month, today = localDateKey()) {
+    const reminder = normalizeReminderConfig(category && category.reminder);
+    if (!category || category.active === false || !reminder.enabled || latestCategoryEntryDate(category.id, month)) return false;
+    if (today < state.settings.startDate || today > state.settings.endDate || periodForDate(today) !== month) return false;
+    const { year, month: calendarMonth } = monthParts(today.slice(0, 7));
+    return today >= reminderDueDate(year, calendarMonth, reminder);
   }
 
   function carryAmount(categoryId, month) {
@@ -766,6 +814,7 @@
       const element = viewHost.querySelector(`[data-chart-scroll-key="${key}"]`);
       if (element) element.scrollLeft = left;
     });
+    scheduleNextDateRefresh();
   }
 
   function renderEntry() {
@@ -775,6 +824,7 @@
       ...categoriesForGroup("variable"),
       ...categoriesForGroup("fixed")
     ];
+    const incomeReminderDue = incomeCategories().some((category) => needsEntryReminder(category, currentPeriod));
     const available = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).remaining, 0);
     const allTransactions = transactionsForMonth(currentPeriod).sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
     const recent = allTransactionsShown ? allTransactions : allTransactions.slice(0, 5);
@@ -806,7 +856,7 @@
         <div class="category-grid reorderable-category-grid" data-reorder-group="fixed" aria-label="固定支出の並び順">${renderBudgetCards(categoriesForGroup("fixed"), currentPeriod)}</div>
       </section>
 
-      <section class="income-entry-card">
+      <section class="income-entry-card${incomeReminderDue ? " needs-entry-reminder" : ""}">
         <div><strong>収入実績を記録</strong><p>給与・賞与などを状況グラフへ反映します。</p></div>
         <button type="button" class="button small primary" data-action="toggle-income">${incomeExpanded ? "閉じる" : "収入を入力"}</button>
       </section>
@@ -833,15 +883,17 @@
     return categories.map((category) => {
       const stats = categoryBudgetStats(category.id, month);
       const dailyStats = dailyBudgetStats(category, month);
+      const latestEntryDate = latestCategoryEntryDate(category.id, month);
+      const reminderDue = needsEntryReminder(category, month);
       const fixedExpenseStatus = category.group === "fixed" && planAmount(category.id, month) > 0
-        ? actualAmount(category.id, month) > 0
-          ? { label: "入力済", tone: "complete" }
+        ? latestEntryDate
+          ? { label: `${shortDate(latestEntryDate)}入力済み`, tone: "complete" }
           : { label: "未入力", tone: "missing" }
         : null;
       const available = Math.max(1, stats.plan + Math.max(0, stats.carry));
       const progress = clamp((stats.actual / available) * 100, 0, 100);
       if (dailyStats) {
-        return `<button type="button" class="budget-card daily-budget-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
+        return `<button type="button" class="budget-card daily-budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
           <span class="budget-card-name">${escapeHtml(category.name)}</span>
           <span class="daily-budget-main">
             <span class="daily-budget-value"><span>${dailyStats.dailyLabel}</span><strong class="${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
@@ -854,7 +906,7 @@
           <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
         </button>`;
       }
-      return `<button type="button" class="budget-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
+      return `<button type="button" class="budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
         <span class="budget-card-name">${escapeHtml(category.name)}${fixedExpenseStatus ? `<em class="budget-card-status ${fixedExpenseStatus.tone}">${fixedExpenseStatus.label}</em>` : ""}</span>
         <span class="budget-card-label">今月の残り予算</span>
         <strong class="budget-card-amount ${stats.monthlyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.monthlyRemaining)}</strong>
@@ -870,7 +922,8 @@
     return categories.map((category) => {
       const planned = planAmount(category.id, month);
       const actual = actualAmount(category.id, month);
-      return `<button type="button" class="budget-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
+      const reminderDue = needsEntryReminder(category, month);
+      return `<button type="button" class="budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
         <span class="budget-card-name">${escapeHtml(category.name)}</span>
         <span class="budget-card-label">今月の収入実績</span>
         <strong class="budget-card-amount ${actual < 0 ? "negative" : "positive"}">${formatSignedCurrency(actual)}</strong>
@@ -1839,6 +1892,43 @@
     select.innerHTML = groups.map((value) => `<option value="${value}">${CATEGORY_GROUP_LABELS[value]}</option>`).join("");
   }
 
+  function updatePlanReminderControls() {
+    const enabled = document.querySelector("#plan-reminder-enabled").checked;
+    const schedule = document.querySelector("#plan-reminder-schedule").value;
+    const useWeekday = schedule === REMINDER_SCHEDULE_WEEKDAY;
+    document.querySelector("#plan-reminder-options").hidden = !enabled;
+    document.querySelector("#plan-reminder-day-field").hidden = useWeekday;
+    document.querySelector("#plan-reminder-weekday-fields").hidden = !useWeekday;
+    document.querySelector("#plan-reminder-help").textContent = !enabled
+      ? "通知は無効です。"
+      : useWeekday
+        ? "第5の曜日がない月は、その月の最後の同じ曜日に読み替えます。"
+        : "31日など、その月に存在しない日は月末日に読み替えます。";
+  }
+
+  function setPlanReminderControls(reminder) {
+    const config = normalizeReminderConfig(reminder);
+    document.querySelector("#plan-reminder-day").innerHTML = Array.from({ length: 31 }, (_, index) => `<option value="${index + 1}">${index + 1}日</option>`).join("");
+    document.querySelector("#plan-reminder-week").innerHTML = Array.from({ length: 5 }, (_, index) => `<option value="${index + 1}">第${index + 1}</option>`).join("");
+    document.querySelector("#plan-reminder-weekday").innerHTML = REMINDER_WEEKDAY_LABELS.map((label, index) => `<option value="${index}">${label}</option>`).join("");
+    document.querySelector("#plan-reminder-enabled").checked = config.enabled;
+    document.querySelector("#plan-reminder-schedule").value = config.schedule;
+    document.querySelector("#plan-reminder-day").value = String(config.dayOfMonth);
+    document.querySelector("#plan-reminder-week").value = String(config.weekOfMonth);
+    document.querySelector("#plan-reminder-weekday").value = String(config.weekday);
+    updatePlanReminderControls();
+  }
+
+  function planReminderConfigFromForm() {
+    return normalizeReminderConfig({
+      enabled: document.querySelector("#plan-reminder-enabled").checked,
+      schedule: document.querySelector("#plan-reminder-schedule").value,
+      dayOfMonth: document.querySelector("#plan-reminder-day").value,
+      weekOfMonth: document.querySelector("#plan-reminder-week").value,
+      weekday: document.querySelector("#plan-reminder-weekday").value
+    });
+  }
+
   function openCategoryEditor(group = "variable") {
     document.querySelector("#category-dialog-title").textContent = "種別を追加";
     document.querySelector("#category-id").value = "";
@@ -1888,6 +1978,7 @@
     limitCategoryGroupOptions(groupSelect, category.group);
     groupSelect.value = category.group;
     document.querySelector("#plan-category-color").value = category.color;
+    setPlanReminderControls(category.reminder);
     updatePlanCategoryKind(category.group);
     document.querySelector("#plan-start-month").innerHTML = monthOptions(planRuleDraft && periodMonths().includes(planRuleDraft.startMonth) ? planRuleDraft.startMonth : periodMonths()[0]);
     document.querySelector("#plan-interval").value = String(planRuleDraft ? planRuleDraft.interval : 1);
@@ -2430,7 +2521,7 @@
     } else {
       const categoryId = makeId("category");
       const order = Math.max(0, ...state.categories.map((category) => toInteger(category.order))) + 10;
-      state.categories.push({ id: categoryId, name, group, color, order, active: true, defaultAmount: 0, planScaleMax: DEFAULT_PLAN_SCALE_MAX, dailyBudgetEnabled: false });
+      state.categories.push({ id: categoryId, name, group, color, order, active: true, defaultAmount: 0, planScaleMax: DEFAULT_PLAN_SCALE_MAX, dailyBudgetEnabled: false, reminder: normalizeReminderConfig() });
       state.plans[categoryId] = {};
       periodMonths().forEach((month) => { state.plans[categoryId][month] = 0; });
     }
@@ -2466,6 +2557,8 @@
     updatePlanCategoryKind(event.target.value);
     renderPlanEditor();
   });
+  document.querySelector("#plan-reminder-enabled").addEventListener("change", updatePlanReminderControls);
+  document.querySelector("#plan-reminder-schedule").addEventListener("change", updatePlanReminderControls);
 
   document.querySelector("#transaction-category").addEventListener("change", updateTransactionAmountInputConstraints);
   document.querySelector("#plan-category-delete").addEventListener("click", () => deleteCategory(editingPlanCategoryId, planDialog).catch((error) => showToast(error.message)));
@@ -2569,6 +2662,7 @@
     category.defaultAmount = allowsNegative ? toInteger(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]) : Math.max(0, toInteger(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]));
     category.planRule = planRuleDraft ? { ...planRuleDraft, amount: allowsNegative ? toInteger(planRuleDraft.amount) : Math.max(0, toInteger(planRuleDraft.amount)) } : null;
     category.planScaleMax = planScaleDraft;
+    category.reminder = planReminderConfigFromForm();
     cancelPlanPointerTracking();
     closeDialog(planDialog);
     await persist(`${category.name}の項目と計画を保存しました`);
@@ -2592,6 +2686,17 @@
   function refreshForCurrentDeviceDate() {
     if (!state || localDateKey() === lastRenderedDate) return;
     render();
+  }
+
+  function scheduleNextDateRefresh() {
+    if (nextDayRenderTimer) window.clearTimeout(nextDayRenderTimer);
+    const next = new Date();
+    next.setHours(24, 0, 1, 0);
+    nextDayRenderTimer = window.setTimeout(() => {
+      nextDayRenderTimer = null;
+      refreshForCurrentDeviceDate();
+      scheduleNextDateRefresh();
+    }, Math.max(1000, next.getTime() - Date.now()));
   }
 
   async function initialize() {

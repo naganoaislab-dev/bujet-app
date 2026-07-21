@@ -10,6 +10,8 @@
   const WORKSPACE_ID = "workspace";
   const SAMPLE_PROJECT_ID = "sample-project";
   const SIGNED_INCOME_GROUP = "income-signed";
+  const REMINDER_SCHEDULE_DAY = "day";
+  const REMINDER_SCHEDULE_WEEKDAY = "weekday";
   const MIN_PLAN_SCALE_MAX = 100;
   const DEFAULT_PLAN_SCALE_MAX = 100000;
   const MAX_PLAN_SCALE_MAX = 1000000000;
@@ -65,6 +67,19 @@
     return Math.max(1, amount);
   }
 
+  function normalizeReminder(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const schedule = source.schedule === REMINDER_SCHEDULE_WEEKDAY ? REMINDER_SCHEDULE_WEEKDAY : REMINDER_SCHEDULE_DAY;
+    const weekday = Number(source.weekday);
+    return {
+      enabled: source.enabled === true,
+      schedule,
+      dayOfMonth: Math.min(31, Math.max(1, Math.round(Number(source.dayOfMonth) || 1))),
+      weekOfMonth: Math.min(5, Math.max(1, Math.round(Number(source.weekOfMonth) || 1))),
+      weekday: Math.min(6, Math.max(0, Math.round(Number.isFinite(weekday) ? weekday : 1)))
+    };
+  }
+
   function monthsBetween(startDate, endDate) {
     const start = new Date(`${startDate}T00:00:00`);
     const end = new Date(`${endDate}T00:00:00`);
@@ -117,7 +132,8 @@
     ].map((category) => ({
       ...category,
       planScaleMax: DEFAULT_PLAN_SCALE_MAX,
-      dailyBudgetEnabled: category.id === "expense-food"
+      dailyBudgetEnabled: category.id === "expense-food",
+      reminder: normalizeReminder()
     }));
 
     const plans = {};
@@ -224,6 +240,7 @@
       category.active = category.active !== false;
       category.defaultAmount = normalizePlanAmount(category, category.defaultAmount);
       category.planScaleMax = normalizePlanScaleMax(category.planScaleMax);
+      category.reminder = normalizeReminder(category.reminder);
       category.dailyBudgetEnabled = category.group === "variable" && (
         typeof category.dailyBudgetEnabled === "boolean"
           ? category.dailyBudgetEnabled

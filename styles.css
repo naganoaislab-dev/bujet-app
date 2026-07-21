@@ -209,6 +209,8 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .income-entry-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.95rem 1rem; border: 1px solid rgba(var(--primary-rgb), 0.34); border-radius: 1rem; color: var(--primary-strong); background: linear-gradient(135deg, var(--primary-soft), var(--surface)); }
 .income-entry-card strong { color: var(--primary-strong); }
 .income-entry-card p { margin-bottom: 0; color: var(--primary-strong); font-size: 0.8rem; opacity: 0.8; }
+.budget-card.needs-entry-reminder, .income-entry-card.needs-entry-reminder { animation: entry-reminder-pulse 2.1s ease-in-out infinite; }
+@keyframes entry-reminder-pulse { 0%, 100% { box-shadow: 0 7px 20px rgba(45, 53, 46, 0.05); } 50% { border-color: color-mix(in srgb, var(--danger) 62%, var(--line)); box-shadow: 0 0 0 0.28rem color-mix(in srgb, var(--danger) 12%, transparent), 0 10px 26px color-mix(in srgb, var(--danger) 16%, transparent); } }
 
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; min-height: 3rem; padding: 0.7rem 1rem; border: 1px solid transparent; border-radius: 0.85rem; font-weight: 800; cursor: pointer; }
 .button.primary { color: #fff; background: var(--primary); }
@@ -453,6 +455,11 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .plan-category-panel .section-copy, .plan-category-panel h3, .plan-category-panel p { margin-bottom: 0; }
 .plan-category-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .plan-category-controls > :last-child { grid-column: span 2; }
+.plan-notification-panel { display: grid; gap: 0.75rem; margin-top: 1rem; padding: 0.9rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--surface-2); }
+.plan-notification-panel .section-copy, .plan-notification-panel h3, .plan-notification-panel p { margin-bottom: 0; }
+.plan-notification-toggle { display: flex; align-items: center; justify-content: space-between; gap: 0.7rem; min-height: 3.4rem; padding: 0.55rem 0.65rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--surface); cursor: pointer; }
+.plan-reminder-options { display: grid; gap: 0.7rem; padding: 0.75rem; border-radius: 0.75rem; background: var(--surface); }
+.plan-reminder-options[hidden] { display: none; }
 .bulk-plan-panel { padding: 0.9rem; border-radius: 1rem; background: var(--surface-2); }
 .bulk-plan-panel p, .plan-editor-head p { margin-bottom: 0; font-size: 0.72rem; }
 .plan-controls { grid-template-columns: 1.2fr 1fr 1.1fr; margin-top: 0.75rem; }
@@ -550,4 +557,5 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+  .budget-card.needs-entry-reminder, .income-entry-card.needs-entry-reminder { animation: none; border-color: color-mix(in srgb, var(--danger) 62%, var(--line)); box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--danger) 11%, transparent); }
 }
