@@ -246,10 +246,12 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .cumulative-chart-heading .section-copy { min-width: 0; }
 .cumulative-scale-toggle { flex: 0 0 auto; min-height: 2.35rem; margin-top: 0.1rem; padding: 0.45rem 0.65rem; border-color: var(--line); font-size: 0.68rem; white-space: nowrap; }
 .cumulative-scale-toggle.is-active { border-color: color-mix(in srgb, var(--primary) 68%, var(--line)); color: var(--primary-strong); background: color-mix(in srgb, var(--primary) 11%, var(--surface)); }
-.chart-scroll { overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
+.chart-scroll { position: relative; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
+.chart-axis-labels { position: sticky; z-index: 7; left: 0.7rem; width: 2.8rem; height: 22rem; margin: 0.5rem 0 -22.5rem 0.7rem; background: var(--surface); pointer-events: none; }
+.chart-axis-label-plot { position: absolute; top: 1.25rem; right: 0; bottom: 3.25rem; left: 0; }
+.chart-axis-label-plot span { position: absolute; right: 0.25rem; width: 2.55rem; color: var(--muted); background: var(--surface); font-size: 0.58rem; text-align: left; transform: translateY(-50%); }
 .chart-canvas { position: relative; width: calc(var(--month-count) * 3.1rem + 2.8rem); min-width: calc(var(--month-count) * 3.1rem + 2.8rem); height: 22rem; margin: 0.5rem 0.7rem 0; }
 .chart-gridline { position: absolute; right: 0; left: 0; border-top: 1px dashed var(--line); }
-.chart-gridline span { position: absolute; top: -0.55rem; left: 0; padding-right: 0.25rem; color: var(--muted); background: var(--surface); font-size: 0.58rem; }
 .bar-chart { position: absolute; top: 1.25rem; right: 0; bottom: 3.25rem; left: 2.8rem; display: grid; grid-template-columns: repeat(var(--month-count), 3.1rem); align-items: end; gap: 0; }
 .month-bars { position: relative; display: grid; grid-template-columns: repeat(4, 1fr); align-items: end; gap: 0.12rem; height: 100%; padding: 0 0.225rem; }
 .chart-bar { min-height: 1px; border-radius: 0.22rem 0.22rem 0 0; }
@@ -265,11 +267,12 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .chart-line.cumulative-net.actual { stroke: #c45e43; stroke-width: 2.8; }
 .chart-line.cumulative-net.planned { stroke: #3c78b4; stroke-width: 2.5; stroke-dasharray: 7 3; }
 .chart-line.cumulative-net.forecast { stroke: #c45e43; stroke-width: 2.3; stroke-dasharray: 6 4; opacity: 0.84; }
-.cumulative-chart-point { stroke: var(--surface); stroke-width: 1.5; }
-.cumulative-chart-point.planned { fill: #3c78b4; }
-.cumulative-chart-point.actual { fill: #c45e43; }
-.cumulative-chart-point.forecast { fill: var(--surface); stroke: #c45e43; stroke-width: 2; }
-.cumulative-chart-point.is-selected { stroke-width: 2.5; }
+.cumulative-chart-points { position: absolute; z-index: 3; inset: 0; pointer-events: none; }
+.cumulative-chart-point { position: absolute; width: 0.44rem; height: 0.44rem; border: 1.5px solid var(--surface); border-radius: 50%; transform: translate(-50%, -50%); box-sizing: border-box; }
+.cumulative-chart-point.planned { background: #3c78b4; }
+.cumulative-chart-point.actual { background: #c45e43; }
+.cumulative-chart-point.forecast { border: 2px solid #c45e43; background: var(--surface); }
+.cumulative-chart-point.is-selected { width: 0.68rem; height: 0.68rem; border-width: 2.5px; }
 .cumulative-chart-selection-guide { position: absolute; z-index: 4; top: 1.25rem; bottom: 3.25rem; left: var(--selection-left); border-left: 1px dashed var(--ink); opacity: 0.42; pointer-events: none; }
 .cumulative-chart-tooltip { position: absolute; z-index: 6; top: 1.5rem; left: clamp(5.5rem, var(--selection-left), calc(100% - 5.5rem)); display: grid; width: 10rem; gap: 0.2rem; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 0.65rem; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 5px 14px rgba(29, 38, 32, 0.13); font-size: 0.64rem; line-height: 1.35; pointer-events: none; transform: translateX(-50%); }
 .cumulative-chart-tooltip strong { font-size: 0.72rem; }
@@ -288,7 +291,6 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .cumulative-chart-months span { color: var(--muted); font-size: 0.6rem; text-align: center; }
 .chart-plot { position: absolute; top: 1.25rem; right: 0; bottom: 3.25rem; left: 2.8rem; }
 .chart-plot .chart-gridline { z-index: 1; }
-.chart-plot .chart-gridline span { left: -2.8rem; width: 2.55rem; padding-right: 0.25rem; text-align: left; }
 .chart-plot .line-overlay { inset: 0; width: 100%; height: 100%; }
 .interactive-bar-series { position: absolute; z-index: 2; inset: 0; display: grid; grid-template-columns: repeat(var(--month-count), 3.1rem); }
 .interactive-month-bars { position: relative; height: 100%; }
