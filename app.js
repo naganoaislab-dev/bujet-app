@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.45";
+  const APP_VERSION = "0.5.46";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -1619,7 +1619,8 @@
     return `<div class="interactive-month-bars${index === selectedIndex ? " is-selected" : ""}">${series.map((itemSeries) => {
       const value = item[itemSeries.field];
       const geometry = chartBarGeometry(value, scale);
-      return `<span class="interactive-chart-bar ${itemSeries.tone}${value < 0 ? " is-negative" : ""}" style="--bar-top:${geometry.top}%;--bar-height:${geometry.height}%"></span>`;
+      const isCurrentActual = item.month === currentPeriodForToday() && itemSeries.tone.endsWith("-actual");
+      return `<span class="interactive-chart-bar ${itemSeries.tone}${value < 0 ? " is-negative" : ""}${isCurrentActual ? " is-current-actual" : ""}" style="--bar-top:${geometry.top}%;--bar-height:${geometry.height}%"></span>`;
     }).join("")}</div>`;
   }
 
@@ -1637,7 +1638,8 @@
       const index = start + offset;
       const y = chartYPercent(item[field], scale);
       const left = ((index + 0.5) / Math.max(1, aggregates.length)) * 100;
-      return `<span class="cumulative-chart-point ${tone}${index === selectedIndex ? " is-selected" : ""}" style="left:${left}%;top:${y}%"></span>`;
+      const isCurrentActual = tone === "actual" && index === activeIndex;
+      return `<span class="cumulative-chart-point ${tone}${index === selectedIndex ? " is-selected" : ""}${isCurrentActual ? " is-current-actual" : ""}" style="left:${left}%;top:${y}%"></span>`;
     }).join("");
     const selected = aggregates[selectedIndex] || aggregates[0] || { month: currentPeriod, plannedCumulative: 0, actualCumulative: 0, actualForecastCumulative: 0, plannedNet: 0, actualNet: 0 };
     const selectedUsesForecast = selectedIndex > activeIndex;
