@@ -242,6 +242,10 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 
 .chart-card { padding: 1rem 0 0.85rem; overflow: hidden; }
 .chart-card > .section-copy, .chart-card > .chart-legend, .chart-card > .chart-note { padding-right: 1rem; padding-left: 1rem; }
+.cumulative-chart-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.7rem; padding: 0 1rem; }
+.cumulative-chart-heading .section-copy { min-width: 0; }
+.cumulative-scale-toggle { flex: 0 0 auto; min-height: 2.35rem; margin-top: 0.1rem; padding: 0.45rem 0.65rem; border-color: var(--line); font-size: 0.68rem; white-space: nowrap; }
+.cumulative-scale-toggle.is-active { border-color: color-mix(in srgb, var(--primary) 68%, var(--line)); color: var(--primary-strong); background: color-mix(in srgb, var(--primary) 11%, var(--surface)); }
 .chart-scroll { overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
 .chart-canvas { position: relative; width: calc(var(--month-count) * 3.1rem + 2.8rem); min-width: calc(var(--month-count) * 3.1rem + 2.8rem); height: 22rem; margin: 0.5rem 0.7rem 0; }
 .chart-gridline { position: absolute; right: 0; left: 0; border-top: 1px dashed var(--line); }
@@ -260,9 +264,11 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .chart-line.monthly-net.planned { stroke: #7f9dc2; stroke-dasharray: 4 3; }
 .chart-line.cumulative-net.actual { stroke: #c45e43; stroke-width: 2.8; }
 .chart-line.cumulative-net.planned { stroke: #3c78b4; stroke-width: 2.5; stroke-dasharray: 7 3; }
+.chart-line.cumulative-net.forecast { stroke: #c45e43; stroke-width: 2.3; stroke-dasharray: 6 4; opacity: 0.84; }
 .cumulative-chart-point { stroke: var(--surface); stroke-width: 1.5; }
 .cumulative-chart-point.planned { fill: #3c78b4; }
 .cumulative-chart-point.actual { fill: #c45e43; }
+.cumulative-chart-point.forecast { fill: var(--surface); stroke: #c45e43; stroke-width: 2; }
 .cumulative-chart-point.is-selected { stroke-width: 2.5; }
 .cumulative-chart-selection-guide { position: absolute; z-index: 4; top: 1.25rem; bottom: 3.25rem; left: var(--selection-left); border-left: 1px dashed var(--ink); opacity: 0.42; pointer-events: none; }
 .cumulative-chart-tooltip { position: absolute; z-index: 6; top: 1.5rem; left: clamp(5.5rem, var(--selection-left), calc(100% - 5.5rem)); display: grid; width: 10rem; gap: 0.2rem; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 0.65rem; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 5px 14px rgba(29, 38, 32, 0.13); font-size: 0.64rem; line-height: 1.35; pointer-events: none; transform: translateX(-50%); }
@@ -273,6 +279,7 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .cumulative-chart-tooltip .planned i { border-top-style: dashed; }
 .cumulative-chart-tooltip .actual { color: #c45e43; }
 .cumulative-chart-tooltip small { color: var(--muted); font-size: 0.57rem; line-height: 1.35; }
+.cumulative-chart-tooltip .cumulative-scale-window { color: var(--muted); font-weight: 700; }
 .cumulative-chart-tap-targets { position: absolute; z-index: 5; top: 1.25rem; right: 0; bottom: 3.25rem; left: 2.8rem; display: grid; grid-template-columns: repeat(var(--month-count), 3.1rem); }
 .cumulative-chart-tap-target { padding: 0; border: 0; outline: 0; background: transparent; cursor: pointer; touch-action: pan-x; -webkit-tap-highlight-color: transparent; }
 .cumulative-chart-tap-target:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }

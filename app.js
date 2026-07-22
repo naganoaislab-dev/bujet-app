@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.43";
+  const APP_VERSION = "0.5.44";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -86,6 +86,10 @@
   let analysisPageSwipe = null;
   let analysisPageTransitionTimer = null;
   let cumulativeChartSelectedIndex = null;
+  let cumulativeAutoScaleEnabled = true;
+  let cumulativeScaleWindow = null;
+  let overviewChartScrollSyncing = false;
+  let overviewChartScaleTimer = null;
   let settingsPane = "basic";
   let incomeExpanded = false;
   let unexpectedEntriesExpanded = false;
@@ -818,6 +822,8 @@
     incomeExpanded = false;
     unexpectedEntriesExpanded = false;
     allTransactionsShown = false;
+    cumulativeChartSelectedIndex = null;
+    cumulativeScaleWindow = null;
   }
 
   async function loadSelectedProject() {
@@ -924,7 +930,61 @@
       const element = viewHost.querySelector(`[data-chart-scroll-key="${key}"]`);
       if (element) element.scrollLeft = left;
     });
+    if (currentView === "overview") configureOverviewChartInteractions();
     scheduleNextDateRefresh();
+  }
+
+  function visibleCumulativeChartWindow() {
+    const scroll = viewHost.querySelector('[data-chart-scroll-key="cumulative-net"]');
+    if (!scroll) return null;
+    const viewport = scroll.getBoundingClientRect();
+    const monthCells = Array.from(scroll.querySelectorAll(".cumulative-chart-months span"));
+    const visibleIndexes = monthCells.reduce((indexes, cell, index) => {
+      const bounds = cell.getBoundingClientRect();
+      if (bounds.right > viewport.left + 1 && bounds.left < viewport.right - 1) indexes.push(index);
+      return indexes;
+    }, []);
+    if (!visibleIndexes.length) return null;
+    return { start: visibleIndexes[0], end: visibleIndexes[visibleIndexes.length - 1] };
+  }
+
+  function refreshCumulativeScaleForVisibleWindow() {
+    if (currentView !== "overview" || !cumulativeAutoScaleEnabled) return;
+    const nextWindow = visibleCumulativeChartWindow();
+    if (!nextWindow || (cumulativeScaleWindow && cumulativeScaleWindow.start === nextWindow.start && cumulativeScaleWindow.end === nextWindow.end)) return;
+    cumulativeScaleWindow = nextWindow;
+    render();
+  }
+
+  function scheduleCumulativeScaleRefresh() {
+    if (!cumulativeAutoScaleEnabled || currentView !== "overview") return;
+    if (overviewChartScaleTimer) window.clearTimeout(overviewChartScaleTimer);
+    overviewChartScaleTimer = window.setTimeout(() => {
+      overviewChartScaleTimer = null;
+      refreshCumulativeScaleForVisibleWindow();
+    }, 120);
+  }
+
+  function synchronizeOverviewChartScroll(source) {
+    if (overviewChartScrollSyncing || currentView !== "overview") return;
+    overviewChartScrollSyncing = true;
+    const left = source.scrollLeft;
+    viewHost.querySelectorAll("[data-chart-scroll-key]").forEach((element) => {
+      if (element !== source && Math.abs(element.scrollLeft - left) > 0.5) element.scrollLeft = left;
+    });
+    overviewChartScrollSyncing = false;
+    scheduleCumulativeScaleRefresh();
+  }
+
+  function configureOverviewChartInteractions() {
+    const scrolls = Array.from(viewHost.querySelectorAll("[data-chart-scroll-key]"));
+    if (!scrolls.length) return;
+    const left = scrolls[0].scrollLeft;
+    scrolls.forEach((scroll) => {
+      if (Math.abs(scroll.scrollLeft - left) > 0.5) scroll.scrollLeft = left;
+      scroll.addEventListener("scroll", () => synchronizeOverviewChartScroll(scroll), { passive: true });
+    });
+    if (cumulativeAutoScaleEnabled) window.requestAnimationFrame(refreshCumulativeScaleForVisibleWindow);
   }
 
   function renderEntry() {
@@ -1384,6 +1444,16 @@
     const projectEndTone = projectEndForecast < 0 ? "negative" : projectEndForecast > 0 ? "positive" : "";
     const preferredCumulativeIndex = aggregates.findIndex((item) => item.month === currentPeriod);
     const cumulativeIndexMaximum = Math.max(0, aggregates.length - 1);
+    const activeCumulativeIndex = clamp(Math.max(0, aggregates.findIndex((item) => item.month === currentPeriodForToday())), 0, cumulativeIndexMaximum);
+    let actualForecastCumulative = aggregates[activeCumulativeIndex]?.actualCumulative || 0;
+    aggregates.forEach((item, index) => {
+      if (index <= activeCumulativeIndex) {
+        item.actualForecastCumulative = item.actualCumulative;
+      } else {
+        actualForecastCumulative += item.plannedNet;
+        item.actualForecastCumulative = actualForecastCumulative;
+      }
+    });
     const selectedCumulativeIndex = clamp(
       Number.isInteger(cumulativeChartSelectedIndex) ? cumulativeChartSelectedIndex : Math.max(0, preferredCumulativeIndex),
       0,
@@ -1431,7 +1501,7 @@
         ]
       })}
 
-      ${renderCumulativeNetChart(aggregates, selectedCumulativeIndex)}
+      ${renderCumulativeNetChart(aggregates, selectedCumulativeIndex, activeCumulativeIndex)}
 
       <section class="card" aria-labelledby="monthly-table-title">
         <div class="section-copy"><h2 id="monthly-table-title">月別の数値</h2><p>グラフと同じ内容を表形式で確認できます。</p></div>
@@ -1446,6 +1516,14 @@
     return `<span class="legend-item"><span class="legend-swatch" style="--legend-color:${color}"></span>${label}</span>`;
   }
 
+  function niceChartStep(range, targetIntervals = 3) {
+    const rawStep = Math.max(1, Math.abs(range) / Math.max(1, targetIntervals));
+    const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+    const normalized = rawStep / magnitude;
+    const factor = [1, 2, 2.5, 5, 10].find((candidate) => normalized <= candidate) || 10;
+    return factor * magnitude;
+  }
+
   function chartValueScale(values) {
     let minimum = Math.min(0, ...values);
     let maximum = Math.max(0, ...values);
@@ -1453,6 +1531,14 @@
     const padding = Math.max(1, (maximum - minimum) * 0.08);
     if (minimum < 0) minimum -= padding;
     if (maximum > 0) maximum += padding;
+    if (minimum < 0) {
+      const negativeStep = niceChartStep(Math.abs(minimum));
+      minimum = -Math.ceil(Math.abs(minimum) / negativeStep) * negativeStep;
+    }
+    if (maximum > 0) {
+      const positiveStep = niceChartStep(maximum);
+      maximum = Math.ceil(maximum / positiveStep) * positiveStep;
+    }
     return { minimum, maximum, range: maximum - minimum };
   }
 
@@ -1467,10 +1553,23 @@
   }
 
   function chartAxisValues(scale) {
-    const candidates = scale.minimum < 0 && scale.maximum > 0
-      ? [scale.maximum, 0, scale.minimum]
-      : [scale.maximum, (scale.maximum + scale.minimum) / 2, scale.minimum];
-    return candidates.filter((value, index) => candidates.findIndex((other) => Math.abs(other - value) < 1) === index);
+    const values = [];
+    const add = (value) => {
+      if (!values.some((other) => Math.abs(other - value) < 0.001)) values.push(value);
+    };
+    if (scale.maximum > 0) {
+      const step = niceChartStep(scale.maximum);
+      for (let value = 0; value < scale.maximum - 0.001; value += step) add(value);
+      add(scale.maximum);
+    } else {
+      add(0);
+    }
+    if (scale.minimum < 0) {
+      const step = niceChartStep(Math.abs(scale.minimum));
+      for (let value = -step; value > scale.minimum + 0.001; value -= step) add(value);
+      add(scale.minimum);
+    }
+    return values.sort((left, right) => right - left);
   }
 
   function renderChartGridlines(scale) {
@@ -1519,37 +1618,48 @@
     }).join("")}</div>`;
   }
 
-  function renderCumulativeNetChart(aggregates, selectedIndex) {
-    const scale = chartValueScale(aggregates.flatMap((item) => [item.plannedCumulative, item.actualCumulative]));
+  function renderCumulativeNetChart(aggregates, selectedIndex, activeIndex) {
+    const scaleStart = cumulativeAutoScaleEnabled && cumulativeScaleWindow ? clamp(cumulativeScaleWindow.start, 0, Math.max(0, aggregates.length - 1)) : 0;
+    const scaleEnd = cumulativeAutoScaleEnabled && cumulativeScaleWindow ? clamp(cumulativeScaleWindow.end, scaleStart, Math.max(0, aggregates.length - 1)) : Math.max(0, aggregates.length - 1);
+    const scaleValues = aggregates.slice(scaleStart, scaleEnd + 1).flatMap((item) => [item.plannedCumulative, item.actualCumulative, item.actualForecastCumulative]);
+    const scale = chartValueScale(scaleValues.length ? scaleValues : [0]);
     const width = aggregates.length * 100;
-    const points = (field) => aggregates.map((item, index) => `${index * 100 + 50},${chartYPercent(item[field], scale)}`).join(" ");
-    const pointMarkers = (field, tone) => aggregates.map((item, index) => {
+    const points = (field, start = 0, end = aggregates.length - 1) => aggregates.slice(start, end + 1).map((item, offset) => {
+      const index = start + offset;
+      return `${index * 100 + 50},${chartYPercent(item[field], scale)}`;
+    }).join(" ");
+    const pointMarkers = (field, tone, start = 0, end = aggregates.length - 1) => aggregates.slice(start, end + 1).map((item, offset) => {
+      const index = start + offset;
       const x = index * 100 + 50;
       const y = chartYPercent(item[field], scale);
       return `<circle class="cumulative-chart-point ${tone}${index === selectedIndex ? " is-selected" : ""}" cx="${x}" cy="${y}" r="${index === selectedIndex ? 4.8 : 2.5}"></circle>`;
     }).join("");
-    const selected = aggregates[selectedIndex] || aggregates[0] || { month: currentPeriod, plannedCumulative: 0, actualCumulative: 0, plannedNet: 0, actualNet: 0 };
+    const selected = aggregates[selectedIndex] || aggregates[0] || { month: currentPeriod, plannedCumulative: 0, actualCumulative: 0, actualForecastCumulative: 0, plannedNet: 0, actualNet: 0 };
+    const selectedUsesForecast = selectedIndex > activeIndex;
+    const selectedActualValue = selectedUsesForecast ? selected.actualForecastCumulative : selected.actualCumulative;
     const selectionLeft = selectedIndex * 3.1 + 1.55;
     return `<section class="card chart-card cumulative-chart-card" aria-labelledby="cumulative-chart-title">
-      <div class="section-copy"><p class="section-kicker">CUMULATIVE NET</p><h2 id="cumulative-chart-title">累積予定収支と累積実績収支</h2><p>予定は青の破線、実績は橙の実線です。各月をタップすると、その月の内容をグラフ上に表示します。</p></div>
-      <div class="chart-legend">${legend("#3c78b4", "累積予定収支（破線）")}${legend("#c45e43", "累積実績収支（実線）")}</div>
+      <div class="cumulative-chart-heading"><div class="section-copy"><p class="section-kicker">CUMULATIVE NET</p><h2 id="cumulative-chart-title">累積予定収支と累積実績収支</h2><p>予定は青の破線、実績は橙の実線です。実績の次月以降は、月次予定収支を積み上げた点線で表示します。</p></div><button type="button" class="button small secondary cumulative-scale-toggle${cumulativeAutoScaleEnabled ? " is-active" : ""}" data-action="toggle-cumulative-auto-scale" aria-pressed="${cumulativeAutoScaleEnabled}">自動スケール ${cumulativeAutoScaleEnabled ? "ON" : "OFF"}</button></div>
+      <div class="chart-legend">${legend("#3c78b4", "累積予定収支（破線）")}${legend("#c45e43", "累積実績収支（実線）")}${legend("#c45e43", "実績予測（点線）")}</div>
       <div class="chart-scroll" data-chart-scroll-key="cumulative-net">
         <div class="chart-canvas cumulative-chart-canvas" style="--month-count:${aggregates.length};--selection-left:${selectionLeft}rem">
           <div class="chart-plot">
             ${renderChartGridlines(scale)}
             <svg class="line-overlay" viewBox="0 0 ${width} 100" preserveAspectRatio="none" aria-hidden="true">
               <polyline class="chart-line cumulative-net planned" points="${points("plannedCumulative")}"></polyline>
-              <polyline class="chart-line cumulative-net actual" points="${points("actualCumulative")}"></polyline>
-              ${pointMarkers("plannedCumulative", "planned")}${pointMarkers("actualCumulative", "actual")}
+              <polyline class="chart-line cumulative-net actual" points="${points("actualCumulative", 0, activeIndex)}"></polyline>
+              <polyline class="chart-line cumulative-net forecast" points="${points("actualForecastCumulative", activeIndex, aggregates.length - 1)}"></polyline>
+              ${pointMarkers("plannedCumulative", "planned")}${pointMarkers("actualCumulative", "actual", 0, activeIndex)}${pointMarkers("actualForecastCumulative", "forecast", activeIndex + 1, aggregates.length - 1)}
             </svg>
             <span class="cumulative-chart-selection-guide" aria-hidden="true"></span>
             <aside class="cumulative-chart-tooltip" aria-live="polite">
               <strong>${monthLabel(selected.month)}</strong>
               <span class="planned"><i aria-hidden="true"></i>予定累積 ${formatSignedCurrency(selected.plannedCumulative)}</span>
-              <span class="actual"><i aria-hidden="true"></i>実績累積 ${formatSignedCurrency(selected.actualCumulative)}</span>
+              <span class="actual"><i aria-hidden="true"></i>${selectedUsesForecast ? "実績予測" : "実績累積"} ${formatSignedCurrency(selectedActualValue)}</span>
               <small>月次：予定 ${formatSignedCurrency(selected.plannedNet)} ／ 実績 ${formatSignedCurrency(selected.actualNet)}</small>
+              <small class="cumulative-scale-window">${cumulativeAutoScaleEnabled ? `表示範囲：${monthLabel(aggregates[scaleStart]?.month || currentPeriod)}〜${monthLabel(aggregates[scaleEnd]?.month || currentPeriod)}` : "全期間スケール"}</small>
             </aside>
-            <div class="cumulative-chart-tap-targets">${aggregates.map((item, index) => `<button type="button" class="cumulative-chart-tap-target${index === selectedIndex ? " is-selected" : ""}" data-overview-chart-index="${index}" aria-label="${monthLabel(item.month)}を表示。累積予定収支 ${formatSignedCurrency(item.plannedCumulative)}、累積実績収支 ${formatSignedCurrency(item.actualCumulative)}"></button>`).join("")}</div>
+            <div class="cumulative-chart-tap-targets">${aggregates.map((item, index) => `<button type="button" class="cumulative-chart-tap-target${index === selectedIndex ? " is-selected" : ""}" data-overview-chart-index="${index}" aria-label="${monthLabel(item.month)}を表示。累積予定収支 ${formatSignedCurrency(item.plannedCumulative)}、${index > activeIndex ? "実績予測" : "累積実績収支"} ${formatSignedCurrency(index > activeIndex ? item.actualForecastCumulative : item.actualCumulative)}"></button>`).join("")}</div>
           </div>
           <div class="cumulative-chart-months" aria-hidden="true">${aggregates.map((item) => `<span>${monthParts(item.month).month}月度</span>`).join("")}</div>
         </div>
@@ -2756,6 +2866,15 @@
     else if (target.dataset.settingsPane) { settingsPane = target.dataset.settingsPane; render(); }
     else if (target.dataset.addCategory) openCategoryEditor(target.dataset.addCategory);
     else if (target.dataset.editCategory) openPlanEditor(target.dataset.editCategory);
+    else if (target.dataset.action === "toggle-cumulative-auto-scale") {
+      cumulativeAutoScaleEnabled = !cumulativeAutoScaleEnabled;
+      cumulativeScaleWindow = null;
+      if (overviewChartScaleTimer) {
+        window.clearTimeout(overviewChartScaleTimer);
+        overviewChartScaleTimer = null;
+      }
+      render();
+    }
     else if (target.dataset.overviewChartIndex !== undefined) { cumulativeChartSelectedIndex = clamp(toInteger(target.dataset.overviewChartIndex), 0, Math.max(0, periodMonths().length - 1)); render(); }
     else if (target.dataset.toggleCategoryActive) await toggleCategoryActive(target.dataset.toggleCategoryActive);
     else if (target.dataset.action === "toggle-income") { incomeExpanded = !incomeExpanded; render(); }
