@@ -2,9 +2,10 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.40";
+  const APP_VERSION = "0.5.41";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
+  const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
   const INCOME_CATEGORY_GROUPS = Object.freeze(["income", SIGNED_INCOME_GROUP]);
   const CATEGORY_GROUP_LABELS = Object.freeze({
@@ -85,6 +86,7 @@
   let cumulativeChartSelectedIndex = null;
   let settingsPane = "basic";
   let incomeExpanded = false;
+  let unexpectedExpenseExpanded = false;
   let allTransactionsShown = false;
   let pendingTransaction = null;
   let editingPlanCategoryId = null;
@@ -338,7 +340,7 @@
 
   function categoriesForGroup(group, includeArchived = false) {
     return state.categories
-      .filter((category) => category.group === group && (includeArchived || category.active !== false))
+      .filter((category) => category.group === group && !isUnexpectedExpenseCategory(category) && (includeArchived || category.active !== false))
       .sort((a, b) => Number(a.order) - Number(b.order));
   }
 
@@ -368,6 +370,14 @@
     return category && category.group === SIGNED_INCOME_GROUP;
   }
 
+  function isUnexpectedExpenseCategory(category) {
+    return Boolean(category) && (category.id === UNEXPECTED_EXPENSE_CATEGORY_ID || category.isUnexpectedExpense === true);
+  }
+
+  function unexpectedExpenseCategory() {
+    return state.categories.find((category) => isUnexpectedExpenseCategory(category) && category.active !== false) || null;
+  }
+
   function isSignedIncomeGroup(group) {
     return group === SIGNED_INCOME_GROUP;
   }
@@ -394,7 +404,7 @@
   }
 
   function activeExpensePlanAmount(category, month) {
-    return category && !isIncomeCategory(category) && category.active !== false ? planAmount(category.id, month) : 0;
+    return category && !isIncomeCategory(category) && !isUnexpectedExpenseCategory(category) && category.active !== false ? planAmount(category.id, month) : 0;
   }
 
   function activeIncomePlanAmount(category, month) {
@@ -544,7 +554,11 @@
       const actual = actualAmount(category.id, month);
       return sum + (isSignedIncomeCategory(category) ? (actual !== 0 ? actual : planned) : Math.max(actual, planned));
     }, 0);
-    const expenseActual = transactionsForMonth(month, "expense").reduce((sum, item) => sum + toInteger(item.amount), 0);
+    const expenseTransactions = transactionsForMonth(month, "expense");
+    const expenseActual = expenseTransactions.reduce((sum, item) => sum + toInteger(item.amount), 0);
+    const unexpectedExpenseActual = expenseTransactions.reduce((sum, item) => {
+      return sum + (isUnexpectedExpenseCategory(categoryById(item.categoryId)) ? toInteger(item.amount) : 0);
+    }, 0);
     const incomeActual = transactionsForMonth(month, "income").reduce((sum, item) => sum + toInteger(item.amount), 0);
     return {
       month,
@@ -552,6 +566,7 @@
       incomePlan,
       incomeForecast,
       expenseActual,
+      unexpectedExpenseActual,
       incomeActual,
       plannedNet: incomePlan - expensePlan,
       actualNet: incomeActual - expenseActual
@@ -564,8 +579,9 @@
     const activePeriodIndex = Math.max(0, aggregates.findIndex((item) => item.month === currentPeriodForToday()));
     return aggregates.reduce((sum, item, index) => {
       if (index < activePeriodIndex) return sum + item.actualNet;
-      if (index > activePeriodIndex) return sum + item.plannedNet;
-      return sum + item.incomeForecast - Math.max(item.expenseActual, item.expensePlan);
+      if (index > activePeriodIndex) return sum + item.plannedNet - item.unexpectedExpenseActual;
+      const budgetedExpenseActual = Math.max(0, item.expenseActual - item.unexpectedExpenseActual);
+      return sum + item.incomeForecast - Math.max(budgetedExpenseActual, item.expensePlan) - item.unexpectedExpenseActual;
     }, 0);
   }
 
@@ -575,6 +591,17 @@
     if (target) {
       target.expensePlan = Math.max(0, target.expensePlan - amount);
       target.plannedNet = target.incomePlan - target.expensePlan;
+    }
+    return projectEndForecastFromAggregates(aggregates);
+  }
+
+  function projectEndForecastAfterUnexpectedExpense(month, amount) {
+    const aggregates = periodMonths().map(aggregateMonth);
+    const target = aggregates.find((item) => item.month === month);
+    if (target) {
+      target.expenseActual += amount;
+      target.unexpectedExpenseActual += amount;
+      target.actualNet -= amount;
     }
     return projectEndForecastFromAggregates(aggregates);
   }
@@ -762,6 +789,7 @@
     currentPeriod = currentPeriodForToday();
     analysisPeriod = currentPeriod;
     incomeExpanded = false;
+    unexpectedExpenseExpanded = false;
     allTransactionsShown = false;
   }
 
@@ -880,6 +908,7 @@
       ...categoriesForGroup("fixed")
     ];
     const incomeReminderDue = incomeCategories().some((category) => needsEntryReminder(category, currentPeriod));
+    const unexpectedCategory = unexpectedExpenseCategory();
     const available = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).remaining, 0);
     const allTransactions = transactionsForMonth(currentPeriod).sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
     const recent = allTransactionsShown ? allTransactions : allTransactions.slice(0, 5);
@@ -910,6 +939,12 @@
         <div class="section-header"><div><p class="section-kicker">FIXED</p><h2 id="fixed-title">固定支出</h2></div><p class="section-description">タップで入力・長押しで並べ替え</p></div>
         <div class="category-grid reorderable-category-grid" data-reorder-group="fixed" aria-label="固定支出の並び順">${renderBudgetCards(categoriesForGroup("fixed"), currentPeriod)}</div>
       </section>
+
+      ${unexpectedCategory ? `<section class="income-entry-card unexpected-expense-entry-card">
+        <div><strong>想定外支出を入力</strong><p>予算外の支出を、プロジェクト終了時の見込み収支へ直接反映します。</p></div>
+        <button type="button" class="button small danger" data-action="toggle-unexpected-expense">${unexpectedExpenseExpanded ? "閉じる" : "想定外支出を入力"}</button>
+      </section>
+      ${unexpectedExpenseExpanded ? `<section class="section unexpected-expense-section"><div class="category-grid">${renderUnexpectedExpenseCard(unexpectedCategory, currentPeriod)}</div></section>` : ""}` : ""}
 
       <section class="income-entry-card${incomeReminderDue ? " needs-entry-reminder" : ""}">
         <div><strong>収入実績を記録</strong><p>給与・賞与などを状況グラフへ反映します。</p></div>
@@ -1073,6 +1108,15 @@
     window.addEventListener("touchmove", handleExpenseReorderTouchMove, { capture: true, passive: false });
     window.addEventListener("pointerup", handleExpenseReorderPointerUp, true);
     window.addEventListener("pointercancel", handleExpenseReorderPointerCancel, true);
+  }
+
+  function renderUnexpectedExpenseCard(category, month) {
+    const actual = actualAmount(category.id, month);
+    return `<button type="button" class="budget-card daily-budget-card unexpected-expense-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
+      <span class="budget-card-name">${escapeHtml(category.name)}</span>
+      <span class="unexpected-expense-copy">予算外の支出として、プロジェクト終了時の見込み収支から直接差し引きます。</span>
+      <span class="unexpected-expense-total"><span>今月の入力額</span><strong class="${actual > 0 ? "negative" : ""}">${formatCurrency(actual)}</strong></span>
+    </button>`;
   }
 
   function removeExpenseReorderTracking() {
@@ -1803,19 +1847,19 @@
     const category = categoryById(calculatorContext.categoryId);
     const sourceMonth = calculatorContext.sourceMonth;
     const targetMonth = document.querySelector("#calculator-shift-target-month").value;
-    const sourceBudget = category ? planAmount(category.id, sourceMonth) : 0;
+    const remainingBudget = calculatorReturnRemainingBudget(category, sourceMonth);
     const targetBudget = category && targetMonth ? planAmount(category.id, targetMonth) : 0;
     const amountInput = document.querySelector("#calculator-shift-amount");
     const requestedAmount = Math.max(0, toInteger(amountInput.value));
-    const validAmount = requestedAmount > 0 && requestedAmount <= sourceBudget && Boolean(targetMonth);
-    document.querySelector("#calculator-shift-source").textContent = `${monthLabel(sourceMonth)}の予定 ${formatCurrency(sourceBudget)} から移します。`;
+    const validAmount = requestedAmount > 0 && requestedAmount <= remainingBudget && Boolean(targetMonth);
+    document.querySelector("#calculator-shift-source").textContent = `${monthLabel(sourceMonth)}の残り予算 ${formatCurrency(remainingBudget)} から移します。`;
     document.querySelector("#calculator-shift-target-summary").textContent = targetMonth
       ? `${monthLabel(targetMonth)}の現在の予定：${formatCurrency(targetBudget)} → シフト後：${formatCurrency(targetBudget + requestedAmount)}`
       : "移動先の月を選択してください。";
     const confirm = document.querySelector("#calculator-shift-confirm");
     confirm.disabled = !validAmount;
     confirm.textContent = targetMonth && requestedAmount > 0 ? `${monthLabel(targetMonth)}へ${formatCurrency(requestedAmount)}をシフト` : "予算をシフトする";
-    amountInput.max = String(sourceBudget);
+    amountInput.max = String(remainingBudget);
   }
 
   function calculatorReturnRemainingBudget(category, sourceMonth) {
@@ -1853,9 +1897,8 @@
     const toggle = document.querySelector("#calculator-shift-toggle");
     const returnToggle = document.querySelector("#calculator-return-toggle");
     const sourceMonth = currentPeriod;
-    const canShiftBudget = category && ["variable", "fixed"].includes(category.group);
+    const canShiftBudget = category && ["variable", "fixed"].includes(category.group) && !isUnexpectedExpenseCategory(category);
     const targets = canShiftBudget ? calculatorShiftTargetMonths(sourceMonth) : [];
-    const sourceBudget = category ? planAmount(category.id, sourceMonth) : 0;
     const remainingBudget = calculatorReturnRemainingBudget(category, sourceMonth);
     panel.hidden = true;
     returnPanel.hidden = true;
@@ -1863,12 +1906,12 @@
     document.querySelector("#calculator-display").hidden = false;
     document.querySelector("#calculator-keys").hidden = false;
     actions.hidden = !canShiftBudget;
-    returnToggle.disabled = remainingBudget <= 0;
-    returnToggle.title = remainingBudget <= 0 ? "返納できる残り予算がありません" : "選択中の月の残り予算を返納します";
-    toggle.disabled = !targets.length || sourceBudget <= 0;
-    toggle.title = !targets.length ? "移動先の月がありません" : toggle.disabled ? "シフトできる予算がありません" : "選択中の月の支出予算を別の月へ移します";
+    returnToggle.disabled = false;
+    returnToggle.title = remainingBudget <= 0 ? "返納する予算がありません" : "選択中の月の残り予算を返納します";
+    toggle.disabled = false;
+    toggle.title = remainingBudget <= 0 ? "シフトする予算がありません" : !targets.length ? "移動先の月がありません" : "選択中の月の残り予算を別の月へ移します";
     document.querySelector("#calculator-shift-target-month").innerHTML = targets.map((month) => `<option value="${month}">${monthLabel(month)}</option>`).join("");
-    document.querySelector("#calculator-shift-amount").value = String(sourceBudget);
+    document.querySelector("#calculator-shift-amount").value = String(remainingBudget);
     document.querySelector("#calculator-return-amount").value = String(remainingBudget);
     updateCalculatorShiftTargetSummary();
     updateCalculatorReturnSummary();
@@ -1880,9 +1923,10 @@
     calculatorContext = {
       categoryId,
       direction: directionForCategory(category),
-      isFixed: category.group === "fixed",
+      isFixed: category.group === "fixed" && !isUnexpectedExpenseCategory(category),
+      isUnexpectedExpense: isUnexpectedExpenseCategory(category),
       allowsNegative: isSignedIncomeCategory(category),
-      canShiftBudget: ["variable", "fixed"].includes(category.group),
+      canShiftBudget: ["variable", "fixed"].includes(category.group) && !isUnexpectedExpenseCategory(category),
       sourceMonth: currentPeriod
     };
     calculator = createCalculatorState();
@@ -1892,7 +1936,7 @@
       calculator.expression = `${monthLabel(currentPeriod)}の予定額`;
     }
     document.querySelector("#calculator-category").textContent = category.name;
-    document.querySelector("#calculator-kind").textContent = calculatorContext.allowsNegative ? "収入（マイナス込み）を入力" : calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
+    document.querySelector("#calculator-kind").textContent = calculatorContext.isUnexpectedExpense ? "想定外支出を入力" : calculatorContext.allowsNegative ? "収入（マイナス込み）を入力" : calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
     document.querySelector('[data-calc="subtract"]').hidden = !calculatorContext.allowsNegative;
     resetCalculatorShiftPanel(category);
     updateCalculatorDisplay();
@@ -1907,6 +1951,16 @@
     display.classList.toggle("negative", value < 0 || pendingNegative);
     document.querySelector("#calculator-expression").textContent = calculator.expression;
     document.querySelector("#calculator-ok").disabled = calculatorContext && calculatorContext.allowsNegative ? value === 0 : value <= 0;
+    const forecast = document.querySelector("#calculator-project-forecast");
+    if (calculatorContext && calculatorContext.isUnexpectedExpense) {
+      const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+      const after = projectEndForecastAfterUnexpectedExpense(calculatorContext.sourceMonth, value);
+      forecast.hidden = false;
+      forecast.textContent = `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}`;
+    } else {
+      forecast.hidden = true;
+      forecast.textContent = "";
+    }
   }
 
   function calculatorInputDigit(digit) {
@@ -2032,7 +2086,9 @@
     const targets = calculatorShiftTargetMonths(sourceMonth);
     if (!category || !["variable", "fixed"].includes(category.group) || !targets.includes(targetMonth)) throw new Error("移動先の月を選択してください");
     const sourceBudget = planAmount(category.id, sourceMonth);
-    if (amount <= 0 || amount > sourceBudget) throw new Error(`移せる金額は${formatCurrency(sourceBudget)}までです`);
+    const remainingBudget = calculatorReturnRemainingBudget(category, sourceMonth);
+    if (remainingBudget <= 0) throw new Error("シフトする予算がありません");
+    if (amount <= 0 || amount > remainingBudget) throw new Error(`移せる金額は${formatCurrency(remainingBudget)}までです`);
     const targetBudget = planAmount(category.id, targetMonth);
     const previousDefaultAmount = category.defaultAmount;
     const previousPlanRule = category.planRule ? { ...category.planRule } : null;
@@ -2062,6 +2118,7 @@
     const amount = Math.max(0, toInteger(document.querySelector("#calculator-return-amount").value));
     if (!category || !["variable", "fixed"].includes(category.group)) throw new Error("返納できる支出項目を選択してください");
     const remainingBudget = calculatorReturnRemainingBudget(category, sourceMonth);
+    if (remainingBudget <= 0) throw new Error("返納する予算がありません");
     if (amount > remainingBudget) {
       closeDialog(calculatorDialog);
       render();
@@ -2558,6 +2615,7 @@
     else if (target.dataset.overviewChartIndex !== undefined) { cumulativeChartSelectedIndex = clamp(toInteger(target.dataset.overviewChartIndex), 0, Math.max(0, periodMonths().length - 1)); render(); }
     else if (target.dataset.toggleCategoryActive) await toggleCategoryActive(target.dataset.toggleCategoryActive);
     else if (target.dataset.action === "toggle-income") { incomeExpanded = !incomeExpanded; render(); }
+    else if (target.dataset.action === "toggle-unexpected-expense") { unexpectedExpenseExpanded = !unexpectedExpenseExpanded; render(); }
     else if (target.dataset.action === "toggle-history") { allTransactionsShown = !allTransactionsShown; render(); }
     else if (target.dataset.action === "export-json") await exportJson();
     else if (target.dataset.action === "import-json") { importFile.accept = "application/json,.json"; importFile.value = ""; importFile.click(); }
@@ -2669,6 +2727,15 @@
   });
   document.querySelector("#calculator-ok").addEventListener("click", () => acceptCalculator().catch((error) => showToast(error.message)));
   document.querySelector("#calculator-shift-toggle").addEventListener("click", (event) => {
+    const category = calculatorContext && categoryById(calculatorContext.categoryId);
+    if (calculatorReturnRemainingBudget(category, calculatorContext && calculatorContext.sourceMonth) <= 0) {
+      showToast("シフトする予算がありません");
+      return;
+    }
+    if (!calculatorContext || !calculatorShiftTargetMonths(calculatorContext.sourceMonth).length) {
+      showToast("移動先の月がありません");
+      return;
+    }
     const panel = document.querySelector("#calculator-shift-panel");
     if (!panel.hidden) return;
     panel.hidden = false;
@@ -2680,6 +2747,11 @@
     updateCalculatorShiftTargetSummary();
   });
   document.querySelector("#calculator-return-toggle").addEventListener("click", () => {
+    const category = calculatorContext && categoryById(calculatorContext.categoryId);
+    if (calculatorReturnRemainingBudget(category, calculatorContext && calculatorContext.sourceMonth) <= 0) {
+      showToast("返納する予算がありません");
+      return;
+    }
     const panel = document.querySelector("#calculator-return-panel");
     if (!panel.hidden) return;
     panel.hidden = false;
@@ -2689,7 +2761,6 @@
     document.querySelector("#calculator-keys").hidden = true;
     document.querySelector("#calculator-budget-actions").hidden = true;
     updateCalculatorReturnSummary();
-    document.querySelector("#calculator-return-amount").focus({ preventScroll: true });
   });
   document.querySelector("#calculator-shift-target-month").addEventListener("change", updateCalculatorShiftTargetSummary);
   document.querySelector("#calculator-shift-amount").addEventListener("input", updateCalculatorShiftTargetSummary);

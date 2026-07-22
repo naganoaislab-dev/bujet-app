@@ -123,6 +123,7 @@
       { id: "expense-medical", name: "医療費", group: "variable", color: "#c85f6a", order: 30, active: true, defaultAmount: 8000 },
       { id: "expense-transport", name: "交通費", group: "variable", color: "#4b86a8", order: 40, active: true, defaultAmount: 12000 },
       { id: "expense-fun", name: "娯楽費", group: "variable", color: "#805ea3", order: 50, active: true, defaultAmount: 15000 },
+      { id: "expense-unplanned", name: "想定外支出", group: "variable", color: "#b84a4a", order: 55, active: true, defaultAmount: 0, isUnexpectedExpense: true },
       { id: "expense-rent", name: "住居費", group: "fixed", color: "#49725d", order: 60, active: true, defaultAmount: 80000 },
       { id: "expense-phone", name: "通信費", group: "fixed", color: "#4f718d", order: 70, active: true, defaultAmount: 8000 },
       { id: "expense-insurance", name: "保険", group: "fixed", color: "#6f6e9c", order: 80, active: true, defaultAmount: 12000 },
@@ -176,8 +177,20 @@
         currency: "JPY",
         themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID
       },
-      categories: [],
-      plans: {},
+      categories: [{
+        id: "expense-unplanned",
+        name: "想定外支出",
+        group: "variable",
+        color: "#b84a4a",
+        order: 55,
+        active: true,
+        defaultAmount: 0,
+        isUnexpectedExpense: true,
+        planScaleMax: DEFAULT_PLAN_SCALE_MAX,
+        dailyBudgetEnabled: false,
+        reminder: normalizeReminder()
+      }],
+      plans: { "expense-unplanned": {} },
       transactions: [],
       createdAt: now,
       updatedAt: now
@@ -238,6 +251,11 @@
       category.color = /^#[0-9a-f]{6}$/i.test(category.color) ? category.color : "#3f7d5b";
       category.order = Number.isFinite(Number(category.order)) ? Number(category.order) : index * 10;
       category.active = category.active !== false;
+      category.isUnexpectedExpense = category.id === "expense-unplanned" || category.isUnexpectedExpense === true;
+      if (category.isUnexpectedExpense) {
+        category.group = "variable";
+        category.defaultAmount = 0;
+      }
       category.defaultAmount = normalizePlanAmount(category, category.defaultAmount);
       category.planScaleMax = normalizePlanScaleMax(category.planScaleMax);
       category.reminder = normalizeReminder(category.reminder);
@@ -246,6 +264,7 @@
           ? category.dailyBudgetEnabled
           : category.id === "expense-food"
       );
+      if (category.isUnexpectedExpense) category.dailyBudgetEnabled = false;
       if (category.planRule && typeof category.planRule === "object") {
         category.planRule = {
           startMonth: /^\d{4}-\d{2}$/.test(category.planRule.startMonth) ? category.planRule.startMonth : monthKey(new Date()),
@@ -260,6 +279,13 @@
         state.plans[category.id][month] = normalizePlanAmount(category, state.plans[category.id][month]);
       });
     });
+    if (!state.categories.some((category) => category.isUnexpectedExpense)) {
+      const unexpectedCategory = fallback.categories.find((category) => category.id === "expense-unplanned");
+      if (unexpectedCategory) {
+        state.categories.push({ ...unexpectedCategory, reminder: normalizeReminder(unexpectedCategory.reminder) });
+        state.plans[unexpectedCategory.id] = {};
+      }
+    }
     state.transactions = state.transactions.filter((transaction) => transaction && typeof transaction === "object").map((transaction, index) => {
       const date = validDateKey(transaction.date) ? transaction.date : dateKey(new Date());
       const createdAt = transaction.createdAt || new Date().toISOString();
