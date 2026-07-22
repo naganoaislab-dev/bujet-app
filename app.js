@@ -2,10 +2,12 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.41";
+  const APP_VERSION = "0.5.42";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
+  const UNEXPECTED_INCOME_CATEGORY_ID = "income-unplanned";
+  const ANALYSIS_PAGE_COUNT = 3;
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
   const INCOME_CATEGORY_GROUPS = Object.freeze(["income", SIGNED_INCOME_GROUP]);
   const CATEGORY_GROUP_LABELS = Object.freeze({
@@ -346,7 +348,7 @@
 
   function incomeCategories(includeArchived = false) {
     return state.categories
-      .filter((category) => isIncomeCategory(category) && (includeArchived || category.active !== false))
+      .filter((category) => isIncomeCategory(category) && !isUnexpectedIncomeCategory(category) && (includeArchived || category.active !== false))
       .sort((a, b) => Number(a.order) - Number(b.order));
   }
 
@@ -374,8 +376,16 @@
     return Boolean(category) && (category.id === UNEXPECTED_EXPENSE_CATEGORY_ID || category.isUnexpectedExpense === true);
   }
 
+  function isUnexpectedIncomeCategory(category) {
+    return Boolean(category) && (category.id === UNEXPECTED_INCOME_CATEGORY_ID || category.isUnexpectedIncome === true);
+  }
+
   function unexpectedExpenseCategory() {
     return state.categories.find((category) => isUnexpectedExpenseCategory(category) && category.active !== false) || null;
+  }
+
+  function unexpectedIncomeCategory() {
+    return state.categories.find((category) => isUnexpectedIncomeCategory(category) && category.active !== false) || null;
   }
 
   function isSignedIncomeGroup(group) {
@@ -408,7 +418,7 @@
   }
 
   function activeIncomePlanAmount(category, month) {
-    return category && isIncomeCategory(category) && category.active !== false ? planAmount(category.id, month) : 0;
+    return category && isIncomeCategory(category) && !isUnexpectedIncomeCategory(category) && category.active !== false ? planAmount(category.id, month) : 0;
   }
 
   function transactionsForMonth(month, direction = null) {
@@ -559,7 +569,11 @@
     const unexpectedExpenseActual = expenseTransactions.reduce((sum, item) => {
       return sum + (isUnexpectedExpenseCategory(categoryById(item.categoryId)) ? toInteger(item.amount) : 0);
     }, 0);
-    const incomeActual = transactionsForMonth(month, "income").reduce((sum, item) => sum + toInteger(item.amount), 0);
+    const incomeTransactions = transactionsForMonth(month, "income");
+    const incomeActual = incomeTransactions.reduce((sum, item) => sum + toInteger(item.amount), 0);
+    const unexpectedIncomeActual = incomeTransactions.reduce((sum, item) => {
+      return sum + (isUnexpectedIncomeCategory(categoryById(item.categoryId)) ? toInteger(item.amount) : 0);
+    }, 0);
     return {
       month,
       expensePlan,
@@ -568,6 +582,7 @@
       expenseActual,
       unexpectedExpenseActual,
       incomeActual,
+      unexpectedIncomeActual,
       plannedNet: incomePlan - expensePlan,
       actualNet: incomeActual - expenseActual
     };
@@ -579,7 +594,7 @@
     const activePeriodIndex = Math.max(0, aggregates.findIndex((item) => item.month === currentPeriodForToday()));
     return aggregates.reduce((sum, item, index) => {
       if (index < activePeriodIndex) return sum + item.actualNet;
-      if (index > activePeriodIndex) return sum + item.plannedNet - item.unexpectedExpenseActual;
+      if (index > activePeriodIndex) return sum + item.plannedNet - item.unexpectedExpenseActual + item.unexpectedIncomeActual;
       const budgetedExpenseActual = Math.max(0, item.expenseActual - item.unexpectedExpenseActual);
       return sum + item.incomeForecast - Math.max(budgetedExpenseActual, item.expensePlan) - item.unexpectedExpenseActual;
     }, 0);
@@ -602,6 +617,18 @@
       target.expenseActual += amount;
       target.unexpectedExpenseActual += amount;
       target.actualNet -= amount;
+    }
+    return projectEndForecastFromAggregates(aggregates);
+  }
+
+  function projectEndForecastAfterUnexpectedIncome(month, amount) {
+    const aggregates = periodMonths().map(aggregateMonth);
+    const target = aggregates.find((item) => item.month === month);
+    if (target) {
+      target.incomeActual += amount;
+      target.incomeForecast += amount;
+      target.unexpectedIncomeActual += amount;
+      target.actualNet += amount;
     }
     return projectEndForecastFromAggregates(aggregates);
   }
@@ -909,6 +936,7 @@
     ];
     const incomeReminderDue = incomeCategories().some((category) => needsEntryReminder(category, currentPeriod));
     const unexpectedCategory = unexpectedExpenseCategory();
+    const unexpectedIncome = unexpectedIncomeCategory();
     const available = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).remaining, 0);
     const allTransactions = transactionsForMonth(currentPeriod).sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
     const recent = allTransactionsShown ? allTransactions : allTransactions.slice(0, 5);
@@ -950,7 +978,7 @@
         <div><strong>収入実績を記録</strong><p>給与・賞与などを状況グラフへ反映します。</p></div>
         <button type="button" class="button small primary" data-action="toggle-income">${incomeExpanded ? "閉じる" : "収入を入力"}</button>
       </section>
-      ${incomeExpanded ? `<section class="section"><div class="category-grid">${renderIncomeCards(currentPeriod)}</div></section>` : ""}
+      ${incomeExpanded ? `<section class="section"><div class="category-grid">${renderIncomeCards(currentPeriod)}${unexpectedIncome ? renderUnexpectedIncomeCard(unexpectedIncome, currentPeriod) : ""}</div></section>` : ""}
 
       <section class="section" aria-labelledby="recent-title">
         <div class="section-header"><div><p class="section-kicker">HISTORY</p><h2 id="recent-title">この月の記録</h2></div>${allTransactions.length > 5 ? `<button type="button" class="text-button" data-action="toggle-history">${allTransactionsShown ? "5件に戻す" : `すべて表示（${allTransactions.length}件）`}</button>` : '<p class="section-description">タップして編集</p>'}</div>
@@ -1116,6 +1144,15 @@
       <span class="budget-card-name">${escapeHtml(category.name)}</span>
       <span class="unexpected-expense-copy">予算外の支出として、プロジェクト終了時の見込み収支から直接差し引きます。</span>
       <span class="unexpected-expense-total"><span>今月の入力額</span><strong class="${actual > 0 ? "negative" : ""}">${formatCurrency(actual)}</strong></span>
+    </button>`;
+  }
+
+  function renderUnexpectedIncomeCard(category, month) {
+    const actual = actualAmount(category.id, month);
+    return `<button type="button" class="budget-card daily-budget-card unexpected-income-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
+      <span class="budget-card-name">${escapeHtml(category.name)}</span>
+      <span class="unexpected-expense-copy">計画外の収入として、プロジェクト終了時の見込み収支へ直接加算します。</span>
+      <span class="unexpected-expense-total"><span>今月の入力額</span><strong class="${actual < 0 ? "negative" : "positive"}">${formatSignedCurrency(actual)}</strong></span>
     </button>`;
   }
 
@@ -1287,7 +1324,7 @@
   }
 
   function selectAnalysisPage(page, animate = false) {
-    const nextPage = clamp(toInteger(page), 0, 1);
+    const nextPage = clamp(toInteger(page), 0, ANALYSIS_PAGE_COUNT - 1);
     if (nextPage === analysisDetailPage) return;
     if (analysisPageTransitionTimer) window.clearTimeout(analysisPageTransitionTimer);
     analysisPageTransitionTimer = null;
@@ -1297,7 +1334,7 @@
       render();
       return;
     }
-    track.style.setProperty("--analysis-page-offset", `${nextPage * -50}%`);
+    track.style.setProperty("--analysis-page-offset", `${nextPage * -(100 / ANALYSIS_PAGE_COUNT)}%`);
     analysisPageTransitionTimer = window.setTimeout(() => {
       analysisPageTransitionTimer = null;
       render();
@@ -1311,7 +1348,7 @@
     const horizontalDistance = event.clientX - swipe.startX;
     const verticalDistance = event.clientY - swipe.startY;
     if (Math.abs(horizontalDistance) < 48 || Math.abs(horizontalDistance) <= Math.abs(verticalDistance) * 1.2) return;
-    const nextPage = clamp(analysisDetailPage + (horizontalDistance < 0 ? 1 : -1), 0, 1);
+    const nextPage = clamp(analysisDetailPage + (horizontalDistance < 0 ? 1 : -1), 0, ANALYSIS_PAGE_COUNT - 1);
     selectAnalysisPage(nextPage, true);
   }
 
@@ -1563,7 +1600,8 @@
       const dateParts = parseLocalDate(date);
       const showMonth = index === 0 || dateParts.getDate() === 1;
       const dateLabel = showMonth ? shortDate(date) : String(dateParts.getDate());
-      const amountLabels = incomeMode
+      const hasEntries = state.transactions.some((transaction) => transaction.date === date && transaction.direction === (incomeMode ? "income" : "expense"));
+      const amountLabels = !hasEntries ? "" : incomeMode
         ? `<span class="analysis-calendar-income">収入:<strong>${calendarAmountLabel(totals.income, true)}</strong></span>`
         : `<span class="analysis-calendar-total">計:<strong>${calendarAmountLabel(totals.total)}</strong></span><span class="analysis-calendar-breakdown">変動支出 ${calendarAmountLabel(totals.variable)}</span><span class="analysis-calendar-breakdown">固定支出 ${calendarAmountLabel(totals.fixed)}</span>`;
       const ariaLabel = incomeMode
@@ -1591,6 +1629,94 @@
     </section>`;
   }
 
+  function piePoint(centerX, centerY, radius, angle) {
+    const radians = (angle - 90) * Math.PI / 180;
+    return { x: centerX + radius * Math.cos(radians), y: centerY + radius * Math.sin(radians) };
+  }
+
+  function pieSlicePath(centerX, centerY, radius, startAngle, endAngle) {
+    const start = piePoint(centerX, centerY, radius, startAngle);
+    const end = piePoint(centerX, centerY, radius, endAngle);
+    const largeArc = endAngle - startAngle > 180 ? 1 : 0;
+    return `M ${centerX} ${centerY} L ${start.x.toFixed(2)} ${start.y.toFixed(2)} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)} Z`;
+  }
+
+  function ratioSegmentsFromRows(rows, signed = false) {
+    return rows
+      .filter((row) => row.actual !== 0)
+      .map((row) => ({
+        label: row.category.name,
+        value: Math.abs(row.actual),
+        displayValue: row.actual,
+        color: row.category.color,
+        signed
+      }));
+  }
+
+  function renderRatioPieCard(kicker, title, description, segments) {
+    const visibleSegments = segments.filter((segment) => segment.value > 0);
+    if (!visibleSegments.length) {
+      return `<section class="card ratio-chart-card"><div class="section-copy"><p class="section-kicker">${escapeHtml(kicker)}</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><div class="empty-state">この月の入力実績はまだありません。</div></section>`;
+    }
+    const total = visibleSegments.reduce((sum, segment) => sum + segment.value, 0);
+    const centerX = 180;
+    const centerY = 136;
+    const radius = 68;
+    let cursor = 0;
+    const slices = visibleSegments.map((segment) => {
+      const span = segment.value / total * 360;
+      const startAngle = cursor;
+      const endAngle = cursor + span;
+      const middleAngle = startAngle + span / 2;
+      cursor = endAngle;
+      const middlePoint = piePoint(centerX, centerY, radius + 8, middleAngle);
+      const outerPoint = piePoint(centerX, centerY, radius + 24, middleAngle);
+      return { ...segment, span, startAngle, endAngle, middleAngle, middlePoint, outerPoint, side: Math.cos((middleAngle - 90) * Math.PI / 180) >= 0 ? "right" : "left" };
+    });
+    ["left", "right"].forEach((side) => {
+      const sideSlices = slices.filter((slice) => slice.side === side).sort((left, right) => left.outerPoint.y - right.outerPoint.y);
+      const firstY = sideSlices.length <= 1 ? centerY : 27;
+      const step = sideSlices.length <= 1 ? 0 : (218 / Math.max(1, sideSlices.length - 1));
+      sideSlices.forEach((slice, index) => { slice.labelY = firstY + step * index; });
+    });
+    const sliceMarkup = slices.map((slice) => {
+      if (slice.span >= 359.99) return `<circle class="ratio-pie-slice" cx="${centerX}" cy="${centerY}" r="${radius}" fill="${escapeHtml(slice.color)}"></circle>`;
+      return `<path class="ratio-pie-slice" d="${pieSlicePath(centerX, centerY, radius, slice.startAngle, slice.endAngle)}" fill="${escapeHtml(slice.color)}"></path>`;
+    }).join("");
+    const labelMarkup = slices.map((slice) => {
+      const textX = slice.side === "right" ? 346 : 14;
+      const lineEndX = slice.side === "right" ? textX - 4 : textX + 4;
+      const anchor = slice.side === "right" ? "end" : "start";
+      const percentage = Math.round(slice.value / total * 100);
+      const valueLabel = slice.signed ? formatSignedCurrency(slice.displayValue) : formatCurrency(slice.displayValue);
+      return `<polyline class="ratio-pie-connector" points="${slice.middlePoint.x.toFixed(1)},${slice.middlePoint.y.toFixed(1)} ${slice.outerPoint.x.toFixed(1)},${slice.outerPoint.y.toFixed(1)} ${lineEndX},${slice.labelY.toFixed(1)}" stroke="${escapeHtml(slice.color)}"></polyline><text class="ratio-pie-label" x="${textX}" y="${slice.labelY.toFixed(1)}" text-anchor="${anchor}"><tspan x="${textX}" dy="0">${escapeHtml(slice.label)}</tspan><tspan class="ratio-pie-value" x="${textX}" dy="13">${escapeHtml(valueLabel)} ・ ${percentage}%</tspan></text>`;
+    }).join("");
+    const totalLabel = visibleSegments.some((segment) => segment.signed)
+      ? formatSignedCurrency(visibleSegments.reduce((sum, segment) => sum + segment.displayValue, 0))
+      : formatCurrency(total);
+    return `<section class="card ratio-chart-card"><div class="section-copy"><p class="section-kicker">${escapeHtml(kicker)}</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><svg class="ratio-pie-svg" viewBox="0 0 360 270" role="img" aria-label="${escapeHtml(title)}。${visibleSegments.map((segment) => `${segment.label} ${segment.signed ? formatSignedCurrency(segment.displayValue) : formatCurrency(segment.displayValue)}`).join("、")}">${sliceMarkup}<circle class="ratio-pie-center" cx="${centerX}" cy="${centerY}" r="39"></circle><text class="ratio-pie-total-label" x="${centerX}" y="${centerY - 4}" text-anchor="middle">合計</text><text class="ratio-pie-total-value" x="${centerX}" y="${centerY + 15}" text-anchor="middle">${escapeHtml(totalLabel)}</text>${labelMarkup}</svg></section>`;
+  }
+
+  function renderAnalysisRatioPage(rows, incomeMode) {
+    if (incomeMode) {
+      return `<section class="analysis-page analysis-ratio-page">${renderRatioPieCard("INCOME MIX", "収入の割合", "対象月の収入実績を項目別に表示しています。計画外の想定外収入も含みます。", ratioSegmentsFromRows(rows, true))}</section>`;
+    }
+    const unexpectedRows = rows.filter((row) => isUnexpectedExpenseCategory(row.category));
+    const variableRows = rows.filter((row) => row.category.group === "variable" && !isUnexpectedExpenseCategory(row.category));
+    const fixedRows = rows.filter((row) => row.category.group === "fixed");
+    const actualTotal = (sourceRows) => sourceRows.reduce((sum, row) => sum + row.actual, 0);
+    const groupSegments = [
+      { label: "変動支出", value: actualTotal(variableRows), displayValue: actualTotal(variableRows), color: "#df8b3a" },
+      { label: "固定支出", value: actualTotal(fixedRows), displayValue: actualTotal(fixedRows), color: "#557894" },
+      { label: "想定外支出", value: actualTotal(unexpectedRows), displayValue: actualTotal(unexpectedRows), color: "#b84a4a" }
+    ].filter((segment) => segment.value > 0);
+    return `<section class="analysis-page analysis-ratio-page">
+      ${renderRatioPieCard("EXPENSE MIX", "変動・固定支出の割合", "対象月の支出実績を変動支出・固定支出に分けて表示しています。想定外支出がある場合は別枠で表示します。", groupSegments)}
+      ${renderRatioPieCard("VARIABLE MIX", "変動支出の項目別割合", "対象月の変動支出実績です。0円の項目は表示しません。", ratioSegmentsFromRows(variableRows))}
+      ${renderRatioPieCard("FIXED MIX", "固定支出の項目別割合", "対象月の固定支出実績です。0円の項目は表示しません。", ratioSegmentsFromRows(fixedRows))}
+    </section>`;
+  }
+
   function renderAnalysis() {
     if (!analysisPeriod) analysisPeriod = currentPeriod;
     const incomeMode = analysisMode === "income";
@@ -1605,7 +1731,7 @@
     const progressDonut = makePlanProgressDonut(totalPlan, totalActual, incomeMode);
     const range = periodRange(analysisPeriod);
     if (analysisSelectedDate && (analysisSelectedDate < range.start || analysisSelectedDate > range.end)) analysisSelectedDate = "";
-    analysisDetailPage = clamp(toInteger(analysisDetailPage), 0, 1);
+    analysisDetailPage = clamp(toInteger(analysisDetailPage), 0, ANALYSIS_PAGE_COUNT - 1);
     const today = parseLocalDate(localDateKey());
     const start = parseLocalDate(range.start);
     const end = parseLocalDate(range.end);
@@ -1636,9 +1762,10 @@
       <div class="analysis-page-tabs" aria-label="月次状況のページ切り替え">
         <button type="button" class="analysis-page-tab${analysisDetailPage === 0 ? " active" : ""}" data-analysis-page="0" aria-current="${analysisDetailPage === 0 ? "page" : "false"}">計画差</button>
         <button type="button" class="analysis-page-tab${analysisDetailPage === 1 ? " active" : ""}" data-analysis-page="1" aria-current="${analysisDetailPage === 1 ? "page" : "false"}">日別記録</button>
+        <button type="button" class="analysis-page-tab${analysisDetailPage === 2 ? " active" : ""}" data-analysis-page="2" aria-current="${analysisDetailPage === 2 ? "page" : "false"}">割合</button>
       </div>
-      <div class="analysis-pages-viewport" data-analysis-pages tabindex="0" aria-label="${incomeMode ? "収入" : "支出"}の月次状況。左右にスライドして計画差と日別記録を切り替えます。">
-        <div class="analysis-pages-track" style="--analysis-page-offset:${analysisDetailPage * -50}%">
+      <div class="analysis-pages-viewport" data-analysis-pages tabindex="0" aria-label="${incomeMode ? "収入" : "支出"}の月次状況。左右にスライドして計画差・日別記録・割合を切り替えます。">
+        <div class="analysis-pages-track" style="--analysis-page-offset:${analysisDetailPage * -(100 / ANALYSIS_PAGE_COUNT)}%">
           <section class="analysis-page analysis-summary-page">
             <section class="card analysis-hero">
               <div><p class="section-kicker">${incomeMode ? "INCOME PROGRESS" : "SPENDING PROGRESS"}</p><h2>${monthLabel(analysisPeriod)}の${incomeMode ? "収入" : "支出"}進捗</h2><p>計画 ${incomeMode ? formatSignedCurrency(totalPlan) : formatCurrency(totalPlan)} を100%として、実績 ${incomeMode ? formatSignedCurrency(totalActual) : formatCurrency(totalActual)} の割合を円で表示します。</p><strong class="${heroTone}">${heroStatus}</strong></div>
@@ -1652,6 +1779,7 @@
             <section class="card"><div class="section-copy"><p class="section-kicker">INSIGHTS</p><h2>今月の気づき</h2></div><ul class="insight-list">${insights.map((item) => `<li class="insight-item"><span class="insight-icon" aria-hidden="true">${item.icon}</span><span><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body)}</span></span></li>`).join("")}</ul></section>
           </section>
           ${renderAnalysisDailyPage(range, incomeMode, analysisSelectedDate)}
+          ${renderAnalysisRatioPage(rows, incomeMode)}
         </div>
       </div>
     </div>`;
@@ -1925,6 +2053,7 @@
       direction: directionForCategory(category),
       isFixed: category.group === "fixed" && !isUnexpectedExpenseCategory(category),
       isUnexpectedExpense: isUnexpectedExpenseCategory(category),
+      isUnexpectedIncome: isUnexpectedIncomeCategory(category),
       allowsNegative: isSignedIncomeCategory(category),
       canShiftBudget: ["variable", "fixed"].includes(category.group) && !isUnexpectedExpenseCategory(category),
       sourceMonth: currentPeriod
@@ -1936,7 +2065,7 @@
       calculator.expression = `${monthLabel(currentPeriod)}の予定額`;
     }
     document.querySelector("#calculator-category").textContent = category.name;
-    document.querySelector("#calculator-kind").textContent = calculatorContext.isUnexpectedExpense ? "想定外支出を入力" : calculatorContext.allowsNegative ? "収入（マイナス込み）を入力" : calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
+    document.querySelector("#calculator-kind").textContent = calculatorContext.isUnexpectedExpense ? "想定外支出を入力" : calculatorContext.isUnexpectedIncome ? "想定外収入を入力" : calculatorContext.allowsNegative ? "収入（マイナス込み）を入力" : calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
     document.querySelector('[data-calc="subtract"]').hidden = !calculatorContext.allowsNegative;
     resetCalculatorShiftPanel(category);
     updateCalculatorDisplay();
@@ -1952,12 +2081,16 @@
     document.querySelector("#calculator-expression").textContent = calculator.expression;
     document.querySelector("#calculator-ok").disabled = calculatorContext && calculatorContext.allowsNegative ? value === 0 : value <= 0;
     const forecast = document.querySelector("#calculator-project-forecast");
-    if (calculatorContext && calculatorContext.isUnexpectedExpense) {
+    if (calculatorContext && (calculatorContext.isUnexpectedExpense || calculatorContext.isUnexpectedIncome)) {
       const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
-      const after = projectEndForecastAfterUnexpectedExpense(calculatorContext.sourceMonth, value);
+      const after = calculatorContext.isUnexpectedIncome
+        ? projectEndForecastAfterUnexpectedIncome(calculatorContext.sourceMonth, value)
+        : projectEndForecastAfterUnexpectedExpense(calculatorContext.sourceMonth, value);
+      forecast.classList.toggle("positive", calculatorContext.isUnexpectedIncome);
       forecast.hidden = false;
       forecast.textContent = `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}`;
     } else {
+      forecast.classList.remove("positive");
       forecast.hidden = true;
       forecast.textContent = "";
     }
