@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.37";
+  const APP_VERSION = "0.5.38";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
@@ -78,6 +78,10 @@
   let currentPeriod = "";
   let analysisPeriod = "";
   let analysisMode = "expense";
+  let analysisDetailPage = 0;
+  let analysisSelectedDate = "";
+  let analysisPageSwipe = null;
+  let analysisPageTransitionTimer = null;
   let cumulativeChartSelectedIndex = null;
   let settingsPane = "basic";
   let incomeExpanded = false;
@@ -1211,6 +1215,45 @@
     finishExpenseReorder(event, true).catch((error) => showToast(error instanceof Error ? error.message : "並び替えを中止しました"));
   }
 
+  function startAnalysisPageSwipe(event) {
+    const viewport = event.target.closest(".analysis-pages-viewport");
+    if (!viewport || currentView !== "analysis" || event.isPrimary === false || (event.pointerType === "mouse" && event.button !== 0)) return;
+    analysisPageSwipe = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY };
+  }
+
+  function selectAnalysisPage(page, animate = false) {
+    const nextPage = clamp(toInteger(page), 0, 1);
+    if (nextPage === analysisDetailPage) return;
+    if (analysisPageTransitionTimer) window.clearTimeout(analysisPageTransitionTimer);
+    analysisPageTransitionTimer = null;
+    analysisDetailPage = nextPage;
+    const track = viewHost.querySelector(".analysis-pages-track");
+    if (!animate || !track) {
+      render();
+      return;
+    }
+    track.style.setProperty("--analysis-page-offset", `${nextPage * -50}%`);
+    analysisPageTransitionTimer = window.setTimeout(() => {
+      analysisPageTransitionTimer = null;
+      render();
+    }, 230);
+  }
+
+  function finishAnalysisPageSwipe(event) {
+    const swipe = analysisPageSwipe;
+    if (!swipe || swipe.pointerId !== event.pointerId) return;
+    analysisPageSwipe = null;
+    const horizontalDistance = event.clientX - swipe.startX;
+    const verticalDistance = event.clientY - swipe.startY;
+    if (Math.abs(horizontalDistance) < 48 || Math.abs(horizontalDistance) <= Math.abs(verticalDistance) * 1.2) return;
+    const nextPage = clamp(analysisDetailPage + (horizontalDistance < 0 ? 1 : -1), 0, 1);
+    selectAnalysisPage(nextPage, true);
+  }
+
+  function cancelAnalysisPageSwipe(event) {
+    if (analysisPageSwipe && analysisPageSwipe.pointerId === event.pointerId) analysisPageSwipe = null;
+  }
+
   function renderTransactionRow(transaction) {
     const category = categoryById(transaction.categoryId);
     const categoryName = category ? category.name : "削除済み種別";
@@ -1420,6 +1463,77 @@
     </section>`;
   }
 
+  function analysisTransactionsForMode(month, incomeMode) {
+    return transactionsForMonth(month, incomeMode ? "income" : "expense")
+      .sort((left, right) => right.date.localeCompare(left.date) || String(right.enteredOn || "").localeCompare(String(left.enteredOn || "")));
+  }
+
+  function analysisDayTotals(date, incomeMode) {
+    const transactions = state.transactions.filter((transaction) => transaction.date === date && transaction.direction === (incomeMode ? "income" : "expense"));
+    if (incomeMode) return { income: transactions.reduce((sum, transaction) => sum + toInteger(transaction.amount), 0) };
+    return transactions.reduce((totals, transaction) => {
+      const category = categoryById(transaction.categoryId);
+      if (category && category.group === "fixed") totals.fixed += toInteger(transaction.amount);
+      else totals.variable += toInteger(transaction.amount);
+      totals.total += toInteger(transaction.amount);
+      return totals;
+    }, { variable: 0, fixed: 0, total: 0 });
+  }
+
+  function calendarAmountLabel(value, signed = false) {
+    const amount = toInteger(value);
+    const prefix = signed && amount < 0 ? "−" : "";
+    return `${prefix}￥${compactFormatter.format(Math.abs(amount))}`;
+  }
+
+  function calendarDatesForRange(range) {
+    const dates = [];
+    const cursor = parseLocalDate(range.start);
+    const end = parseLocalDate(range.end);
+    while (cursor <= end) {
+      dates.push(localDateKey(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return dates;
+  }
+
+  function renderAnalysisCalendar(range, incomeMode, selectedDate) {
+    const dates = calendarDatesForRange(range);
+    const firstDay = parseLocalDate(range.start).getDay();
+    const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+    const dayCells = dates.map((date, index) => {
+      const totals = analysisDayTotals(date, incomeMode);
+      const dateParts = parseLocalDate(date);
+      const showMonth = index === 0 || dateParts.getDate() === 1;
+      const dateLabel = showMonth ? shortDate(date) : String(dateParts.getDate());
+      const amountLabels = incomeMode
+        ? `<span class="analysis-calendar-income">${calendarAmountLabel(totals.income, true)}</span>`
+        : `<span class="analysis-calendar-amount"><i>変</i>${calendarAmountLabel(totals.variable)}</span><span class="analysis-calendar-amount"><i>固</i>${calendarAmountLabel(totals.fixed)}</span><span class="analysis-calendar-amount total"><i>計</i>${calendarAmountLabel(totals.total)}</span>`;
+      const ariaLabel = incomeMode
+        ? `${projectDateLabel(date)}、収入 ${formatSignedCurrency(totals.income)}`
+        : `${projectDateLabel(date)}、変動支出 ${formatCurrency(totals.variable)}、固定支出 ${formatCurrency(totals.fixed)}、合計 ${formatCurrency(totals.total)}`;
+      return `<button type="button" class="analysis-calendar-day${date === selectedDate ? " selected" : ""}" data-analysis-date="${date}" aria-pressed="${date === selectedDate}" aria-label="${ariaLabel}"><strong>${dateLabel}</strong><span class="analysis-calendar-amounts">${amountLabels}</span></button>`;
+    }).join("");
+    return `<section class="card analysis-calendar-card" aria-labelledby="analysis-calendar-title">
+      <div class="section-copy"><p class="section-kicker">DAILY CALENDAR</p><h2 id="analysis-calendar-title">${dateTimeLabel(range.start)}〜${dateTimeLabel(range.end)}</h2><p>${incomeMode ? "各日の収入実績です。" : "各日の変動支出・固定支出・合計です。"}</p></div>
+      <div class="analysis-calendar-weekdays" aria-hidden="true">${weekdays.map((weekday, index) => `<span class="${index === 0 ? "sunday" : index === 6 ? "saturday" : ""}">${weekday}</span>`).join("")}</div>
+      <div class="analysis-calendar-grid">${"<span class=\"analysis-calendar-blank\"></span>".repeat(firstDay)}${dayCells}</div>
+    </section>`;
+  }
+
+  function renderAnalysisDailyPage(range, incomeMode, selectedDate) {
+    const transactions = analysisTransactionsForMode(analysisPeriod, incomeMode).filter((transaction) => !selectedDate || transaction.date === selectedDate);
+    const filterLabel = selectedDate ? dateTimeLabel(selectedDate) : "すべての日付";
+    return `<section class="analysis-page analysis-daily-page">
+      ${renderAnalysisCalendar(range, incomeMode, selectedDate)}
+      <section class="section analysis-daily-transactions" aria-labelledby="analysis-daily-transactions-title">
+        <div class="section-header"><div><p class="section-kicker">DAILY RECORDS</p><h2 id="analysis-daily-transactions-title">${filterLabel}の入力</h2></div>${selectedDate ? '<button type="button" class="text-button" data-action="clear-analysis-date">すべて表示</button>' : '<p class="section-description">タップして確認・編集</p>'}</div>
+        <p class="help-text">入力項目をタップすると、内容の確認・編集・削除ができます。</p>
+        <div class="transaction-list">${transactions.length ? transactions.map(renderTransactionRow).join("") : `<div class="empty-state">${selectedDate ? "この日の入力はありません。" : "この月の入力はまだありません。"}</div>`}</div>
+      </section>
+    </section>`;
+  }
+
   function renderAnalysis() {
     if (!analysisPeriod) analysisPeriod = currentPeriod;
     const incomeMode = analysisMode === "income";
@@ -1433,6 +1547,8 @@
     const totalActual = rows.reduce((sum, row) => sum + row.actual, 0);
     const progressDonut = makePlanProgressDonut(totalPlan, totalActual, incomeMode);
     const range = periodRange(analysisPeriod);
+    if (analysisSelectedDate && (analysisSelectedDate < range.start || analysisSelectedDate > range.end)) analysisSelectedDate = "";
+    analysisDetailPage = clamp(toInteger(analysisDetailPage), 0, 1);
     const today = parseLocalDate(localDateKey());
     const start = parseLocalDate(range.start);
     const end = parseLocalDate(range.end);
@@ -1460,16 +1576,28 @@
         <button type="button" class="segment-button ${incomeMode ? "active" : ""}" data-analysis-mode="income">収入</button>
       </div>
       <div class="month-switcher"><label class="field-label" for="analysis-period">分析する月</label><select id="analysis-period">${monthOptions(analysisPeriod)}</select></div>
-      <section class="card analysis-hero">
-        <div><p class="section-kicker">${incomeMode ? "INCOME PROGRESS" : "SPENDING PROGRESS"}</p><h2>${monthLabel(analysisPeriod)}の${incomeMode ? "収入" : "支出"}進捗</h2><p>計画 ${incomeMode ? formatSignedCurrency(totalPlan) : formatCurrency(totalPlan)} を100%として、実績 ${incomeMode ? formatSignedCurrency(totalActual) : formatCurrency(totalActual)} の割合を円で表示します。</p><strong class="${heroTone}">${heroStatus}</strong></div>
-        <div class="donut" style="--donut:${progressDonut.gradient}"><div class="donut-label"><strong>${progressDonut.percentage}%</strong><span>計画進捗</span></div></div>
-      </section>
-      <section class="summary-grid">
-        ${summaryCard(incomeMode ? "現在の収入" : "現在の支出", totalActual, `${elapsedDays}/${totalDays}日経過`, incomeMode && totalActual < 0 ? "negative" : "", incomeMode)}
-        ${summaryCard(incomeMode ? "計画上の収入合計" : "計画上の支出合計", totalPlan, `${monthLabel(analysisPeriod)}の計画`, incomeMode && totalPlan < 0 ? "negative" : "", incomeMode)}
-      </section>
-      <section class="card"><div class="section-copy"><p class="section-kicker">BY CATEGORY</p><h2>種別ごとの計画差</h2><p>${incomeMode ? "設定した並び順で表示しています。" : "変動支出・固定支出を、入力画面と同じ並び順で表示しています。"}</p></div>${analysisRows}</section>
-      <section class="card"><div class="section-copy"><p class="section-kicker">INSIGHTS</p><h2>今月の気づき</h2></div><ul class="insight-list">${insights.map((item) => `<li class="insight-item"><span class="insight-icon" aria-hidden="true">${item.icon}</span><span><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body)}</span></span></li>`).join("")}</ul></section>
+      <div class="analysis-page-tabs" aria-label="月次状況のページ切り替え">
+        <button type="button" class="analysis-page-tab${analysisDetailPage === 0 ? " active" : ""}" data-analysis-page="0" aria-current="${analysisDetailPage === 0 ? "page" : "false"}">計画差</button>
+        <span class="analysis-page-swipe-hint">左右にスライド</span>
+        <button type="button" class="analysis-page-tab${analysisDetailPage === 1 ? " active" : ""}" data-analysis-page="1" aria-current="${analysisDetailPage === 1 ? "page" : "false"}">日別記録</button>
+      </div>
+      <div class="analysis-pages-viewport" data-analysis-pages tabindex="0" aria-label="${incomeMode ? "収入" : "支出"}の月次状況。左右にスライドして計画差と日別記録を切り替えます。">
+        <div class="analysis-pages-track" style="--analysis-page-offset:${analysisDetailPage * -50}%">
+          <section class="analysis-page analysis-summary-page">
+            <section class="card analysis-hero">
+              <div><p class="section-kicker">${incomeMode ? "INCOME PROGRESS" : "SPENDING PROGRESS"}</p><h2>${monthLabel(analysisPeriod)}の${incomeMode ? "収入" : "支出"}進捗</h2><p>計画 ${incomeMode ? formatSignedCurrency(totalPlan) : formatCurrency(totalPlan)} を100%として、実績 ${incomeMode ? formatSignedCurrency(totalActual) : formatCurrency(totalActual)} の割合を円で表示します。</p><strong class="${heroTone}">${heroStatus}</strong></div>
+              <div class="donut" style="--donut:${progressDonut.gradient}"><div class="donut-label"><strong>${progressDonut.percentage}%</strong><span>計画進捗</span></div></div>
+            </section>
+            <section class="summary-grid">
+              ${summaryCard(incomeMode ? "現在の収入" : "現在の支出", totalActual, `${elapsedDays}/${totalDays}日経過`, incomeMode && totalActual < 0 ? "negative" : "", incomeMode)}
+              ${summaryCard(incomeMode ? "計画上の収入合計" : "計画上の支出合計", totalPlan, `${monthLabel(analysisPeriod)}の計画`, incomeMode && totalPlan < 0 ? "negative" : "", incomeMode)}
+            </section>
+            <section class="card"><div class="section-copy"><p class="section-kicker">BY CATEGORY</p><h2>種別ごとの計画差</h2><p>${incomeMode ? "設定した並び順で表示しています。" : "変動支出・固定支出を、入力画面と同じ並び順で表示しています。"}</p></div>${analysisRows}</section>
+            <section class="card"><div class="section-copy"><p class="section-kicker">INSIGHTS</p><h2>今月の気づき</h2></div><ul class="insight-list">${insights.map((item) => `<li class="insight-item"><span class="insight-icon" aria-hidden="true">${item.icon}</span><span><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body)}</span></span></li>`).join("")}</ul></section>
+          </section>
+          ${renderAnalysisDailyPage(range, incomeMode, analysisSelectedDate)}
+        </div>
+      </div>
     </div>`;
   }
 
@@ -2332,7 +2460,15 @@
     if (target.dataset.categoryId && Date.now() < expenseReorderSuppressClickUntil) return;
     if (target.dataset.categoryId) openCalculator(target.dataset.categoryId);
     else if (target.dataset.transactionId) openTransactionEditor(target.dataset.transactionId);
-    else if (target.dataset.analysisMode) { analysisMode = target.dataset.analysisMode === "income" ? "income" : "expense"; render(); }
+    else if (target.dataset.analysisDate) { analysisSelectedDate = target.dataset.analysisDate; render(); }
+    else if (target.dataset.analysisPage !== undefined) selectAnalysisPage(target.dataset.analysisPage);
+    else if (target.dataset.action === "clear-analysis-date") { analysisSelectedDate = ""; render(); }
+    else if (target.dataset.analysisMode) {
+      analysisMode = target.dataset.analysisMode === "income" ? "income" : "expense";
+      analysisDetailPage = 0;
+      analysisSelectedDate = "";
+      render();
+    }
     else if (target.dataset.settingsPane) { settingsPane = target.dataset.settingsPane; render(); }
     else if (target.dataset.addCategory) openCategoryEditor(target.dataset.addCategory);
     else if (target.dataset.editCategory) openPlanEditor(target.dataset.editCategory);
@@ -2368,6 +2504,8 @@
       render();
     } else if (event.target.id === "analysis-period") {
       analysisPeriod = event.target.value;
+      analysisDetailPage = 0;
+      analysisSelectedDate = "";
       render();
     } else if (event.target.id === "project-start-date") {
       const suggestedEndDate = projectEndDateForStart(event.target.value);
@@ -2432,6 +2570,9 @@
   });
 
   viewHost.addEventListener("pointerdown", startExpenseReorder);
+  viewHost.addEventListener("pointerdown", startAnalysisPageSwipe);
+  viewHost.addEventListener("pointerup", finishAnalysisPageSwipe);
+  viewHost.addEventListener("pointercancel", cancelAnalysisPageSwipe);
   viewHost.addEventListener("contextmenu", (event) => {
     if (event.target.closest(".reorderable-category-grid .budget-card")) event.preventDefault();
   });
