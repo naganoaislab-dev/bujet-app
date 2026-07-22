@@ -129,7 +129,8 @@
       { id: "expense-insurance", name: "保険", group: "fixed", color: "#6f6e9c", order: 80, active: true, defaultAmount: 12000 },
       { id: "income-salary", name: "給与", group: "income", color: "#2b8a63", order: 90, active: true, defaultAmount: 280000 },
       { id: "income-bonus", name: "賞与", group: "income", color: "#398b8c", order: 100, active: true, defaultAmount: 0 },
-      { id: "income-other", name: "その他収入", group: "income", color: "#5a80b7", order: 110, active: true, defaultAmount: 0 }
+      { id: "income-other", name: "その他収入", group: "income", color: "#5a80b7", order: 110, active: true, defaultAmount: 0 },
+      { id: "income-unplanned", name: "想定外収入", group: "income", color: "#3686c8", order: 115, active: true, defaultAmount: 0, isUnexpectedIncome: true }
     ].map((category) => ({
       ...category,
       planScaleMax: DEFAULT_PLAN_SCALE_MAX,
@@ -189,8 +190,20 @@
         planScaleMax: DEFAULT_PLAN_SCALE_MAX,
         dailyBudgetEnabled: false,
         reminder: normalizeReminder()
+      }, {
+        id: "income-unplanned",
+        name: "想定外収入",
+        group: "income",
+        color: "#3686c8",
+        order: 115,
+        active: true,
+        defaultAmount: 0,
+        isUnexpectedIncome: true,
+        planScaleMax: DEFAULT_PLAN_SCALE_MAX,
+        dailyBudgetEnabled: false,
+        reminder: normalizeReminder()
       }],
-      plans: { "expense-unplanned": {} },
+      plans: { "expense-unplanned": {}, "income-unplanned": {} },
       transactions: [],
       createdAt: now,
       updatedAt: now
@@ -252,8 +265,13 @@
       category.order = Number.isFinite(Number(category.order)) ? Number(category.order) : index * 10;
       category.active = category.active !== false;
       category.isUnexpectedExpense = category.id === "expense-unplanned" || category.isUnexpectedExpense === true;
+      category.isUnexpectedIncome = category.id === "income-unplanned" || category.isUnexpectedIncome === true;
       if (category.isUnexpectedExpense) {
         category.group = "variable";
+        category.defaultAmount = 0;
+      }
+      if (category.isUnexpectedIncome) {
+        category.group = "income";
         category.defaultAmount = 0;
       }
       category.defaultAmount = normalizePlanAmount(category, category.defaultAmount);
@@ -279,13 +297,16 @@
         state.plans[category.id][month] = normalizePlanAmount(category, state.plans[category.id][month]);
       });
     });
-    if (!state.categories.some((category) => category.isUnexpectedExpense)) {
-      const unexpectedCategory = fallback.categories.find((category) => category.id === "expense-unplanned");
-      if (unexpectedCategory) {
-        state.categories.push({ ...unexpectedCategory, reminder: normalizeReminder(unexpectedCategory.reminder) });
-        state.plans[unexpectedCategory.id] = {};
-      }
-    }
+    [
+      { id: "expense-unplanned", field: "isUnexpectedExpense" },
+      { id: "income-unplanned", field: "isUnexpectedIncome" }
+    ].forEach(({ id, field }) => {
+      if (state.categories.some((category) => category[field])) return;
+      const unexpectedCategory = fallback.categories.find((category) => category.id === id);
+      if (!unexpectedCategory) return;
+      state.categories.push({ ...unexpectedCategory, reminder: normalizeReminder(unexpectedCategory.reminder) });
+      state.plans[unexpectedCategory.id] = {};
+    });
     state.transactions = state.transactions.filter((transaction) => transaction && typeof transaction === "object").map((transaction, index) => {
       const date = validDateKey(transaction.date) ? transaction.date : dateKey(new Date());
       const createdAt = transaction.createdAt || new Date().toISOString();
