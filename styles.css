@@ -247,9 +247,9 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .cumulative-scale-toggle { flex: 0 0 auto; min-height: 2.35rem; margin-top: 0.1rem; padding: 0.45rem 0.65rem; border-color: var(--line); font-size: 0.68rem; white-space: nowrap; }
 .cumulative-scale-toggle.is-active { border-color: color-mix(in srgb, var(--primary) 68%, var(--line)); color: var(--primary-strong); background: color-mix(in srgb, var(--primary) 11%, var(--surface)); }
 .chart-scroll { position: relative; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
-.chart-axis-labels { position: sticky; z-index: 7; left: 0.7rem; width: 2.8rem; height: 22rem; margin: 0.5rem 0 -22.5rem 0.7rem; background: var(--surface); pointer-events: none; }
-.chart-axis-label-plot { position: absolute; top: 1.25rem; right: 0; bottom: 3.25rem; left: 0; }
-.chart-axis-label-plot span { position: absolute; right: 0.25rem; width: 2.55rem; color: var(--muted); background: var(--surface); font-size: 0.58rem; text-align: left; transform: translateY(-50%); }
+.chart-axis-labels { position: sticky; z-index: 8; left: 0; width: 3.5rem; height: 22rem; margin: 0.5rem 0 -22.5rem; border-right: 1px solid color-mix(in srgb, var(--line) 78%, var(--surface)); background: var(--surface); box-shadow: 0 0 0.3rem 0.08rem var(--surface); isolation: isolate; pointer-events: none; }
+.chart-axis-label-plot { position: absolute; top: 1.25rem; right: 0.25rem; bottom: 3.25rem; left: 0.7rem; }
+.chart-axis-label-plot span { position: absolute; right: 0; width: 2.55rem; color: var(--muted); background: var(--surface); font-size: 0.58rem; text-align: left; transform: translateY(-50%); }
 .chart-canvas { position: relative; width: calc(var(--month-count) * 3.1rem + 2.8rem); min-width: calc(var(--month-count) * 3.1rem + 2.8rem); height: 22rem; margin: 0.5rem 0.7rem 0; }
 .chart-gridline { position: absolute; right: 0; left: 0; border-top: 1px dashed var(--line); }
 .bar-chart { position: absolute; top: 1.25rem; right: 0; bottom: 3.25rem; left: 2.8rem; display: grid; grid-template-columns: repeat(var(--month-count), 3.1rem); align-items: end; gap: 0; }
