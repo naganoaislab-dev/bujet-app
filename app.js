@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.44";
+  const APP_VERSION = "0.5.46";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -86,7 +86,7 @@
   let analysisPageSwipe = null;
   let analysisPageTransitionTimer = null;
   let cumulativeChartSelectedIndex = null;
-  let cumulativeAutoScaleEnabled = true;
+  let cumulativeAutoScaleEnabled = false;
   let cumulativeScaleWindow = null;
   let overviewChartScrollSyncing = false;
   let overviewChartScaleTimer = null;
@@ -1573,7 +1573,11 @@
   }
 
   function renderChartGridlines(scale) {
-    return chartAxisValues(scale).map((value) => `<div class="chart-gridline" style="top:${chartYPercent(value, scale)}%"><span>${formatChartAxisValue(value)}</span></div>`).join("");
+    return chartAxisValues(scale).map((value) => `<div class="chart-gridline" style="top:${chartYPercent(value, scale)}%"></div>`).join("");
+  }
+
+  function renderChartAxisLabels(scale) {
+    return `<div class="chart-axis-labels" aria-hidden="true"><div class="chart-axis-label-plot">${chartAxisValues(scale).map((value) => `<span style="top:${chartYPercent(value, scale)}%">${formatChartAxisValue(value)}</span>`).join("")}</div></div>`;
   }
 
   function chartBarGeometry(value, scale) {
@@ -1593,6 +1597,7 @@
       <div class="section-copy"><p class="section-kicker">${aggregates.length} MONTHS</p><h2 id="${id}-chart-title">${title}</h2><p>${description}</p></div>
       <div class="chart-legend">${series.map((item) => legend(item.color, item.label)).join("")}</div>
       <div class="chart-scroll" data-chart-scroll-key="${id}">
+        ${renderChartAxisLabels(scale)}
         <div class="chart-canvas interactive-chart-canvas" style="--month-count:${aggregates.length};--selection-left:${selectionLeft}rem">
           <div class="chart-plot">
             ${renderChartGridlines(scale)}
@@ -1614,7 +1619,8 @@
     return `<div class="interactive-month-bars${index === selectedIndex ? " is-selected" : ""}">${series.map((itemSeries) => {
       const value = item[itemSeries.field];
       const geometry = chartBarGeometry(value, scale);
-      return `<span class="interactive-chart-bar ${itemSeries.tone}${value < 0 ? " is-negative" : ""}" style="--bar-top:${geometry.top}%;--bar-height:${geometry.height}%"></span>`;
+      const isCurrentActual = item.month === currentPeriodForToday() && itemSeries.tone.endsWith("-actual");
+      return `<span class="interactive-chart-bar ${itemSeries.tone}${value < 0 ? " is-negative" : ""}${isCurrentActual ? " is-current-actual" : ""}" style="--bar-top:${geometry.top}%;--bar-height:${geometry.height}%"></span>`;
     }).join("")}</div>`;
   }
 
@@ -1630,9 +1636,10 @@
     }).join(" ");
     const pointMarkers = (field, tone, start = 0, end = aggregates.length - 1) => aggregates.slice(start, end + 1).map((item, offset) => {
       const index = start + offset;
-      const x = index * 100 + 50;
       const y = chartYPercent(item[field], scale);
-      return `<circle class="cumulative-chart-point ${tone}${index === selectedIndex ? " is-selected" : ""}" cx="${x}" cy="${y}" r="${index === selectedIndex ? 4.8 : 2.5}"></circle>`;
+      const left = ((index + 0.5) / Math.max(1, aggregates.length)) * 100;
+      const isCurrentActual = tone === "actual" && index === activeIndex;
+      return `<span class="cumulative-chart-point ${tone}${index === selectedIndex ? " is-selected" : ""}${isCurrentActual ? " is-current-actual" : ""}" style="left:${left}%;top:${y}%"></span>`;
     }).join("");
     const selected = aggregates[selectedIndex] || aggregates[0] || { month: currentPeriod, plannedCumulative: 0, actualCumulative: 0, actualForecastCumulative: 0, plannedNet: 0, actualNet: 0 };
     const selectedUsesForecast = selectedIndex > activeIndex;
@@ -1642,6 +1649,7 @@
       <div class="cumulative-chart-heading"><div class="section-copy"><p class="section-kicker">CUMULATIVE NET</p><h2 id="cumulative-chart-title">累積予定収支と累積実績収支</h2><p>予定は青の破線、実績は橙の実線です。実績の次月以降は、月次予定収支を積み上げた点線で表示します。</p></div><button type="button" class="button small secondary cumulative-scale-toggle${cumulativeAutoScaleEnabled ? " is-active" : ""}" data-action="toggle-cumulative-auto-scale" aria-pressed="${cumulativeAutoScaleEnabled}">自動スケール ${cumulativeAutoScaleEnabled ? "ON" : "OFF"}</button></div>
       <div class="chart-legend">${legend("#3c78b4", "累積予定収支（破線）")}${legend("#c45e43", "累積実績収支（実線）")}${legend("#c45e43", "実績予測（点線）")}</div>
       <div class="chart-scroll" data-chart-scroll-key="cumulative-net">
+        ${renderChartAxisLabels(scale)}
         <div class="chart-canvas cumulative-chart-canvas" style="--month-count:${aggregates.length};--selection-left:${selectionLeft}rem">
           <div class="chart-plot">
             ${renderChartGridlines(scale)}
@@ -1649,8 +1657,8 @@
               <polyline class="chart-line cumulative-net planned" points="${points("plannedCumulative")}"></polyline>
               <polyline class="chart-line cumulative-net actual" points="${points("actualCumulative", 0, activeIndex)}"></polyline>
               <polyline class="chart-line cumulative-net forecast" points="${points("actualForecastCumulative", activeIndex, aggregates.length - 1)}"></polyline>
-              ${pointMarkers("plannedCumulative", "planned")}${pointMarkers("actualCumulative", "actual", 0, activeIndex)}${pointMarkers("actualForecastCumulative", "forecast", activeIndex + 1, aggregates.length - 1)}
             </svg>
+            <div class="cumulative-chart-points" aria-hidden="true">${pointMarkers("plannedCumulative", "planned")}${pointMarkers("actualCumulative", "actual", 0, activeIndex)}${pointMarkers("actualForecastCumulative", "forecast", activeIndex + 1, aggregates.length - 1)}</div>
             <span class="cumulative-chart-selection-guide" aria-hidden="true"></span>
             <aside class="cumulative-chart-tooltip" aria-live="polite">
               <strong>${monthLabel(selected.month)}</strong>
