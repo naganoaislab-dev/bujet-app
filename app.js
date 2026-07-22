@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.38";
+  const APP_VERSION = "0.5.39";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
@@ -1507,12 +1507,12 @@
       const showMonth = index === 0 || dateParts.getDate() === 1;
       const dateLabel = showMonth ? shortDate(date) : String(dateParts.getDate());
       const amountLabels = incomeMode
-        ? `<span class="analysis-calendar-income">${calendarAmountLabel(totals.income, true)}</span>`
-        : `<span class="analysis-calendar-amount"><i>変</i>${calendarAmountLabel(totals.variable)}</span><span class="analysis-calendar-amount"><i>固</i>${calendarAmountLabel(totals.fixed)}</span><span class="analysis-calendar-amount total"><i>計</i>${calendarAmountLabel(totals.total)}</span>`;
+        ? `<span class="analysis-calendar-income">収入:<strong>${calendarAmountLabel(totals.income, true)}</strong></span>`
+        : `<span class="analysis-calendar-total">計:<strong>${calendarAmountLabel(totals.total)}</strong></span><span class="analysis-calendar-breakdown">変動支出 ${calendarAmountLabel(totals.variable)}</span><span class="analysis-calendar-breakdown">固定支出 ${calendarAmountLabel(totals.fixed)}</span>`;
       const ariaLabel = incomeMode
         ? `${projectDateLabel(date)}、収入 ${formatSignedCurrency(totals.income)}`
         : `${projectDateLabel(date)}、変動支出 ${formatCurrency(totals.variable)}、固定支出 ${formatCurrency(totals.fixed)}、合計 ${formatCurrency(totals.total)}`;
-      return `<button type="button" class="analysis-calendar-day${date === selectedDate ? " selected" : ""}" data-analysis-date="${date}" aria-pressed="${date === selectedDate}" aria-label="${ariaLabel}"><strong>${dateLabel}</strong><span class="analysis-calendar-amounts">${amountLabels}</span></button>`;
+      return `<button type="button" class="analysis-calendar-day${date === selectedDate ? " selected" : ""}" data-analysis-date="${date}" aria-pressed="${date === selectedDate}" aria-label="${ariaLabel}"><span class="analysis-calendar-date">${dateLabel}</span>${amountLabels}</button>`;
     }).join("");
     return `<section class="card analysis-calendar-card" aria-labelledby="analysis-calendar-title">
       <div class="section-copy"><p class="section-kicker">DAILY CALENDAR</p><h2 id="analysis-calendar-title">${dateTimeLabel(range.start)}〜${dateTimeLabel(range.end)}</h2><p>${incomeMode ? "各日の収入実績です。" : "各日の変動支出・固定支出・合計です。"}</p></div>
@@ -1578,7 +1578,6 @@
       <div class="month-switcher"><label class="field-label" for="analysis-period">分析する月</label><select id="analysis-period">${monthOptions(analysisPeriod)}</select></div>
       <div class="analysis-page-tabs" aria-label="月次状況のページ切り替え">
         <button type="button" class="analysis-page-tab${analysisDetailPage === 0 ? " active" : ""}" data-analysis-page="0" aria-current="${analysisDetailPage === 0 ? "page" : "false"}">計画差</button>
-        <span class="analysis-page-swipe-hint">左右にスライド</span>
         <button type="button" class="analysis-page-tab${analysisDetailPage === 1 ? " active" : ""}" data-analysis-page="1" aria-current="${analysisDetailPage === 1 ? "page" : "false"}">日別記録</button>
       </div>
       <div class="analysis-pages-viewport" data-analysis-pages tabindex="0" aria-label="${incomeMode ? "収入" : "支出"}の月次状況。左右にスライドして計画差と日別記録を切り替えます。">
@@ -1653,7 +1652,7 @@
 
   function renderSettings() {
     const paneButtons = [
-      ["basic", "基本設定"], ["expense", "支出計画"], ["income", "収入計画"], ["projects", "プロジェクト切り替え"]
+      ["basic", "基本設定"], ["expense", "支出計画"], ["income", "収入計画"], ["projects", "プロジェクト切替"]
     ].map(([id, label]) => `<button type="button" class="segment-button ${settingsPane === id ? "active" : ""}" data-settings-pane="${id}">${label}</button>`).join("");
     let content;
     if (settingsPane === "basic") content = renderBasicSettings();
