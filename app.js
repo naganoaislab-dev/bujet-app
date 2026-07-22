@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.42";
+  const APP_VERSION = "0.5.43";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -88,7 +88,7 @@
   let cumulativeChartSelectedIndex = null;
   let settingsPane = "basic";
   let incomeExpanded = false;
-  let unexpectedExpenseExpanded = false;
+  let unexpectedEntriesExpanded = false;
   let allTransactionsShown = false;
   let pendingTransaction = null;
   let editingPlanCategoryId = null;
@@ -816,7 +816,7 @@
     currentPeriod = currentPeriodForToday();
     analysisPeriod = currentPeriod;
     incomeExpanded = false;
-    unexpectedExpenseExpanded = false;
+    unexpectedEntriesExpanded = false;
     allTransactionsShown = false;
   }
 
@@ -968,17 +968,17 @@
         <div class="category-grid reorderable-category-grid" data-reorder-group="fixed" aria-label="固定支出の並び順">${renderBudgetCards(categoriesForGroup("fixed"), currentPeriod)}</div>
       </section>
 
-      ${unexpectedCategory ? `<section class="income-entry-card unexpected-expense-entry-card">
-        <div><strong>想定外支出を入力</strong><p>予算外の支出を、プロジェクト終了時の見込み収支へ直接反映します。</p></div>
-        <button type="button" class="button small danger" data-action="toggle-unexpected-expense">${unexpectedExpenseExpanded ? "閉じる" : "想定外支出を入力"}</button>
-      </section>
-      ${unexpectedExpenseExpanded ? `<section class="section unexpected-expense-section"><div class="category-grid">${renderUnexpectedExpenseCard(unexpectedCategory, currentPeriod)}</div></section>` : ""}` : ""}
-
       <section class="income-entry-card${incomeReminderDue ? " needs-entry-reminder" : ""}">
         <div><strong>収入実績を記録</strong><p>給与・賞与などを状況グラフへ反映します。</p></div>
         <button type="button" class="button small primary" data-action="toggle-income">${incomeExpanded ? "閉じる" : "収入を入力"}</button>
       </section>
-      ${incomeExpanded ? `<section class="section"><div class="category-grid">${renderIncomeCards(currentPeriod)}${unexpectedIncome ? renderUnexpectedIncomeCard(unexpectedIncome, currentPeriod) : ""}</div></section>` : ""}
+      ${incomeExpanded ? `<section class="section"><div class="category-grid">${renderIncomeCards(currentPeriod)}</div></section>` : ""}
+
+      ${(unexpectedCategory || unexpectedIncome) ? `<section class="income-entry-card unexpected-entry-toggle-card">
+        <div><strong>想定外の支出と収入</strong><p>計画外の収支を、プロジェクト終了時の見込み収支へ直接反映します。</p></div>
+        <button type="button" class="button small secondary" data-action="toggle-unexpected-entries">${unexpectedEntriesExpanded ? "閉じる" : "開く"}</button>
+      </section>
+      ${unexpectedEntriesExpanded ? `<section class="section unexpected-expense-section"><div class="category-grid">${unexpectedCategory ? renderUnexpectedExpenseCard(unexpectedCategory, currentPeriod) : ""}${unexpectedIncome ? renderUnexpectedIncomeCard(unexpectedIncome, currentPeriod) : ""}</div></section>` : ""}` : ""}
 
       <section class="section" aria-labelledby="recent-title">
         <div class="section-header"><div><p class="section-kicker">HISTORY</p><h2 id="recent-title">この月の記録</h2></div>${allTransactions.length > 5 ? `<button type="button" class="text-button" data-action="toggle-history">${allTransactionsShown ? "5件に戻す" : `すべて表示（${allTransactions.length}件）`}</button>` : '<p class="section-description">タップして編集</p>'}</div>
@@ -1140,7 +1140,7 @@
 
   function renderUnexpectedExpenseCard(category, month) {
     const actual = actualAmount(category.id, month);
-    return `<button type="button" class="budget-card daily-budget-card unexpected-expense-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
+    return `<button type="button" class="budget-card unexpected-expense-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
       <span class="budget-card-name">${escapeHtml(category.name)}</span>
       <span class="unexpected-expense-copy">予算外の支出として、プロジェクト終了時の見込み収支から直接差し引きます。</span>
       <span class="unexpected-expense-total"><span>今月の入力額</span><strong class="${actual > 0 ? "negative" : ""}">${formatCurrency(actual)}</strong></span>
@@ -1149,7 +1149,7 @@
 
   function renderUnexpectedIncomeCard(category, month) {
     const actual = actualAmount(category.id, month);
-    return `<button type="button" class="budget-card daily-budget-card unexpected-income-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
+    return `<button type="button" class="budget-card unexpected-income-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
       <span class="budget-card-name">${escapeHtml(category.name)}</span>
       <span class="unexpected-expense-copy">計画外の収入として、プロジェクト終了時の見込み収支へ直接加算します。</span>
       <span class="unexpected-expense-total"><span>今月の入力額</span><strong class="${actual < 0 ? "negative" : "positive"}">${formatSignedCurrency(actual)}</strong></span>
@@ -1564,14 +1564,23 @@
 
   function analysisDayTotals(date, incomeMode) {
     const transactions = state.transactions.filter((transaction) => transaction.date === date && transaction.direction === (incomeMode ? "income" : "expense"));
-    if (incomeMode) return { income: transactions.reduce((sum, transaction) => sum + toInteger(transaction.amount), 0) };
+    if (incomeMode) {
+      return transactions.reduce((totals, transaction) => {
+        const amount = toInteger(transaction.amount);
+        totals.income += amount;
+        if (isUnexpectedIncomeCategory(categoryById(transaction.categoryId))) totals.unexpectedIncome += amount;
+        return totals;
+      }, { income: 0, unexpectedIncome: 0 });
+    }
     return transactions.reduce((totals, transaction) => {
       const category = categoryById(transaction.categoryId);
-      if (category && category.group === "fixed") totals.fixed += toInteger(transaction.amount);
-      else totals.variable += toInteger(transaction.amount);
-      totals.total += toInteger(transaction.amount);
+      const amount = toInteger(transaction.amount);
+      if (isUnexpectedExpenseCategory(category)) totals.unexpected += amount;
+      else if (category && category.group === "fixed") totals.fixed += amount;
+      else totals.variable += amount;
+      totals.total += amount;
       return totals;
-    }, { variable: 0, fixed: 0, total: 0 });
+    }, { variable: 0, fixed: 0, unexpected: 0, total: 0 });
   }
 
   function calendarAmountLabel(value, signed = false) {
@@ -1602,11 +1611,11 @@
       const dateLabel = showMonth ? shortDate(date) : String(dateParts.getDate());
       const hasEntries = state.transactions.some((transaction) => transaction.date === date && transaction.direction === (incomeMode ? "income" : "expense"));
       const amountLabels = !hasEntries ? "" : incomeMode
-        ? `<span class="analysis-calendar-income">収入:<strong>${calendarAmountLabel(totals.income, true)}</strong></span>`
-        : `<span class="analysis-calendar-total">計:<strong>${calendarAmountLabel(totals.total)}</strong></span><span class="analysis-calendar-breakdown">変動支出 ${calendarAmountLabel(totals.variable)}</span><span class="analysis-calendar-breakdown">固定支出 ${calendarAmountLabel(totals.fixed)}</span>`;
+        ? `<span class="analysis-calendar-income">収入:<strong>${calendarAmountLabel(totals.income, true)}</strong></span>${totals.unexpectedIncome !== 0 ? `<span class="analysis-calendar-breakdown unexpected-income">想定外収入 ${calendarAmountLabel(totals.unexpectedIncome, true)}</span>` : ""}`
+        : `<span class="analysis-calendar-total">計:<strong>${calendarAmountLabel(totals.total)}</strong></span><span class="analysis-calendar-breakdown">変動支出 ${calendarAmountLabel(totals.variable)}</span><span class="analysis-calendar-breakdown">固定支出 ${calendarAmountLabel(totals.fixed)}</span>${totals.unexpected !== 0 ? `<span class="analysis-calendar-breakdown unexpected-expense">想定外支出 ${calendarAmountLabel(totals.unexpected)}</span>` : ""}`;
       const ariaLabel = incomeMode
-        ? `${projectDateLabel(date)}、収入 ${formatSignedCurrency(totals.income)}`
-        : `${projectDateLabel(date)}、変動支出 ${formatCurrency(totals.variable)}、固定支出 ${formatCurrency(totals.fixed)}、合計 ${formatCurrency(totals.total)}`;
+        ? `${projectDateLabel(date)}、収入 ${formatSignedCurrency(totals.income)}${totals.unexpectedIncome !== 0 ? `、想定外収入 ${formatSignedCurrency(totals.unexpectedIncome)}` : ""}`
+        : `${projectDateLabel(date)}、変動支出 ${formatCurrency(totals.variable)}、固定支出 ${formatCurrency(totals.fixed)}${totals.unexpected !== 0 ? `、想定外支出 ${formatCurrency(totals.unexpected)}` : ""}、合計 ${formatCurrency(totals.total)}`;
       return `<button type="button" class="analysis-calendar-day${date === selectedDate ? " selected" : ""}" data-analysis-date="${date}" aria-pressed="${date === selectedDate}" aria-label="${ariaLabel}"><span class="analysis-calendar-date">${dateLabel}</span>${amountLabels}</button>`;
     }).join("");
     return `<section class="card analysis-calendar-card" aria-labelledby="analysis-calendar-title">
@@ -1744,13 +1753,15 @@
     else if (incomeMode && totalActual > totalPlan) heroStatus = `${formatCurrency(totalActual - totalPlan)} 上振れ`;
     else if (!incomeMode && totalActual > totalPlan) { heroStatus = `${formatCurrency(totalActual - totalPlan)} 超過`; heroTone = "negative"; }
     else if (!incomeMode && totalActual < totalPlan) heroStatus = `${formatCurrency(totalPlan - totalActual)} 残り`;
-    const variableRows = rows.filter((row) => row.category.group === "variable");
+    const variableRows = rows.filter((row) => row.category.group === "variable" && !isUnexpectedExpenseCategory(row.category));
     const fixedRows = rows.filter((row) => row.category.group === "fixed");
+    const unexpectedExpenseRows = rows.filter((row) => isUnexpectedExpenseCategory(row.category) && row.actual !== 0);
     const analysisRows = incomeMode
       ? `<div class="analysis-list">${rows.map((row) => renderAnalysisRow(row, true)).join("") || '<div class="empty-state">収入種別がありません。</div>'}</div>`
       : [
         ["VARIABLE", "変動支出", variableRows],
-        ["FIXED", "固定支出", fixedRows]
+        ["FIXED", "固定支出", fixedRows],
+        ["UNPLANNED", "想定外支出", unexpectedExpenseRows]
       ].filter(([, , groupRows]) => groupRows.length).map(([kicker, title, groupRows]) => `<section class="analysis-category-group"><p class="section-kicker">${kicker}</p><h3>${title}</h3><div class="analysis-list">${groupRows.map((row) => renderAnalysisRow(row, false)).join("")}</div></section>`).join("") || '<div class="empty-state">支出種別がありません。</div>';
 
     viewHost.innerHTML = `<div class="view-stack">
@@ -1775,7 +1786,7 @@
               ${summaryCard(incomeMode ? "現在の収入" : "現在の支出", totalActual, `${elapsedDays}/${totalDays}日経過`, incomeMode && totalActual < 0 ? "negative" : "", incomeMode)}
               ${summaryCard(incomeMode ? "計画上の収入合計" : "計画上の支出合計", totalPlan, `${monthLabel(analysisPeriod)}の計画`, incomeMode && totalPlan < 0 ? "negative" : "", incomeMode)}
             </section>
-            <section class="card"><div class="section-copy"><p class="section-kicker">BY CATEGORY</p><h2>種別ごとの計画差</h2><p>${incomeMode ? "設定した並び順で表示しています。" : "変動支出・固定支出を、入力画面と同じ並び順で表示しています。"}</p></div>${analysisRows}</section>
+            <section class="card"><div class="section-copy"><p class="section-kicker">BY CATEGORY</p><h2>種別ごとの計画差</h2><p>${incomeMode ? "設定した並び順で表示しています。" : "変動支出・固定支出を入力画面と同じ並び順で表示し、想定外支出は別枠で表示します。"}</p></div>${analysisRows}</section>
             <section class="card"><div class="section-copy"><p class="section-kicker">INSIGHTS</p><h2>今月の気づき</h2></div><ul class="insight-list">${insights.map((item) => `<li class="insight-item"><span class="insight-icon" aria-hidden="true">${item.icon}</span><span><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.body)}</span></span></li>`).join("")}</ul></section>
           </section>
           ${renderAnalysisDailyPage(range, incomeMode, analysisSelectedDate)}
@@ -2748,7 +2759,7 @@
     else if (target.dataset.overviewChartIndex !== undefined) { cumulativeChartSelectedIndex = clamp(toInteger(target.dataset.overviewChartIndex), 0, Math.max(0, periodMonths().length - 1)); render(); }
     else if (target.dataset.toggleCategoryActive) await toggleCategoryActive(target.dataset.toggleCategoryActive);
     else if (target.dataset.action === "toggle-income") { incomeExpanded = !incomeExpanded; render(); }
-    else if (target.dataset.action === "toggle-unexpected-expense") { unexpectedExpenseExpanded = !unexpectedExpenseExpanded; render(); }
+    else if (target.dataset.action === "toggle-unexpected-entries") { unexpectedEntriesExpanded = !unexpectedEntriesExpanded; render(); }
     else if (target.dataset.action === "toggle-history") { allTransactionsShown = !allTransactionsShown; render(); }
     else if (target.dataset.action === "export-json") await exportJson();
     else if (target.dataset.action === "import-json") { importFile.accept = "application/json,.json"; importFile.value = ""; importFile.click(); }
