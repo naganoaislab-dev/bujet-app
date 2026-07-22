@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=49">
-  <link rel="icon" href="icons/icon.svg?v=49" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=49">
-  <link rel="stylesheet" href="styles.css?v=49">
-  <script src="db.js?v=49" defer></script>
-  <script src="app.js?v=49" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=50">
+  <link rel="icon" href="icons/icon.svg?v=50" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=50">
+  <link rel="stylesheet" href="styles.css?v=50">
+  <script src="db.js?v=50" defer></script>
+  <script src="app.js?v=50" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -65,7 +65,16 @@
       </div>
       <output id="calculator-expression" class="calculator-expression" aria-live="polite"></output>
       <output id="calculator-display" class="calculator-display" aria-live="polite">¥0</output>
-      <button id="calculator-shift-toggle" type="button" class="button secondary calculator-shift-toggle" hidden>予算をシフト</button>
+      <div id="calculator-budget-actions" class="calculator-budget-actions" hidden>
+        <button id="calculator-return-toggle" type="button" class="button secondary">予算を返納</button>
+        <button id="calculator-shift-toggle" type="button" class="button secondary">予算をシフト</button>
+      </div>
+      <section id="calculator-return-panel" class="calculator-return-panel" aria-labelledby="calculator-return-title" hidden>
+        <div><p class="eyebrow">BUDGET RETURN</p><h3 id="calculator-return-title">返納額を入力</h3><p id="calculator-return-source" class="help-text"></p></div>
+        <label><span class="field-label">返納額</span><input id="calculator-return-amount" type="number" min="1" step="1" inputmode="numeric"></label>
+        <p id="calculator-return-forecast" class="calculator-return-forecast" aria-live="polite"></p>
+        <button id="calculator-return-confirm" type="button" class="button primary">予算を返納する</button>
+      </section>
       <section id="calculator-shift-panel" class="calculator-shift-panel" aria-labelledby="calculator-shift-title" hidden>
         <div><p class="eyebrow">BUDGET SHIFT</p><h3 id="calculator-shift-title">支出の予算を移す</h3><p id="calculator-shift-source" class="help-text"></p></div>
         <label><span class="field-label">移動先の月</span><select id="calculator-shift-target-month"></select></label>

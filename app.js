@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.39";
+  const APP_VERSION = "0.5.40";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
@@ -556,6 +556,27 @@
       plannedNet: incomePlan - expensePlan,
       actualNet: incomeActual - expenseActual
     };
+  }
+
+  function projectEndForecastFromAggregates(aggregates, today = localDateKey()) {
+    if (!aggregates.length) return 0;
+    if (today > state.settings.endDate) return aggregates.reduce((sum, item) => sum + item.actualNet, 0);
+    const activePeriodIndex = Math.max(0, aggregates.findIndex((item) => item.month === currentPeriodForToday()));
+    return aggregates.reduce((sum, item, index) => {
+      if (index < activePeriodIndex) return sum + item.actualNet;
+      if (index > activePeriodIndex) return sum + item.plannedNet;
+      return sum + item.incomeForecast - Math.max(item.expenseActual, item.expensePlan);
+    }, 0);
+  }
+
+  function projectEndForecastAfterBudgetReturn(month, amount) {
+    const aggregates = periodMonths().map(aggregateMonth);
+    const target = aggregates.find((item) => item.month === month);
+    if (target) {
+      target.expensePlan = Math.max(0, target.expensePlan - amount);
+      target.plannedNet = target.incomePlan - target.expensePlan;
+    }
+    return projectEndForecastFromAggregates(aggregates);
   }
 
   function formatCurrency(value) {
@@ -1278,15 +1299,7 @@
     });
 
     const projectEnd = aggregates[aggregates.length - 1] || { plannedCumulative: 0, actualCumulative: 0 };
-    const today = localDateKey();
-    const activePeriodIndex = Math.max(0, aggregates.findIndex((item) => item.month === currentPeriodForToday()));
-    const projectEndForecast = today > state.settings.endDate
-      ? projectEnd.actualCumulative
-      : aggregates.reduce((sum, item, index) => {
-        if (index < activePeriodIndex) return sum + item.actualNet;
-        if (index > activePeriodIndex) return sum + item.plannedNet;
-        return sum + item.incomeForecast - Math.max(item.expenseActual, item.expensePlan);
-      }, 0);
+    const projectEndForecast = projectEndForecastFromAggregates(aggregates);
     const projectEndTone = projectEndForecast < 0 ? "negative" : projectEndForecast > 0 ? "positive" : "";
     const preferredCumulativeIndex = aggregates.findIndex((item) => item.month === currentPeriod);
     const cumulativeIndexMaximum = Math.max(0, aggregates.length - 1);
@@ -1805,23 +1818,60 @@
     amountInput.max = String(sourceBudget);
   }
 
+  function calculatorReturnRemainingBudget(category, sourceMonth) {
+    if (!category || !["variable", "fixed"].includes(category.group)) return 0;
+    return Math.max(0, categoryBudgetStats(category.id, sourceMonth).monthlyRemaining);
+  }
+
+  function updateCalculatorReturnSummary() {
+    if (!calculatorContext || !calculatorContext.canShiftBudget) return;
+    const category = categoryById(calculatorContext.categoryId);
+    const sourceMonth = calculatorContext.sourceMonth;
+    const remainingBudget = calculatorReturnRemainingBudget(category, sourceMonth);
+    const amountInput = document.querySelector("#calculator-return-amount");
+    const requestedAmount = Math.max(0, toInteger(amountInput.value));
+    const forecast = document.querySelector("#calculator-return-forecast");
+    const confirm = document.querySelector("#calculator-return-confirm");
+    document.querySelector("#calculator-return-source").textContent = `${monthLabel(sourceMonth)}の残り予算は${formatCurrency(remainingBudget)}です。`;
+    amountInput.max = String(remainingBudget);
+    confirm.disabled = requestedAmount <= 0;
+    if (requestedAmount > remainingBudget) {
+      forecast.classList.add("is-invalid");
+      forecast.textContent = `今月度の残りの予算は${formatCurrency(remainingBudget)}までです。`;
+      return;
+    }
+    const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+    const after = projectEndForecastAfterBudgetReturn(sourceMonth, requestedAmount);
+    forecast.classList.remove("is-invalid");
+    forecast.textContent = `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}`;
+  }
+
   function resetCalculatorShiftPanel(category) {
     const panel = document.querySelector("#calculator-shift-panel");
+    const returnPanel = document.querySelector("#calculator-return-panel");
+    const actions = document.querySelector("#calculator-budget-actions");
     const toggle = document.querySelector("#calculator-shift-toggle");
+    const returnToggle = document.querySelector("#calculator-return-toggle");
     const sourceMonth = currentPeriod;
     const canShiftBudget = category && ["variable", "fixed"].includes(category.group);
     const targets = canShiftBudget ? calculatorShiftTargetMonths(sourceMonth) : [];
     const sourceBudget = category ? planAmount(category.id, sourceMonth) : 0;
+    const remainingBudget = calculatorReturnRemainingBudget(category, sourceMonth);
     panel.hidden = true;
+    returnPanel.hidden = true;
     document.querySelector("#calculator-expression").hidden = false;
     document.querySelector("#calculator-display").hidden = false;
     document.querySelector("#calculator-keys").hidden = false;
-    toggle.hidden = !canShiftBudget;
+    actions.hidden = !canShiftBudget;
+    returnToggle.disabled = remainingBudget <= 0;
+    returnToggle.title = remainingBudget <= 0 ? "返納できる残り予算がありません" : "選択中の月の残り予算を返納します";
     toggle.disabled = !targets.length || sourceBudget <= 0;
     toggle.title = !targets.length ? "移動先の月がありません" : toggle.disabled ? "シフトできる予算がありません" : "選択中の月の支出予算を別の月へ移します";
     document.querySelector("#calculator-shift-target-month").innerHTML = targets.map((month) => `<option value="${month}">${monthLabel(month)}</option>`).join("");
     document.querySelector("#calculator-shift-amount").value = String(sourceBudget);
+    document.querySelector("#calculator-return-amount").value = String(remainingBudget);
     updateCalculatorShiftTargetSummary();
+    updateCalculatorReturnSummary();
   }
 
   function openCalculator(categoryId) {
@@ -1999,6 +2049,40 @@
       category.defaultAmount = previousDefaultAmount;
       category.planRule = previousPlanRule;
       updateCalculatorShiftTargetSummary();
+      throw error;
+    }
+    closeDialog(calculatorDialog);
+    render();
+  }
+
+  async function returnCalculatorBudget() {
+    if (!calculatorContext || !calculatorContext.canShiftBudget) return;
+    const category = categoryById(calculatorContext.categoryId);
+    const sourceMonth = calculatorContext.sourceMonth;
+    const amount = Math.max(0, toInteger(document.querySelector("#calculator-return-amount").value));
+    if (!category || !["variable", "fixed"].includes(category.group)) throw new Error("返納できる支出項目を選択してください");
+    const remainingBudget = calculatorReturnRemainingBudget(category, sourceMonth);
+    if (amount > remainingBudget) {
+      closeDialog(calculatorDialog);
+      render();
+      showToast(`今月度の残りの予算は${formatCurrency(remainingBudget)}までです`);
+      return;
+    }
+    if (amount <= 0) throw new Error("返納額を入力してください");
+    const sourceBudget = planAmount(category.id, sourceMonth);
+    const previousDefaultAmount = category.defaultAmount;
+    const previousPlanRule = category.planRule ? { ...category.planRule } : null;
+    state.plans[category.id] = { ...(state.plans[category.id] || {}) };
+    state.plans[category.id][sourceMonth] = sourceBudget - amount;
+    category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
+    category.planRule = null;
+    try {
+      await persist(`${category.name}の${monthLabel(sourceMonth)}の予算から${formatCurrency(amount)}を返納しました`);
+    } catch (error) {
+      state.plans[category.id][sourceMonth] = sourceBudget;
+      category.defaultAmount = previousDefaultAmount;
+      category.planRule = previousPlanRule;
+      updateCalculatorReturnSummary();
       throw error;
     }
     closeDialog(calculatorDialog);
@@ -2588,15 +2672,30 @@
     const panel = document.querySelector("#calculator-shift-panel");
     if (!panel.hidden) return;
     panel.hidden = false;
+    document.querySelector("#calculator-return-panel").hidden = true;
     document.querySelector("#calculator-expression").hidden = true;
     document.querySelector("#calculator-display").hidden = true;
     document.querySelector("#calculator-keys").hidden = true;
-    event.currentTarget.hidden = true;
+    document.querySelector("#calculator-budget-actions").hidden = true;
     updateCalculatorShiftTargetSummary();
+  });
+  document.querySelector("#calculator-return-toggle").addEventListener("click", () => {
+    const panel = document.querySelector("#calculator-return-panel");
+    if (!panel.hidden) return;
+    panel.hidden = false;
+    document.querySelector("#calculator-shift-panel").hidden = true;
+    document.querySelector("#calculator-expression").hidden = true;
+    document.querySelector("#calculator-display").hidden = true;
+    document.querySelector("#calculator-keys").hidden = true;
+    document.querySelector("#calculator-budget-actions").hidden = true;
+    updateCalculatorReturnSummary();
+    document.querySelector("#calculator-return-amount").focus({ preventScroll: true });
   });
   document.querySelector("#calculator-shift-target-month").addEventListener("change", updateCalculatorShiftTargetSummary);
   document.querySelector("#calculator-shift-amount").addEventListener("input", updateCalculatorShiftTargetSummary);
   document.querySelector("#calculator-shift-confirm").addEventListener("click", () => shiftCalculatorBudget().catch((error) => showToast(error.message)));
+  document.querySelector("#calculator-return-amount").addEventListener("input", updateCalculatorReturnSummary);
+  document.querySelector("#calculator-return-confirm").addEventListener("click", () => returnCalculatorBudget().catch((error) => showToast(error.message)));
   document.querySelector("#calculator-form").addEventListener("submit", (event) => event.preventDefault());
 
   document.querySelector("#app-version-button").addEventListener("click", () => {
