@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.47";
+  const APP_VERSION = "0.5.48";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -69,6 +69,7 @@
   const planDialog = document.querySelector("#plan-dialog");
   const versionDialog = document.querySelector("#version-dialog");
   const resetDialog = document.querySelector("#reset-dialog");
+  const developerClockDialog = document.querySelector("#developer-clock-dialog");
   const monthlyPlanEditor = document.querySelector("#monthly-plan-editor");
   const themeColorLight = document.querySelector("#theme-color-light");
   const themeColorDark = document.querySelector("#theme-color-dark");
@@ -199,8 +200,35 @@
     return String(value).padStart(2, "0");
   }
 
-  function localDateKey(date = new Date()) {
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  function parseDeveloperDateTime(value) {
+    const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+    if (!match) return null;
+    const [, year, month, day, hour, minute] = match.map(Number);
+    const date = new Date(year, month - 1, day, hour, minute, 0, 0);
+    if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day || date.getHours() !== hour || date.getMinutes() !== minute) return null;
+    return date;
+  }
+
+  function developerModeIsEnabled() {
+    return state?.settings?.developerModeEnabled === true && Boolean(parseDeveloperDateTime(state.settings.developerDateTime));
+  }
+
+  function appNow() {
+    const configured = developerModeIsEnabled() ? parseDeveloperDateTime(state.settings.developerDateTime) : null;
+    return configured ? new Date(configured.getTime()) : new Date();
+  }
+
+  function appTimestamp() {
+    return appNow().toISOString();
+  }
+
+  function dateTimeInputValue(date = appNow()) {
+    return `${localDateKey(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function localDateKey(date) {
+    const target = date instanceof Date ? date : appNow();
+    return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}`;
   }
 
   function parseLocalDate(value) {
@@ -656,7 +684,7 @@
     if (window.crypto && typeof window.crypto.randomUUID === "function") {
       return `${prefix}-${window.crypto.randomUUID()}`;
     }
-    return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return `${prefix}-${appNow().getTime()}-${Math.random().toString(16).slice(2)}`;
   }
 
   function monthOptions(selected) {
@@ -901,6 +929,62 @@
     analysisPeriod = currentPeriod;
     render();
     showToast("初期データへ戻しました");
+  }
+
+  async function setDeveloperMode(enabled) {
+    const previousSettings = { ...state.settings };
+    const previousPeriod = currentPeriod;
+    const previousAnalysisPeriod = analysisPeriod;
+    const existingDate = parseDeveloperDateTime(state.settings.developerDateTime);
+    state.settings = {
+      ...state.settings,
+      developerModeEnabled: enabled === true,
+      developerDateTime: existingDate ? state.settings.developerDateTime : dateTimeInputValue(new Date())
+    };
+    currentPeriod = currentPeriodForToday();
+    analysisPeriod = currentPeriod;
+    analysisSelectedDate = "";
+    try {
+      await persist(enabled ? "開発者モードを有効にしました" : "開発者モードを無効にしました。iPhoneの日時へ戻ります");
+    } catch (error) {
+      state.settings = previousSettings;
+      currentPeriod = previousPeriod;
+      analysisPeriod = previousAnalysisPeriod;
+      throw error;
+    }
+    render();
+  }
+
+  function openDeveloperClockDialog() {
+    if (!developerModeIsEnabled()) return;
+    document.querySelector("#developer-clock-input").value = dateTimeInputValue(appNow());
+    openDialog(developerClockDialog);
+  }
+
+  async function saveDeveloperClock() {
+    const value = document.querySelector("#developer-clock-input").value;
+    const configured = parseDeveloperDateTime(value);
+    if (!configured) {
+      showToast("有効な日時を設定してください");
+      return;
+    }
+    const previousSettings = { ...state.settings };
+    const previousPeriod = currentPeriod;
+    const previousAnalysisPeriod = analysisPeriod;
+    state.settings = { ...state.settings, developerModeEnabled: true, developerDateTime: value };
+    currentPeriod = currentPeriodForToday();
+    analysisPeriod = currentPeriod;
+    analysisSelectedDate = "";
+    try {
+      await persist(`アプリ内時刻を${developerClockLabel(configured)}に設定しました`);
+    } catch (error) {
+      state.settings = previousSettings;
+      currentPeriod = previousPeriod;
+      analysisPeriod = previousAnalysisPeriod;
+      throw error;
+    }
+    closeDialog(developerClockDialog);
+    render();
   }
 
   function render() {
@@ -2070,6 +2154,17 @@
     }).join("");
   }
 
+  function developerClockLabel(date = appNow()) {
+    return new Intl.DateTimeFormat("ja-JP", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      weekday: "short"
+    }).format(date);
+  }
+
   function renderData() {
     const updated = state.updatedAt ? new Date(state.updatedAt).toLocaleString("ja-JP") : "未保存";
     const backupDate = state.settings.lastBackupAt ? new Date(state.settings.lastBackupAt) : null;
@@ -2080,6 +2175,15 @@
       <section class="data-action-list">
         ${dataAction("{ }", "完全バックアップ", `編集せず保管する復元用ファイル。最終作成：${escapeHtml(lastBackup)}`, "export-json")}
         ${dataAction("戻", "完全バックアップから復元", "完全バックアップを読み込んで全置換", "import-json")}
+      </section>
+      <section class="card developer-mode-card">
+        <div class="section-copy"><p class="section-kicker">DEVELOPER MODE</p><h2>開発者モード</h2><p>動作確認用に、アプリ内で参照する現在日時を任意の日時へ固定します。無効にするとiPhoneの日時へ戻ります。</p></div>
+        <label class="developer-mode-toggle">
+          <span class="category-daily-copy"><strong>開発者モードを有効化</strong><span>${developerModeIsEnabled() ? `現在のアプリ内時刻：${escapeHtml(developerClockLabel())}` : "無効時はiPhoneの現在日時で動作します。"}</span></span>
+          <input class="daily-budget-toggle-input" type="checkbox" role="switch" data-developer-mode-toggle${developerModeIsEnabled() ? " checked" : ""}>
+          <span class="daily-budget-switch" aria-hidden="true"></span>
+        </label>
+        ${developerModeIsEnabled() ? `<div class="developer-clock-actions"><p>設定日時：<strong>${escapeHtml(developerClockLabel())}</strong></p><button type="button" class="button secondary" data-action="open-developer-clock">時刻設定</button></div>` : ""}
       </section>
       ${outsideTransactions.length ? `<section class="section"><div class="section-header"><div><p class="section-kicker">OUTSIDE PERIOD</p><h2>管理期間外の実績</h2></div><p class="section-description">${outsideTransactions.length}件</p></div><p class="help-text">期間を短くしたため集計対象外になった実績です。タップして日付を修正または削除できます。</p><div class="transaction-list">${outsideTransactions.sort((a, b) => b.date.localeCompare(a.date)).map(renderTransactionRow).join("")}</div></section>` : ""}
       <section class="card"><div class="section-copy"><p class="section-kicker">RESET</p><h2>初期データへ戻す</h2><p>種別・月別計画・実績を削除し、空の状態に戻します。プロジェクト名と期間は残ります。</p></div><button type="button" class="button danger" data-action="reset-data">すべて初期化</button></section>
@@ -2318,8 +2422,8 @@
       enteredOn: localDateKey(),
       amount,
       memo: "",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: appTimestamp(),
+      updatedAt: appTimestamp()
     };
     pendingTransaction = transaction;
     state.transactions.push(transaction);
@@ -2413,7 +2517,7 @@
     const stored = state.transactions.find((transaction) => transaction.id === pendingTransaction.id);
     if (stored) {
       stored.memo = String(memo || "").trim();
-      stored.updatedAt = new Date().toISOString();
+      stored.updatedAt = appTimestamp();
     }
     const category = categoryById(pendingTransaction.categoryId);
     const amount = pendingTransaction.amount;
@@ -2791,7 +2895,7 @@
   }
 
   async function exportJson() {
-    const exportedAt = new Date().toISOString();
+    const exportedAt = appTimestamp();
     const backupState = { ...state, settings: { ...state.settings, lastBackupAt: exportedAt } };
     const payload = { app: APP_NAME, backupVersion: BACKUP_VERSION, exportedAt, state: backupState };
     downloadBlob(JSON.stringify(payload, null, 2), "application/json", `budget-minus-backup-${localDateKey()}.json`);
@@ -2888,6 +2992,7 @@
     else if (target.dataset.action === "toggle-income") { incomeExpanded = !incomeExpanded; render(); }
     else if (target.dataset.action === "toggle-unexpected-entries") { unexpectedEntriesExpanded = !unexpectedEntriesExpanded; render(); }
     else if (target.dataset.action === "toggle-history") { allTransactionsShown = !allTransactionsShown; render(); }
+    else if (target.dataset.action === "open-developer-clock") openDeveloperClockDialog();
     else if (target.dataset.action === "export-json") await exportJson();
     else if (target.dataset.action === "import-json") { importFile.accept = "application/json,.json"; importFile.value = ""; importFile.click(); }
     else if (target.dataset.action === "load-project") await loadSelectedProject();
@@ -2898,7 +3003,9 @@
 
   async function handleViewChange(event) {
     const dailyBudgetCategoryId = event.target.dataset.dailyBudgetCategory;
-    if (dailyBudgetCategoryId) {
+    if (event.target.dataset.developerModeToggle !== undefined) {
+      await setDeveloperMode(event.target.checked);
+    } else if (dailyBudgetCategoryId) {
       const category = categoryById(dailyBudgetCategoryId);
       if (!category || category.group !== "variable") return;
       const previousValue = category.dailyBudgetEnabled === true;
@@ -3068,6 +3175,11 @@
     resetCurrentProject().catch((error) => showToast(error instanceof Error ? error.message : "初期化できませんでした"));
   });
 
+  document.querySelector("#developer-clock-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveDeveloperClock().catch((error) => showToast(error instanceof Error ? error.message : "時刻を設定できませんでした"));
+  });
+
   document.querySelector("#transaction-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const id = document.querySelector("#transaction-id").value;
@@ -3091,7 +3203,7 @@
     transaction.amount = amount;
     transaction.date = date;
     transaction.memo = document.querySelector("#transaction-memo").value.trim();
-    transaction.updatedAt = new Date().toISOString();
+    transaction.updatedAt = appTimestamp();
     closeDialog(transactionDialog);
     await persist("明細を更新しました");
     render();
@@ -3294,12 +3406,13 @@
   });
 
   function refreshForCurrentDeviceDate() {
-    if (!state || localDateKey() === lastRenderedDate) return;
+    if (!state || developerModeIsEnabled() || localDateKey() === lastRenderedDate) return;
     render();
   }
 
   function scheduleNextDateRefresh() {
     if (nextDayRenderTimer) window.clearTimeout(nextDayRenderTimer);
+    if (developerModeIsEnabled()) return;
     const next = new Date();
     next.setHours(24, 0, 1, 0);
     nextDayRenderTimer = window.setTimeout(() => {

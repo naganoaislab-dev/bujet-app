@@ -456,6 +456,13 @@ input[type="color"] { width: 100%; height: 3rem; padding: 0.25rem; border: 1px s
 .data-action-copy strong, .data-action-copy span { display: block; }
 .data-action-copy span { margin-top: 0.15rem; color: var(--muted); font-size: 0.68rem; line-height: 1.4; }
 .privacy-banner { padding: 0.85rem; border-radius: 0.9rem; color: var(--primary-strong); background: var(--primary-soft); font-size: 0.75rem; line-height: 1.5; }
+.developer-mode-card { display: grid; gap: 0.8rem; }
+.developer-mode-card .section-copy, .developer-mode-card .section-copy p { margin-bottom: 0; }
+.developer-mode-toggle { display: flex; align-items: center; justify-content: space-between; gap: 0.7rem; min-height: 3.45rem; padding: 0.6rem 0.7rem; border: 1px solid var(--line); border-radius: 0.85rem; background: var(--surface-2); cursor: pointer; }
+.developer-clock-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.7rem; padding: 0.7rem; border-radius: 0.85rem; color: var(--primary-strong); background: var(--primary-soft); }
+.developer-clock-actions p { margin: 0; font-size: 0.7rem; line-height: 1.45; }
+.developer-clock-actions strong { display: block; font-size: 0.78rem; }
+.developer-clock-actions .button { min-height: 2.7rem; flex: none; padding: 0.5rem 0.7rem; font-size: 0.72rem; }
 
 dialog { max-width: none; padding: 0; border: 0; color: var(--ink); background: transparent; }
 dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
