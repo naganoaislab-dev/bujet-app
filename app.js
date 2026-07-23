@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.53";
+  const APP_VERSION = "0.5.54";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -1200,11 +1200,24 @@
       const available = Math.max(1, stats.plan + Math.max(0, stats.carry));
       const progress = clamp((stats.actual / available) * 100, 0, 100);
       const hasUnresolvedCarryover = stats.carry < 0;
+      const carryBudgetAvailable = !hasUnresolvedCarryover && stats.monthlyRemaining <= 0 && stats.carryRemaining > 0;
+      const carryBudgetExhausted = !hasUnresolvedCarryover && stats.carry > 0 && stats.monthlyRemaining < 0 && stats.carryRemaining === 0;
       const remainingOverage = hasUnresolvedCarryover
         ? Math.abs(stats.carry + Math.min(0, stats.monthlyRemaining))
-        : 0;
-      const remainingBudget = hasUnresolvedCarryover ? -remainingOverage : stats.monthlyRemaining;
-      const carryLabel = !hasUnresolvedCarryover && stats.carryRemaining !== 0
+        : carryBudgetExhausted
+          ? Math.max(0, Math.abs(stats.monthlyRemaining) - stats.carry)
+          : Math.max(0, -stats.monthlyRemaining);
+      const remainingBudget = carryBudgetAvailable
+        ? stats.carryRemaining
+        : remainingOverage > 0
+          ? -remainingOverage
+          : carryBudgetExhausted
+            ? 0
+            : stats.monthlyRemaining;
+      const remainingBudgetLabel = carryBudgetAvailable ? "持ち越し予算" : "今月の残予算";
+      const carryLabel = carryBudgetAvailable
+        ? `<span class="budget-card-carry"><span>今月の予算</span><strong>${formatCurrency(0)}</strong></span>`
+        : !hasUnresolvedCarryover && stats.carryRemaining !== 0
         ? `<span class="budget-card-carry"><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>`
         : "";
       if (dailyStats) {
@@ -1215,7 +1228,7 @@
           </span>
           <span class="daily-budget-days">${dailyStats.daysLabel}</span>
           <span class="daily-budget-sub">
-            <span class="budget-card-main"><span class="budget-card-label">今月の残予算</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>
+            <span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>
             ${carryLabel}
           </span>
           <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
@@ -1223,7 +1236,7 @@
       }
       return `<button type="button" class="budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
         <span class="budget-card-name">${escapeHtml(category.name)}${fixedExpenseStatus ? `<em class="budget-card-status ${fixedExpenseStatus.tone}">${fixedExpenseStatus.label}</em>` : ""}</span>
-        <span class="budget-card-main"><span class="budget-card-label">今月の残予算</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>
+        <span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>
         ${carryLabel}
         <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
       </button>`;
