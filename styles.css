@@ -151,6 +151,8 @@ p { color: var(--muted); line-height: 1.55; }
 .period-card strong { display: block; margin-top: 0.2rem; font-size: 1.15rem; }
 .period-card .period-total { text-align: right; }
 .period-card .period-total strong { font-size: 1.45rem; }
+.period-card .period-total .period-carry { display: block; margin-top: 0.25rem; color: rgba(255, 255, 255, 0.8); font-size: 0.64rem; font-weight: 800; white-space: nowrap; }
+.period-card .period-total .period-carry.negative { color: #ffd5cd; }
 .month-switcher { display: inline-flex; align-items: center; gap: 0.35rem; }
 .month-switcher select { min-height: 2.75rem; padding: 0.35rem 2rem 0.35rem 0.65rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--surface); font-weight: 750; }
 

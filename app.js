@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.48";
+  const APP_VERSION = "0.5.49";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -222,12 +222,43 @@
     return appNow().toISOString();
   }
 
+  function normalizeDateRolloverTime(value) {
+    const match = String(value || "").match(/^(\d{2}):(\d{2})$/);
+    if (!match) return "00:00";
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return "00:00";
+    return `${pad(hour)}:${pad(minute)}`;
+  }
+
+  function dateRolloverMinutes() {
+    const [hour, minute] = normalizeDateRolloverTime(state?.settings?.dateRolloverTime).split(":").map(Number);
+    return hour * 60 + minute;
+  }
+
+  function appDateForNow(date = appNow()) {
+    const target = new Date(date.getTime());
+    const rollover = dateRolloverMinutes();
+    const currentMinutes = target.getHours() * 60 + target.getMinutes();
+    if (rollover >= 12 * 60 && currentMinutes >= rollover) target.setDate(target.getDate() + 1);
+    if (rollover < 12 * 60 && currentMinutes < rollover) target.setDate(target.getDate() - 1);
+    return target;
+  }
+
+  function nextDateRollover(date = new Date()) {
+    const rollover = dateRolloverMinutes();
+    const next = new Date(date.getTime());
+    next.setHours(Math.floor(rollover / 60), rollover % 60, 0, 0);
+    if (next.getTime() <= date.getTime()) next.setDate(next.getDate() + 1);
+    return next;
+  }
+
   function dateTimeInputValue(date = appNow()) {
     return `${localDateKey(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
   function localDateKey(date) {
-    const target = date instanceof Date ? date : appNow();
+    const target = date instanceof Date ? date : appDateForNow();
     return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}`;
   }
 
@@ -1082,6 +1113,7 @@
     const unexpectedCategory = unexpectedExpenseCategory();
     const unexpectedIncome = unexpectedIncomeCategory();
     const available = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).remaining, 0);
+    const availableCarry = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).carryRemaining, 0);
     const allTransactions = transactionsForMonth(currentPeriod).sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
     const recent = allTransactionsShown ? allTransactions : allTransactions.slice(0, 5);
 
@@ -1094,6 +1126,7 @@
         <div class="period-total">
           <p>使える残予算</p>
           <strong class="${available < 0 ? "negative" : ""}">${formatCurrency(available)}</strong>
+          <span class="period-carry${availableCarry < 0 ? " negative" : ""}">＋これまでの持ち越し${formatCurrency(availableCarry)}</span>
         </div>
       </section>
 
@@ -1163,7 +1196,7 @@
           <span class="daily-budget-days">${dailyStats.daysLabel}</span>
           <span class="daily-budget-sub">
             <span><span>今月の残り予算</span><strong class="${stats.monthlyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.monthlyRemaining)}</strong></span>
-            <span><span>これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>
+            <span><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>
           </span>
           <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
         </button>`;
@@ -1172,7 +1205,7 @@
         <span class="budget-card-name">${escapeHtml(category.name)}${fixedExpenseStatus ? `<em class="budget-card-status ${fixedExpenseStatus.tone}">${fixedExpenseStatus.label}</em>` : ""}</span>
         <span class="budget-card-label">今月の残り予算</span>
         <strong class="budget-card-amount ${stats.monthlyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.monthlyRemaining)}</strong>
-        <span class="budget-card-carry"><span>これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>
+        <span class="budget-card-carry"><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>
         <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
       </button>`;
     }).join("");
@@ -2065,6 +2098,8 @@
     return `<form id="basic-settings-form" class="card settings-form">
       <div class="section-copy"><p class="section-kicker">PERIOD</p><h2>家計簿の期間</h2><p>締日を超えた支出は翌月分として集計します。存在しない締日は月末に丸めます。</p></div>
       <label><span class="field-label">締日</span><select id="closing-day">${Array.from({ length: 31 }, (_, index) => index + 1).map((day) => `<option value="${day}"${Number(state.settings.closingDay) === day ? " selected" : ""}>${day === 31 ? "月末（31日）" : `${day}日`}</option>`).join("")}</select></label>
+      <label><span class="field-label">日付の切替時刻</span><input id="date-rollover-time" type="time" value="${normalizeDateRolloverTime(state.settings.dateRolloverTime)}" step="60" required></label>
+      <p class="help-text">この時刻を境に、入力日・日毎予算・通知などのアプリ内の日付を切り替えます。23:00なら23:00から翌日扱い、01:00なら01:00までは前日扱いです。</p>
       <div class="form-grid two-columns">
         <label><span class="field-label">開始日</span><input id="start-date" type="date" value="${state.settings.startDate}" required></label>
         <label><span class="field-label">終了日</span><input id="end-date" type="date" value="${state.settings.endDate}" required></label>
@@ -3050,6 +3085,7 @@
     if (event.target.id !== "basic-settings-form") return;
     event.preventDefault();
     const closingDay = clamp(toInteger(document.querySelector("#closing-day").value, 31), 1, 31);
+    const dateRolloverTime = normalizeDateRolloverTime(document.querySelector("#date-rollover-time").value);
     const startDate = document.querySelector("#start-date").value;
     const endDate = document.querySelector("#end-date").value;
     const themeId = themePresetFor(document.querySelector('input[name="theme-id"]:checked')?.value).id;
@@ -3059,7 +3095,7 @@
     }
     if (closingDay !== Number(state.settings.closingDay) && state.transactions.length && !window.confirm("締日を変えると、入力済み実績が所属する月も再計算されます。変更しますか？")) return;
     const previousSettings = state.settings;
-    state.settings = { ...state.settings, closingDay, startDate, endDate, themeId };
+    state.settings = { ...state.settings, closingDay, dateRolloverTime, startDate, endDate, themeId };
     const months = periodMonths();
     if (months.length > 120) {
       state.settings = previousSettings;
@@ -3413,13 +3449,13 @@
   function scheduleNextDateRefresh() {
     if (nextDayRenderTimer) window.clearTimeout(nextDayRenderTimer);
     if (developerModeIsEnabled()) return;
-    const next = new Date();
-    next.setHours(24, 0, 1, 0);
+    const now = new Date();
+    const next = nextDateRollover(now);
     nextDayRenderTimer = window.setTimeout(() => {
       nextDayRenderTimer = null;
       refreshForCurrentDeviceDate();
       scheduleNextDateRefresh();
-    }, Math.max(1000, next.getTime() - Date.now()));
+    }, Math.max(1000, next.getTime() - now.getTime()));
   }
 
   async function initialize() {
