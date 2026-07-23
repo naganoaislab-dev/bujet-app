@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.50";
+  const APP_VERSION = "0.5.51";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -595,7 +595,7 @@
     const carry = priorCarry + debtAppliedToPlan;
     const monthlyRemaining = plan - actual;
     const carryRemaining = carry - Math.max(0, actual - plan);
-    return { configuredPlan, priorCarry, plan, carry, actual, monthlyRemaining, carryRemaining, remaining: monthlyRemaining + carry };
+    return { configuredPlan, priorCarry, plan, carry, actual, monthlyRemaining, carryRemaining };
   }
 
   function dailyBudgetStats(category, month) {
@@ -1122,7 +1122,7 @@
     const incomeReminderDue = incomeCategories().some((category) => needsEntryReminder(category, currentPeriod));
     const unexpectedCategory = unexpectedExpenseCategory();
     const unexpectedIncome = unexpectedIncomeCategory();
-    const available = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).remaining, 0);
+    const available = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).monthlyRemaining, 0);
     const availableCarry = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).carryRemaining, 0);
     const allTransactions = transactionsForMonth(currentPeriod).sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
     const recent = allTransactionsShown ? allTransactions : allTransactions.slice(0, 5);
@@ -1136,7 +1136,7 @@
         <div class="period-total">
           <p>使える残予算</p>
           <strong class="${available < 0 ? "negative" : ""}">${formatCurrency(available)}</strong>
-          <span class="period-carry${availableCarry < 0 ? " negative" : ""}">＋これまでの持ち越し${formatCurrency(availableCarry)}</span>
+          ${availableCarry !== 0 ? `<span class="period-carry${availableCarry < 0 ? " negative" : ""}">＋これまでの持ち越し${formatCurrency(availableCarry)}</span>` : ""}
         </div>
       </section>
 
@@ -1197,6 +1197,9 @@
         : null;
       const available = Math.max(1, stats.plan + Math.max(0, stats.carry));
       const progress = clamp((stats.actual / available) * 100, 0, 100);
+      const carryLabel = stats.carryRemaining !== 0
+        ? `<span class="budget-card-carry"><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>`
+        : "";
       if (dailyStats) {
         return `<button type="button" class="budget-card daily-budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
           <span class="budget-card-name">${escapeHtml(category.name)}</span>
@@ -1204,9 +1207,9 @@
             <span class="daily-budget-value"><span>${dailyStats.dailyLabel}</span><strong class="${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
           </span>
           <span class="daily-budget-days">${dailyStats.daysLabel}</span>
-          <span class="daily-budget-sub">
+          <span class="daily-budget-sub${stats.carryRemaining === 0 ? " is-single" : ""}">
             <span><span>今月の残り予算</span><strong class="${stats.monthlyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.monthlyRemaining)}</strong></span>
-            <span><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>
+            ${stats.carryRemaining !== 0 ? `<span><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>` : ""}
           </span>
           <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
         </button>`;
@@ -1215,7 +1218,7 @@
         <span class="budget-card-name">${escapeHtml(category.name)}${fixedExpenseStatus ? `<em class="budget-card-status ${fixedExpenseStatus.tone}">${fixedExpenseStatus.label}</em>` : ""}</span>
         <span class="budget-card-label">今月の残り予算</span>
         <strong class="budget-card-amount ${stats.monthlyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.monthlyRemaining)}</strong>
-        <span class="budget-card-carry"><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>
+        ${carryLabel}
         <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
       </button>`;
     }).join("");
