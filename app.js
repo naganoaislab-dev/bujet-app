@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.49";
+  const APP_VERSION = "0.5.50";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -668,6 +668,16 @@
     const target = aggregates.find((item) => item.month === month);
     if (target) {
       target.expensePlan = Math.max(0, target.expensePlan - amount);
+      target.plannedNet = target.incomePlan - target.expensePlan;
+    }
+    return projectEndForecastFromAggregates(aggregates);
+  }
+
+  function projectEndForecastAfterBudgetAddition(month, amount) {
+    const aggregates = periodMonths().map(aggregateMonth);
+    const target = aggregates.find((item) => item.month === month);
+    if (target) {
+      target.expensePlan += Math.max(0, toInteger(amount));
       target.plannedNet = target.incomePlan - target.expensePlan;
     }
     return projectEndForecastFromAggregates(aggregates);
@@ -2286,18 +2296,42 @@
     forecast.textContent = `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}`;
   }
 
+  function updateCalculatorAddBudgetSummary() {
+    if (!calculatorContext || !calculatorContext.canShiftBudget) return;
+    const category = categoryById(calculatorContext.categoryId);
+    const sourceMonth = calculatorContext.sourceMonth;
+    const amountInput = document.querySelector("#calculator-add-budget-amount");
+    const amount = Math.max(0, toInteger(amountInput.value));
+    const currentBudget = category ? planAmount(category.id, sourceMonth) : 0;
+    const forecast = document.querySelector("#calculator-add-budget-forecast");
+    const confirm = document.querySelector("#calculator-add-budget-confirm");
+    document.querySelector("#calculator-add-budget-source").textContent = `${monthLabel(sourceMonth)}の現在の予算は${formatCurrency(currentBudget)}です。`;
+    confirm.disabled = amount <= 0;
+    if (amount <= 0) {
+      forecast.textContent = "追加する金額を入力すると、見込み収支への影響を表示します。";
+      return;
+    }
+    const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+    const after = projectEndForecastAfterBudgetAddition(sourceMonth, amount);
+    const decrease = Math.max(0, before - after);
+    forecast.textContent = `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}${decrease ? `（${formatCurrency(decrease)}減少）` : "（変化なし）"}`;
+  }
+
   function resetCalculatorShiftPanel(category) {
     const panel = document.querySelector("#calculator-shift-panel");
     const returnPanel = document.querySelector("#calculator-return-panel");
+    const addPanel = document.querySelector("#calculator-add-budget-panel");
     const actions = document.querySelector("#calculator-budget-actions");
     const toggle = document.querySelector("#calculator-shift-toggle");
     const returnToggle = document.querySelector("#calculator-return-toggle");
+    const addToggle = document.querySelector("#calculator-add-budget-toggle");
     const sourceMonth = currentPeriod;
     const canShiftBudget = category && ["variable", "fixed"].includes(category.group) && !isUnexpectedExpenseCategory(category);
     const targets = canShiftBudget ? calculatorShiftTargetMonths(sourceMonth) : [];
     const remainingBudget = calculatorReturnRemainingBudget(category, sourceMonth);
     panel.hidden = true;
     returnPanel.hidden = true;
+    addPanel.hidden = true;
     document.querySelector("#calculator-expression").hidden = false;
     document.querySelector("#calculator-display").hidden = false;
     document.querySelector("#calculator-keys").hidden = false;
@@ -2309,8 +2343,12 @@
     document.querySelector("#calculator-shift-target-month").innerHTML = targets.map((month) => `<option value="${month}">${monthLabel(month)}</option>`).join("");
     document.querySelector("#calculator-shift-amount").value = String(remainingBudget);
     document.querySelector("#calculator-return-amount").value = String(remainingBudget);
+    document.querySelector("#calculator-add-budget-amount").value = "";
+    addToggle.disabled = false;
+    addToggle.title = `${monthLabel(sourceMonth)}の計画予算を追加します`;
     updateCalculatorShiftTargetSummary();
     updateCalculatorReturnSummary();
+    updateCalculatorAddBudgetSummary();
   }
 
   function openCalculator(categoryId) {
@@ -2541,6 +2579,33 @@
       category.defaultAmount = previousDefaultAmount;
       category.planRule = previousPlanRule;
       updateCalculatorReturnSummary();
+      throw error;
+    }
+    closeDialog(calculatorDialog);
+    render();
+  }
+
+  async function addCalculatorBudget() {
+    if (!calculatorContext || !calculatorContext.canShiftBudget) return;
+    const category = categoryById(calculatorContext.categoryId);
+    const sourceMonth = calculatorContext.sourceMonth;
+    const amount = Math.max(0, toInteger(document.querySelector("#calculator-add-budget-amount").value));
+    if (!category || !["variable", "fixed"].includes(category.group)) throw new Error("予算を追加できる支出項目を選択してください");
+    if (amount <= 0) throw new Error("追加する金額を入力してください");
+    const sourceBudget = planAmount(category.id, sourceMonth);
+    const previousDefaultAmount = category.defaultAmount;
+    const previousPlanRule = category.planRule ? { ...category.planRule } : null;
+    state.plans[category.id] = { ...(state.plans[category.id] || {}) };
+    state.plans[category.id][sourceMonth] = sourceBudget + amount;
+    category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
+    category.planRule = null;
+    try {
+      await persist(`${category.name}の${monthLabel(sourceMonth)}の予算に${formatCurrency(amount)}を追加しました`);
+    } catch (error) {
+      state.plans[category.id][sourceMonth] = sourceBudget;
+      category.defaultAmount = previousDefaultAmount;
+      category.planRule = previousPlanRule;
+      updateCalculatorAddBudgetSummary();
       throw error;
     }
     closeDialog(calculatorDialog);
@@ -3154,6 +3219,7 @@
     if (!panel.hidden) return;
     panel.hidden = false;
     document.querySelector("#calculator-return-panel").hidden = true;
+    document.querySelector("#calculator-add-budget-panel").hidden = true;
     document.querySelector("#calculator-expression").hidden = true;
     document.querySelector("#calculator-display").hidden = true;
     document.querySelector("#calculator-keys").hidden = true;
@@ -3170,17 +3236,33 @@
     if (!panel.hidden) return;
     panel.hidden = false;
     document.querySelector("#calculator-shift-panel").hidden = true;
+    document.querySelector("#calculator-add-budget-panel").hidden = true;
     document.querySelector("#calculator-expression").hidden = true;
     document.querySelector("#calculator-display").hidden = true;
     document.querySelector("#calculator-keys").hidden = true;
     document.querySelector("#calculator-budget-actions").hidden = true;
     updateCalculatorReturnSummary();
   });
+  document.querySelector("#calculator-add-budget-toggle").addEventListener("click", () => {
+    if (!calculatorContext || !calculatorContext.canShiftBudget) return;
+    const panel = document.querySelector("#calculator-add-budget-panel");
+    if (!panel.hidden) return;
+    panel.hidden = false;
+    document.querySelector("#calculator-return-panel").hidden = true;
+    document.querySelector("#calculator-shift-panel").hidden = true;
+    document.querySelector("#calculator-expression").hidden = true;
+    document.querySelector("#calculator-display").hidden = true;
+    document.querySelector("#calculator-keys").hidden = true;
+    document.querySelector("#calculator-budget-actions").hidden = true;
+    updateCalculatorAddBudgetSummary();
+  });
   document.querySelector("#calculator-shift-target-month").addEventListener("change", updateCalculatorShiftTargetSummary);
   document.querySelector("#calculator-shift-amount").addEventListener("input", updateCalculatorShiftTargetSummary);
   document.querySelector("#calculator-shift-confirm").addEventListener("click", () => shiftCalculatorBudget().catch((error) => showToast(error.message)));
   document.querySelector("#calculator-return-amount").addEventListener("input", updateCalculatorReturnSummary);
   document.querySelector("#calculator-return-confirm").addEventListener("click", () => returnCalculatorBudget().catch((error) => showToast(error.message)));
+  document.querySelector("#calculator-add-budget-amount").addEventListener("input", updateCalculatorAddBudgetSummary);
+  document.querySelector("#calculator-add-budget-confirm").addEventListener("click", () => addCalculatorBudget().catch((error) => showToast(error.message)));
   document.querySelector("#calculator-form").addEventListener("submit", (event) => event.preventDefault());
 
   document.querySelector("#app-version-button").addEventListener("click", () => {
