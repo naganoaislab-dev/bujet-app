@@ -177,7 +177,7 @@ p { color: var(--muted); line-height: 1.55; }
 .warning { color: var(--warning) !important; }
 
 .category-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.7rem; }
-.budget-card { position: relative; min-height: 8.5rem; padding: 0.9rem; overflow: hidden; border: 1px solid var(--line); border-radius: 1.05rem; color: var(--ink); background: var(--surface); box-shadow: 0 7px 20px rgba(45, 53, 46, 0.05); text-align: left; cursor: pointer; }
+.budget-card { position: relative; display: flex; min-height: 8.5rem; padding: 0.9rem; overflow: hidden; border: 1px solid var(--line); border-radius: 1.05rem; color: var(--ink); background: var(--surface); box-shadow: 0 7px 20px rgba(45, 53, 46, 0.05); flex-direction: column; text-align: left; cursor: pointer; }
 .budget-card::before { position: absolute; top: 0; right: 0; bottom: 0; width: 0.28rem; background: var(--category-color); content: ""; }
 .budget-card:active { transform: scale(0.985); }
 .reorderable-category-grid .budget-card { -webkit-touch-callout: none; touch-action: pan-y; -webkit-user-select: none; user-select: none; }
@@ -193,7 +193,10 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .budget-card-status.complete { color: var(--primary-strong); }
 .budget-card-label { display: block; color: var(--muted); font-size: 0.64rem; font-weight: 700; }
 .budget-card-amount { display: block; margin: 0.15rem 0 0.55rem; font-size: 1.15rem; font-weight: 850; letter-spacing: -0.04em; }
-.budget-card-carry { display: flex; justify-content: space-between; gap: 0.35rem; color: var(--muted); font-size: 0.68rem; }
+.budget-card-main { display: flex; align-items: baseline; justify-content: space-between; gap: 0.45rem; min-width: 0; }
+.budget-card-main .budget-card-label { min-width: 0; white-space: nowrap; }
+.budget-card-main .budget-card-amount { min-width: 0; margin: 0; overflow: hidden; font-size: clamp(1.24rem, 6vw, 1.6rem); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.budget-card-carry { display: flex; justify-content: space-between; gap: 0.35rem; margin-top: auto; color: var(--muted); font-size: 0.68rem; }
 .budget-card-carry strong { color: inherit; }
 .budget-progress { height: 0.32rem; margin-top: 0.65rem; overflow: hidden; border-radius: 99px; background: var(--surface-2); }
 .budget-progress > span { display: block; width: var(--progress); height: 100%; border-radius: inherit; background: var(--category-color); }
@@ -203,12 +206,9 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .daily-budget-value > span { color: var(--muted); font-size: 0.64rem; font-weight: 750; line-height: 1.35; }
 .daily-budget-value > strong { display: block; margin-top: 0.25rem; overflow: hidden; font-size: clamp(1.05rem, 5vw, 1.35rem); letter-spacing: -0.04em; text-overflow: ellipsis; white-space: nowrap; }
 .daily-budget-days { display: block; margin: 0.5rem 0; color: var(--primary); font-size: 0.68rem; font-weight: 800; text-align: right; }
-.daily-budget-sub { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; padding-top: 0.55rem; border-top: 1px solid var(--line); }
-.daily-budget-sub.is-single { grid-template-columns: minmax(0, 1fr); }
-.daily-budget-sub > span { min-width: 0; }
-.daily-budget-sub span span, .daily-budget-sub strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.daily-budget-sub span span { color: var(--muted); font-size: 0.62rem; }
-.daily-budget-sub strong { margin-top: 0.12rem; font-size: 0.78rem; }
+.daily-budget-sub { display: flex; gap: 0.45rem; margin-top: auto; padding-top: 0.55rem; border-top: 1px solid var(--line); flex-direction: column; }
+.daily-budget-sub .budget-card-carry { margin-top: 0; }
+.daily-budget-sub .budget-card-main .budget-card-amount { font-size: clamp(1.14rem, 5.2vw, 1.45rem); }
 .income-entry-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.95rem 1rem; border: 1px solid rgba(var(--primary-rgb), 0.34); border-radius: 1rem; color: var(--primary-strong); background: linear-gradient(135deg, var(--primary-soft), var(--surface)); }
 .income-entry-card strong { color: var(--primary-strong); }
 .income-entry-card p { margin-bottom: 0; color: var(--primary-strong); font-size: 0.8rem; opacity: 0.8; }
