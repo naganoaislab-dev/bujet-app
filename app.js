@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.54";
+  const APP_VERSION = "0.5.55";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -1197,8 +1197,6 @@
           ? { label: `${shortDate(latestEntryDate)}入力済み`, tone: "complete" }
           : { label: "未入力", tone: "missing" }
         : null;
-      const available = Math.max(1, stats.plan + Math.max(0, stats.carry));
-      const progress = clamp((stats.actual / available) * 100, 0, 100);
       const hasUnresolvedCarryover = stats.carry < 0;
       const carryBudgetAvailable = !hasUnresolvedCarryover && stats.monthlyRemaining <= 0 && stats.carryRemaining > 0;
       const carryBudgetExhausted = !hasUnresolvedCarryover && stats.carry > 0 && stats.monthlyRemaining < 0 && stats.carryRemaining === 0;
@@ -1215,10 +1213,25 @@
             ? 0
             : stats.monthlyRemaining;
       const remainingBudgetLabel = carryBudgetAvailable ? "持ち越し予算" : "今月の残予算";
+      const hasNoPlan = stats.configuredPlan <= 0 && stats.priorCarry === 0 && stats.actual === 0;
+      const progress = remainingBudget < 0
+        ? 100
+        : stats.configuredPlan > 0
+          ? clamp((stats.actual / stats.configuredPlan) * 100, 0, 100)
+          : 0;
+      const progressBar = !hasNoPlan && (stats.configuredPlan > 0 || remainingBudget < 0)
+        ? `<span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>`
+        : "";
       const carryLabel = carryBudgetAvailable
         ? `<span class="budget-card-carry"><span>今月の予算</span><strong>${formatCurrency(0)}</strong></span>`
         : !hasUnresolvedCarryover && stats.carryRemaining !== 0
         ? `<span class="budget-card-carry"><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>`
+        : "";
+      const budgetSummary = hasNoPlan
+        ? '<span class="budget-card-unplanned">計画なし</span>'
+        : `<span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>`;
+      const cardFooter = carryLabel || progressBar
+        ? `<span class="budget-card-footer">${carryLabel}${progressBar}</span>`
         : "";
       if (dailyStats) {
         return `<button type="button" class="budget-card daily-budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
@@ -1228,17 +1241,16 @@
           </span>
           <span class="daily-budget-days">${dailyStats.daysLabel}</span>
           <span class="daily-budget-sub">
-            <span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>
+            ${budgetSummary}
             ${carryLabel}
           </span>
-          <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
+          ${progressBar}
         </button>`;
       }
       return `<button type="button" class="budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
         <span class="budget-card-name">${escapeHtml(category.name)}${fixedExpenseStatus ? `<em class="budget-card-status ${fixedExpenseStatus.tone}">${fixedExpenseStatus.label}</em>` : ""}</span>
-        <span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>
-        ${carryLabel}
-        <span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>
+        ${budgetSummary}
+        ${cardFooter}
       </button>`;
     }).join("");
   }
