@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.58";
+  const APP_VERSION = "0.5.59";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -1240,7 +1240,7 @@
         ? `<span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>`
         : "";
       const carryLabel = carryBudgetAvailable
-        ? `<span class="budget-card-carry"><span>今月の予算</span><strong>${formatCurrency(0)}</strong></span>`
+        ? `<span class="budget-card-carry"><span>今月の予算</span><strong class="monthly-budget-exhausted">${formatCurrency(0)}</strong></span>`
         : !hasUnresolvedCarryover && stats.carryRemaining !== 0
         ? `<span class="budget-card-carry"><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>`
         : "";
