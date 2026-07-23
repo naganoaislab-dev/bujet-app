@@ -53,6 +53,15 @@
     return date;
   }
 
+  function normalizeDateRolloverTime(value) {
+    const match = String(value || "").match(/^(\d{2}):(\d{2})$/);
+    if (!match) return "00:00";
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return "00:00";
+    return `${pad(hour)}:${pad(minute)}`;
+  }
+
   function stateTimestamp(state) {
     const configured = state && state.settings && state.settings.developerModeEnabled === true
       ? developerDateTime(state.settings.developerDateTime)
@@ -172,6 +181,7 @@
         endDate,
         currency: "JPY",
         themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID,
+        dateRolloverTime: "00:00",
         developerModeEnabled: false,
         developerDateTime: ""
       },
@@ -195,6 +205,7 @@
         endDate,
         currency: "JPY",
         themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID,
+        dateRolloverTime: "00:00",
         developerModeEnabled: false,
         developerDateTime: ""
       },
@@ -274,6 +285,7 @@
     };
     state.settings.closingDay = Math.min(31, Math.max(1, Math.round(Number(state.settings.closingDay) || 31)));
     state.settings.themeId = THEME_IDS.has(state.settings.themeId) ? state.settings.themeId : DEFAULT_THEME_ID;
+    state.settings.dateRolloverTime = normalizeDateRolloverTime(state.settings.dateRolloverTime);
     const configuredDeveloperDateTime = developerDateTime(state.settings.developerDateTime);
     state.settings.developerModeEnabled = state.settings.developerModeEnabled === true && Boolean(configuredDeveloperDateTime);
     state.settings.developerDateTime = configuredDeveloperDateTime ? String(state.settings.developerDateTime) : "";
