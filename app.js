@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.61";
+  const APP_VERSION = "0.5.62";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -1674,13 +1674,26 @@
     const preferredCumulativeIndex = aggregates.findIndex((item) => item.month === currentPeriod);
     const cumulativeIndexMaximum = Math.max(0, aggregates.length - 1);
     const activeCumulativeIndex = clamp(Math.max(0, aggregates.findIndex((item) => item.month === currentPeriodForToday())), 0, cumulativeIndexMaximum);
+    const activeAggregate = aggregates[activeCumulativeIndex] || { actualCumulative: 0, expensePlan: 0, expenseActual: 0, unexpectedExpenseActual: 0 };
+    const activeBudgetedExpenseActual = Math.max(0, activeAggregate.expenseActual - activeAggregate.unexpectedExpenseActual);
+    const currentPlanExpenseRemaining = Math.max(0, activeAggregate.expensePlan - activeBudgetedExpenseActual);
     let actualForecastCumulative = aggregates[activeCumulativeIndex]?.actualCumulative || 0;
+    let planExpenseForecastCumulative = actualForecastCumulative - currentPlanExpenseRemaining;
     aggregates.forEach((item, index) => {
       if (index <= activeCumulativeIndex) {
         item.actualForecastCumulative = item.actualCumulative;
       } else {
         actualForecastCumulative += item.plannedNet;
         item.actualForecastCumulative = actualForecastCumulative;
+      }
+      if (index < activeCumulativeIndex) {
+        item.planExpenseForecastCumulative = item.actualCumulative;
+      } else if (index === activeCumulativeIndex) {
+        item.planExpenseForecastCumulative = planExpenseForecastCumulative;
+        item.currentPlanExpenseRemaining = currentPlanExpenseRemaining;
+      } else {
+        planExpenseForecastCumulative += item.plannedNet;
+        item.planExpenseForecastCumulative = planExpenseForecastCumulative;
       }
     });
     const selectedCumulativeIndex = clamp(
@@ -1870,13 +1883,27 @@
   function renderCumulativeNetChart(aggregates, selectedIndex, activeIndex) {
     const scaleStart = cumulativeAutoScaleEnabled && cumulativeScaleWindow ? clamp(cumulativeScaleWindow.start, 0, Math.max(0, aggregates.length - 1)) : 0;
     const scaleEnd = cumulativeAutoScaleEnabled && cumulativeScaleWindow ? clamp(cumulativeScaleWindow.end, scaleStart, Math.max(0, aggregates.length - 1)) : Math.max(0, aggregates.length - 1);
-    const scaleValues = aggregates.slice(scaleStart, scaleEnd + 1).flatMap((item) => [item.plannedCumulative, item.actualCumulative, item.actualForecastCumulative]);
+    const activeItem = aggregates[activeIndex] || { actualCumulative: 0, planExpenseForecastCumulative: 0, currentPlanExpenseRemaining: 0 };
+    const currentPlanExpenseRemaining = Math.max(0, toInteger(activeItem.currentPlanExpenseRemaining));
+    const hasPlanExpenseForecast = currentPlanExpenseRemaining > 0;
+    const scaleValues = aggregates.slice(scaleStart, scaleEnd + 1).flatMap((item) => [
+      item.plannedCumulative,
+      item.actualCumulative,
+      item.actualForecastCumulative,
+      item.planExpenseForecastCumulative
+    ]);
     const scale = chartValueScale(scaleValues.length ? scaleValues : [0]);
     const width = aggregates.length * 100;
+    const pointCoordinate = (field, index) => `${index * 100 + 50},${chartYPercent(aggregates[index]?.[field], scale)}`;
     const points = (field, start = 0, end = aggregates.length - 1) => aggregates.slice(start, end + 1).map((item, offset) => {
       const index = start + offset;
       return `${index * 100 + 50},${chartYPercent(item[field], scale)}`;
     }).join(" ");
+    const reversePoints = (field, start = 0, end = aggregates.length - 1) => {
+      const result = [];
+      for (let index = end; index >= start; index -= 1) result.push(pointCoordinate(field, index));
+      return result.join(" ");
+    };
     const pointMarkers = (field, tone, start = 0, end = aggregates.length - 1) => aggregates.slice(start, end + 1).map((item, offset) => {
       const index = start + offset;
       const y = chartYPercent(item[field], scale);
@@ -1884,32 +1911,45 @@
       const isCurrentActual = tone === "actual" && index === activeIndex;
       return `<span class="cumulative-chart-point ${tone}${index === selectedIndex ? " is-selected" : ""}${isCurrentActual ? " is-current-actual" : ""}" style="left:${left}%;top:${y}%"></span>`;
     }).join("");
-    const selected = aggregates[selectedIndex] || aggregates[0] || { month: currentPeriod, plannedCumulative: 0, actualCumulative: 0, actualForecastCumulative: 0, plannedNet: 0, actualNet: 0 };
+    const selected = aggregates[selectedIndex] || aggregates[0] || { month: currentPeriod, plannedCumulative: 0, actualCumulative: 0, actualForecastCumulative: 0, planExpenseForecastCumulative: 0, plannedNet: 0, actualNet: 0 };
     const selectedUsesForecast = selectedIndex > activeIndex;
     const selectedActualValue = selectedUsesForecast ? selected.actualForecastCumulative : selected.actualCumulative;
+    const selectedPlanExpenseForecast = selected.planExpenseForecastCumulative;
     const selectedGap = selectedActualValue - selected.plannedCumulative;
     const forecastStartLeft = ((activeIndex + 0.5) / Math.max(1, aggregates.length)) * 100;
+    const currentActualY = chartYPercent(activeItem.actualCumulative, scale);
+    const currentPlanExpenseY = chartYPercent(activeItem.planExpenseForecastCumulative, scale);
+    const currentPlanExpenseLabelY = (currentActualY + currentPlanExpenseY) / 2;
+    const shouldShowForecastGap = hasPlanExpenseForecast && activeIndex < aggregates.length - 1;
+    const forecastGapPoints = shouldShowForecastGap
+      ? `${points("actualForecastCumulative", activeIndex)} ${reversePoints("planExpenseForecastCumulative", activeIndex)}`
+      : "";
     const selectionLeft = selectedIndex * 3.1 + 1.55;
     return `<section class="card chart-card cumulative-chart-card" aria-labelledby="cumulative-chart-title">
-      <div class="cumulative-chart-heading"><div class="section-copy"><p class="section-kicker">CUMULATIVE NET</p><h2 id="cumulative-chart-title">累積予定収支と累積実績収支</h2><p>予定は青の破線、実績は橙の実線です。実績の次月以降は、月次予定収支を積み上げた点線で表示します。</p></div><button type="button" class="button small secondary cumulative-scale-toggle${cumulativeAutoScaleEnabled ? " is-active" : ""}" data-action="toggle-cumulative-auto-scale" aria-pressed="${cumulativeAutoScaleEnabled}">自動スケール ${cumulativeAutoScaleEnabled ? "ON" : "OFF"}</button></div>
-      <div class="chart-legend">${legend("#3c78b4", "累積予定収支（破線）")}${legend("#c45e43", "累積実績収支（実線）")}${legend("#c45e43", "実績予測（点線）")}</div>
+      <div class="cumulative-chart-heading"><div class="section-copy"><p class="section-kicker">CUMULATIVE NET</p><h2 id="cumulative-chart-title">累積予定収支と累積実績収支</h2><p>予定は青の破線、実績は橙の実線です。点滅する現在地からの予測に加え、今月の残る計画消費を織り込んだ予測を表示します。</p></div><button type="button" class="button small secondary cumulative-scale-toggle${cumulativeAutoScaleEnabled ? " is-active" : ""}" data-action="toggle-cumulative-auto-scale" aria-pressed="${cumulativeAutoScaleEnabled}">自動スケール ${cumulativeAutoScaleEnabled ? "ON" : "OFF"}</button></div>
+      <div class="chart-legend">${legend("#3c78b4", "累積予定収支（破線）")}${legend("#c45e43", "累積実績収支（実線）")}${legend("#c45e43", "実績予測（点線）")}${hasPlanExpenseForecast ? legend("#9a6274", "今月計画込み予測") : ""}</div>
       <div class="chart-scroll" data-chart-scroll-key="cumulative-net">
         ${renderChartAxisLabels(scale)}
         <div class="chart-canvas cumulative-chart-canvas" style="--month-count:${aggregates.length};--selection-left:${selectionLeft}rem">
           <div class="chart-plot">
             ${renderChartGridlines(scale)}
             <svg class="line-overlay" viewBox="0 0 ${width} 100" preserveAspectRatio="none" aria-hidden="true">
+              <defs><pattern id="cumulative-plan-gap-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="cumulative-plan-gap-hatch-line" x1="0" y1="0" x2="0" y2="7"></line></pattern></defs>
+              ${shouldShowForecastGap ? `<polygon class="cumulative-plan-gap" points="${forecastGapPoints}"></polygon>` : ""}
               <polyline class="chart-line cumulative-net planned" points="${points("plannedCumulative")}"></polyline>
               <polyline class="chart-line cumulative-net actual" points="${points("actualCumulative", 0, activeIndex)}"></polyline>
               <polyline class="chart-line cumulative-net forecast" points="${points("actualForecastCumulative", activeIndex, aggregates.length - 1)}"></polyline>
+              ${hasPlanExpenseForecast ? `<line class="chart-line cumulative-net current-plan-expense" x1="${activeIndex * 100 + 50}" y1="${currentActualY}" x2="${activeIndex * 100 + 50}" y2="${currentPlanExpenseY}"></line><polyline class="chart-line cumulative-net plan-expense-forecast" points="${points("planExpenseForecastCumulative", activeIndex, aggregates.length - 1)}"></polyline>` : ""}
             </svg>
-            <div class="cumulative-chart-points" aria-hidden="true">${pointMarkers("plannedCumulative", "planned")}${pointMarkers("actualCumulative", "actual", 0, activeIndex)}${pointMarkers("actualForecastCumulative", "forecast", activeIndex + 1, aggregates.length - 1)}</div>
+            <div class="cumulative-chart-points" aria-hidden="true">${pointMarkers("plannedCumulative", "planned")}${pointMarkers("actualCumulative", "actual", 0, activeIndex)}${pointMarkers("actualForecastCumulative", "forecast", activeIndex + 1, aggregates.length - 1)}${hasPlanExpenseForecast ? pointMarkers("planExpenseForecastCumulative", "plan-expense", activeIndex, aggregates.length - 1) : ""}</div>
             ${activeIndex < aggregates.length - 1 ? `<span class="cumulative-forecast-start" style="left:${forecastStartLeft}%">ここから予測</span>` : ""}
+            ${hasPlanExpenseForecast ? `<span class="cumulative-current-plan-label" style="left:${forecastStartLeft}%;top:${currentPlanExpenseLabelY}%">今月の計画消費<br>−${formatCurrency(currentPlanExpenseRemaining)}</span>` : ""}
             <span class="cumulative-chart-selection-guide" aria-hidden="true"></span>
             <aside class="cumulative-chart-tooltip" aria-live="polite">
               <strong>${monthLabel(selected.month)}</strong>
               <span class="planned"><i aria-hidden="true"></i>予定累積 ${formatSignedCurrency(selected.plannedCumulative)}</span>
               <span class="actual"><i aria-hidden="true"></i>${selectedUsesForecast ? "実績予測" : "実績累積"} ${formatSignedCurrency(selectedActualValue)}</span>
+              ${hasPlanExpenseForecast && selectedIndex >= activeIndex ? `<span class="plan-expense"><i aria-hidden="true"></i>今月計画込み ${formatSignedCurrency(selectedPlanExpenseForecast)}</span><small>今月の残る計画消費 −${formatCurrency(currentPlanExpenseRemaining)}</small>` : ""}
               <small class="cumulative-variance ${selectedGap < 0 ? "negative" : selectedGap > 0 ? "positive" : ""}">予定との差 ${formatSignedCurrency(selectedGap)}</small>
               <small>月次：予定 ${formatSignedCurrency(selected.plannedNet)} ／ 実績 ${formatSignedCurrency(selected.actualNet)}</small>
               <small class="cumulative-scale-window">${cumulativeAutoScaleEnabled ? `表示範囲：${monthLabel(aggregates[scaleStart]?.month || currentPeriod)}〜${monthLabel(aggregates[scaleEnd]?.month || currentPeriod)}` : "全期間スケール"}</small>
