@@ -44,6 +44,22 @@
     return !Number.isNaN(date.getTime()) && dateKey(date) === value;
   }
 
+  function developerDateTime(value) {
+    const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+    if (!match) return null;
+    const [, year, month, day, hour, minute] = match.map(Number);
+    const date = new Date(year, month - 1, day, hour, minute, 0, 0);
+    if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day || date.getHours() !== hour || date.getMinutes() !== minute) return null;
+    return date;
+  }
+
+  function stateTimestamp(state) {
+    const configured = state && state.settings && state.settings.developerModeEnabled === true
+      ? developerDateTime(state.settings.developerDateTime)
+      : null;
+    return (configured || new Date()).toISOString();
+  }
+
   function normalizePlanScaleMax(value) {
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount <= 0) return DEFAULT_PLAN_SCALE_MAX;
@@ -155,7 +171,9 @@
         startDate,
         endDate,
         currency: "JPY",
-        themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID
+        themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID,
+        developerModeEnabled: false,
+        developerDateTime: ""
       },
       categories,
       plans,
@@ -176,7 +194,9 @@
         startDate,
         endDate,
         currency: "JPY",
-        themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID
+        themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID,
+        developerModeEnabled: false,
+        developerDateTime: ""
       },
       categories: [{
         id: "expense-unplanned",
@@ -254,9 +274,14 @@
     };
     state.settings.closingDay = Math.min(31, Math.max(1, Math.round(Number(state.settings.closingDay) || 31)));
     state.settings.themeId = THEME_IDS.has(state.settings.themeId) ? state.settings.themeId : DEFAULT_THEME_ID;
+    const configuredDeveloperDateTime = developerDateTime(state.settings.developerDateTime);
+    state.settings.developerModeEnabled = state.settings.developerModeEnabled === true && Boolean(configuredDeveloperDateTime);
+    state.settings.developerDateTime = configuredDeveloperDateTime ? String(state.settings.developerDateTime) : "";
     if (!validDateKey(state.settings.startDate) || !validDateKey(state.settings.endDate) || new Date(`${state.settings.endDate}T00:00:00`) < new Date(`${state.settings.startDate}T00:00:00`)) {
       state.settings = { ...fallback.settings };
     }
+    const normalizationTimestamp = stateTimestamp(state);
+    const normalizationDate = new Date(normalizationTimestamp);
     state.categories.forEach((category, index) => {
       category.id = String(category.id || `category-${index}`);
       category.name = String(category.name || "名称未設定").slice(0, 40);
@@ -285,7 +310,7 @@
       if (category.isUnexpectedExpense) category.dailyBudgetEnabled = false;
       if (category.planRule && typeof category.planRule === "object") {
         category.planRule = {
-          startMonth: /^\d{4}-\d{2}$/.test(category.planRule.startMonth) ? category.planRule.startMonth : monthKey(new Date()),
+          startMonth: /^\d{4}-\d{2}$/.test(category.planRule.startMonth) ? category.planRule.startMonth : monthKey(normalizationDate),
           interval: Math.min(36, Math.max(1, Math.round(Number(category.planRule.interval) || 1))),
           amount: normalizePlanAmount(category, category.planRule.amount)
         };
@@ -308,8 +333,8 @@
       state.plans[unexpectedCategory.id] = {};
     });
     state.transactions = state.transactions.filter((transaction) => transaction && typeof transaction === "object").map((transaction, index) => {
-      const date = validDateKey(transaction.date) ? transaction.date : dateKey(new Date());
-      const createdAt = transaction.createdAt || new Date().toISOString();
+      const date = validDateKey(transaction.date) ? transaction.date : dateKey(normalizationDate);
+      const createdAt = transaction.createdAt || normalizationTimestamp;
       const createdDate = new Date(createdAt);
       const enteredOn = validDateKey(transaction.enteredOn)
         ? transaction.enteredOn
@@ -324,7 +349,7 @@
         amount: normalizeTransactionAmount(category, transaction.amount),
         memo: String(transaction.memo || "").slice(0, 500),
         createdAt,
-        updatedAt: transaction.updatedAt || new Date().toISOString()
+        updatedAt: transaction.updatedAt || normalizationTimestamp
       };
     });
     return state;
@@ -541,7 +566,7 @@
     const project = projects.find((item) => item.id === id);
     if (!project) throw new Error("保存先のプロジェクトが見つかりません。");
     const normalized = normalizeState(JSON.parse(JSON.stringify(state)), project.stateId);
-    normalized.updatedAt = new Date().toISOString();
+    normalized.updatedAt = stateTimestamp(normalized);
     const nextProject = normalizeProject({ ...project, updatedAt: normalized.updatedAt }, normalized, project.id);
     await requestFromStores([STATE_STORE, PROJECT_STORE], "readwrite", (stores) => {
       stores[STATE_STORE].put(normalized);
