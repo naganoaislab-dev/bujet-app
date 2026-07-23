@@ -2,12 +2,13 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.59";
+  const APP_VERSION = "0.5.61";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
   const UNEXPECTED_INCOME_CATEGORY_ID = "income-unplanned";
   const ANALYSIS_PAGE_COUNT = 3;
+  const OVERVIEW_PAGE_COUNT = 2;
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
   const INCOME_CATEGORY_GROUPS = Object.freeze(["income", SIGNED_INCOME_GROUP]);
   const CATEGORY_GROUP_LABELS = Object.freeze({
@@ -86,11 +87,15 @@
   let analysisSelectedDate = "";
   let analysisPageSwipe = null;
   let analysisPageTransitionTimer = null;
+  let overviewDetailPage = 0;
+  let overviewPageSwipe = null;
+  let overviewPageTransitionTimer = null;
   let cumulativeChartSelectedIndex = null;
   let cumulativeAutoScaleEnabled = false;
   let cumulativeScaleWindow = null;
   let overviewChartScrollSyncing = false;
   let overviewChartScaleTimer = null;
+  const overviewChartScrollPositions = new Map();
   let settingsPane = "basic";
   let incomeExpanded = false;
   let unexpectedEntriesExpanded = false;
@@ -1053,6 +1058,7 @@
         left: element.scrollLeft
       }))
       : [];
+    chartScrollPositions.forEach(({ key, left }) => overviewChartScrollPositions.set(key, left));
     lastRenderedDate = localDateKey();
     screenTitle.textContent = VIEW_TITLES[currentView];
     if (activeProjectName) activeProjectName.textContent = currentProject ? currentProject.name : "プロジェクトを読み込み中";
@@ -1071,8 +1077,14 @@
 
     chartScrollPositions.forEach(({ key, left }) => {
       const element = viewHost.querySelector(`[data-chart-scroll-key="${key}"]`);
-      if (element) element.scrollLeft = left;
+      if (element) element.scrollLeft = overviewChartScrollPositions.get(key) ?? left;
     });
+    if (currentView === "overview") {
+      viewHost.querySelectorAll("[data-chart-scroll-key]").forEach((element) => {
+        const left = overviewChartScrollPositions.get(element.dataset.chartScrollKey);
+        if (Number.isFinite(left)) element.scrollLeft = left;
+      });
+    }
     if (currentView === "overview") configureOverviewChartInteractions();
     scheduleNextDateRefresh();
   }
@@ -1152,9 +1164,9 @@
           <strong>${monthLabel(currentPeriod)}</strong>
         </div>
         <div class="period-total">
-          <p>使える残予算</p>
+          <p>今月の残予算合計</p>
           <strong class="${available < 0 ? "negative" : ""}">${formatCurrency(available)}</strong>
-          ${availableCarry !== 0 ? `<span class="period-carry${availableCarry < 0 ? " negative" : ""}">＋これまでの持ち越し${formatCurrency(availableCarry)}</span>` : ""}
+          ${availableCarry > 0 ? `<span class="period-carry">＋持ち越し合計 ${formatCurrency(availableCarry)}</span>` : availableCarry < 0 ? `<span class="period-carry negative">−超過持ち越し ${formatCurrency(Math.abs(availableCarry))}</span>` : ""}
         </div>
       </section>
 
@@ -1594,6 +1606,45 @@
     if (analysisPageSwipe && analysisPageSwipe.pointerId === event.pointerId) analysisPageSwipe = null;
   }
 
+  function startOverviewPageSwipe(event) {
+    const viewport = event.target.closest(".overview-pages-viewport");
+    if (!viewport || event.target.closest(".chart-scroll, .table-scroll") || currentView !== "overview" || event.isPrimary === false || (event.pointerType === "mouse" && event.button !== 0)) return;
+    overviewPageSwipe = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY };
+  }
+
+  function selectOverviewPage(page, animate = false) {
+    const nextPage = clamp(toInteger(page), 0, OVERVIEW_PAGE_COUNT - 1);
+    if (nextPage === overviewDetailPage) return;
+    if (overviewPageTransitionTimer) window.clearTimeout(overviewPageTransitionTimer);
+    overviewPageTransitionTimer = null;
+    overviewDetailPage = nextPage;
+    const track = viewHost.querySelector(".overview-pages-track");
+    if (!animate || !track) {
+      render();
+      return;
+    }
+    track.style.setProperty("--overview-page-offset", `${nextPage * -(100 / OVERVIEW_PAGE_COUNT)}%`);
+    overviewPageTransitionTimer = window.setTimeout(() => {
+      overviewPageTransitionTimer = null;
+      render();
+    }, 230);
+  }
+
+  function finishOverviewPageSwipe(event) {
+    const swipe = overviewPageSwipe;
+    if (!swipe || swipe.pointerId !== event.pointerId) return;
+    overviewPageSwipe = null;
+    const horizontalDistance = event.clientX - swipe.startX;
+    const verticalDistance = event.clientY - swipe.startY;
+    if (Math.abs(horizontalDistance) < 48 || Math.abs(horizontalDistance) <= Math.abs(verticalDistance) * 1.2) return;
+    const nextPage = clamp(overviewDetailPage + (horizontalDistance < 0 ? 1 : -1), 0, OVERVIEW_PAGE_COUNT - 1);
+    selectOverviewPage(nextPage, true);
+  }
+
+  function cancelOverviewPageSwipe(event) {
+    if (overviewPageSwipe && overviewPageSwipe.pointerId === event.pointerId) overviewPageSwipe = null;
+  }
+
   function renderTransactionRow(transaction) {
     const category = categoryById(transaction.categoryId);
     const categoryName = category ? category.name : "削除済み種別";
@@ -1638,8 +1689,16 @@
       cumulativeIndexMaximum
     );
     cumulativeChartSelectedIndex = selectedCumulativeIndex;
+    overviewDetailPage = clamp(toInteger(overviewDetailPage), 0, OVERVIEW_PAGE_COUNT - 1);
 
     viewHost.innerHTML = `<div class="view-stack">
+      <div class="overview-page-tabs" aria-label="全体状況のページ切り替え">
+        <button type="button" class="overview-page-tab${overviewDetailPage === 0 ? " active" : ""}" data-overview-page="0" aria-current="${overviewDetailPage === 0 ? "page" : "false"}">推移</button>
+        <button type="button" class="overview-page-tab${overviewDetailPage === 1 ? " active" : ""}" data-overview-page="1" aria-current="${overviewDetailPage === 1 ? "page" : "false"}">詳細分析</button>
+      </div>
+      <div class="overview-pages-viewport" data-overview-pages tabindex="0" aria-label="全体状況。左右にスライドして推移と詳細分析を切り替えます。">
+        <div class="overview-pages-track" style="--overview-page-offset:${overviewDetailPage * -(100 / OVERVIEW_PAGE_COUNT)}%">
+          <section class="overview-page overview-trends-page">
       <section class="card overview-hero" aria-label="${projectDateLabel(state.settings.endDate)}時点の見込み収支">
         <div><p class="section-kicker">PROJECT END FORECAST</p><h2>${projectDateLabel(state.settings.endDate)}時点の見込み収支</h2><p>これまでの実績と、残りの計画から算出した見込み収支。</p></div>
         <div class="overview-hero-total"><strong class="${projectEndTone}">${formatSignedCurrency(projectEndForecast)}</strong><span>計画時 ${formatSignedCurrency(projectEnd.plannedCumulative)}</span></div>
@@ -1687,6 +1746,12 @@
           ${aggregates.map((item) => `<tr><td>${monthLabel(item.month)}</td><td>${formatSignedCurrency(item.incomePlan)}</td><td>${formatSignedCurrency(item.incomeActual)}</td><td>${formatCurrency(item.expensePlan)}</td><td>${formatCurrency(item.expenseActual)}</td><td>${formatSignedCurrency(item.plannedNet)}</td><td>${formatSignedCurrency(item.actualNet)}</td><td>${formatSignedCurrency(item.plannedCumulative)}</td><td>${formatSignedCurrency(item.actualCumulative)}</td></tr>`).join("")}
         </tbody></table></div>
       </section>
+          </section>
+          <section class="overview-page overview-detail-page">
+            ${renderProjectDetailAnalysis(aggregates, projectEndForecast, projectEnd)}
+          </section>
+        </div>
+      </div>
     </div>`;
   }
 
@@ -1751,7 +1816,7 @@
   }
 
   function renderChartGridlines(scale) {
-    return chartAxisValues(scale).map((value) => `<div class="chart-gridline" style="top:${chartYPercent(value, scale)}%"></div>`).join("");
+    return chartAxisValues(scale).map((value) => `<div class="chart-gridline${value === 0 ? " is-zero" : ""}" style="top:${chartYPercent(value, scale)}%"></div>`).join("");
   }
 
   function renderChartAxisLabels(scale) {
@@ -1822,6 +1887,8 @@
     const selected = aggregates[selectedIndex] || aggregates[0] || { month: currentPeriod, plannedCumulative: 0, actualCumulative: 0, actualForecastCumulative: 0, plannedNet: 0, actualNet: 0 };
     const selectedUsesForecast = selectedIndex > activeIndex;
     const selectedActualValue = selectedUsesForecast ? selected.actualForecastCumulative : selected.actualCumulative;
+    const selectedGap = selectedActualValue - selected.plannedCumulative;
+    const forecastStartLeft = ((activeIndex + 0.5) / Math.max(1, aggregates.length)) * 100;
     const selectionLeft = selectedIndex * 3.1 + 1.55;
     return `<section class="card chart-card cumulative-chart-card" aria-labelledby="cumulative-chart-title">
       <div class="cumulative-chart-heading"><div class="section-copy"><p class="section-kicker">CUMULATIVE NET</p><h2 id="cumulative-chart-title">累積予定収支と累積実績収支</h2><p>予定は青の破線、実績は橙の実線です。実績の次月以降は、月次予定収支を積み上げた点線で表示します。</p></div><button type="button" class="button small secondary cumulative-scale-toggle${cumulativeAutoScaleEnabled ? " is-active" : ""}" data-action="toggle-cumulative-auto-scale" aria-pressed="${cumulativeAutoScaleEnabled}">自動スケール ${cumulativeAutoScaleEnabled ? "ON" : "OFF"}</button></div>
@@ -1837,11 +1904,13 @@
               <polyline class="chart-line cumulative-net forecast" points="${points("actualForecastCumulative", activeIndex, aggregates.length - 1)}"></polyline>
             </svg>
             <div class="cumulative-chart-points" aria-hidden="true">${pointMarkers("plannedCumulative", "planned")}${pointMarkers("actualCumulative", "actual", 0, activeIndex)}${pointMarkers("actualForecastCumulative", "forecast", activeIndex + 1, aggregates.length - 1)}</div>
+            ${activeIndex < aggregates.length - 1 ? `<span class="cumulative-forecast-start" style="left:${forecastStartLeft}%">ここから予測</span>` : ""}
             <span class="cumulative-chart-selection-guide" aria-hidden="true"></span>
             <aside class="cumulative-chart-tooltip" aria-live="polite">
               <strong>${monthLabel(selected.month)}</strong>
               <span class="planned"><i aria-hidden="true"></i>予定累積 ${formatSignedCurrency(selected.plannedCumulative)}</span>
               <span class="actual"><i aria-hidden="true"></i>${selectedUsesForecast ? "実績予測" : "実績累積"} ${formatSignedCurrency(selectedActualValue)}</span>
+              <small class="cumulative-variance ${selectedGap < 0 ? "negative" : selectedGap > 0 ? "positive" : ""}">予定との差 ${formatSignedCurrency(selectedGap)}</small>
               <small>月次：予定 ${formatSignedCurrency(selected.plannedNet)} ／ 実績 ${formatSignedCurrency(selected.actualNet)}</small>
               <small class="cumulative-scale-window">${cumulativeAutoScaleEnabled ? `表示範囲：${monthLabel(aggregates[scaleStart]?.month || currentPeriod)}〜${monthLabel(aggregates[scaleEnd]?.month || currentPeriod)}` : "全期間スケール"}</small>
             </aside>
@@ -1958,10 +2027,10 @@
       }));
   }
 
-  function renderRatioPieCard(kicker, title, description, segments) {
+  function renderRatioPieCard(kicker, title, description, segments, emptyMessage = "この月の入力実績はまだありません。") {
     const visibleSegments = segments.filter((segment) => segment.value > 0);
     if (!visibleSegments.length) {
-      return `<section class="card ratio-chart-card"><div class="section-copy"><p class="section-kicker">${escapeHtml(kicker)}</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><div class="empty-state">この月の入力実績はまだありません。</div></section>`;
+      return `<section class="card ratio-chart-card"><div class="section-copy"><p class="section-kicker">${escapeHtml(kicker)}</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><div class="empty-state">${escapeHtml(emptyMessage)}</div></section>`;
     }
     const total = visibleSegments.reduce((sum, segment) => sum + segment.value, 0);
     const centerX = 180;
@@ -2000,6 +2069,77 @@
       ? formatSignedCurrency(visibleSegments.reduce((sum, segment) => sum + segment.displayValue, 0))
       : formatCurrency(total);
     return `<section class="card ratio-chart-card"><div class="section-copy"><p class="section-kicker">${escapeHtml(kicker)}</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><svg class="ratio-pie-svg" viewBox="0 0 360 270" role="img" aria-label="${escapeHtml(title)}。${visibleSegments.map((segment) => `${segment.label} ${segment.signed ? formatSignedCurrency(segment.displayValue) : formatCurrency(segment.displayValue)}`).join("、")}">${sliceMarkup}<circle class="ratio-pie-center" cx="${centerX}" cy="${centerY}" r="39"></circle><text class="ratio-pie-total-label" x="${centerX}" y="${centerY - 4}" text-anchor="middle">合計</text><text class="ratio-pie-total-value" x="${centerX}" y="${centerY + 15}" text-anchor="middle">${escapeHtml(totalLabel)}</text>${labelMarkup}</svg></section>`;
+  }
+
+  function projectExpenseAnalysisRows() {
+    const months = periodMonths();
+    return state.categories
+      .filter((category) => !isIncomeCategory(category))
+      .map((category) => ({
+        category,
+        plan: months.reduce((sum, month) => sum + activeExpensePlanAmount(category, month), 0),
+        actual: months.reduce((sum, month) => sum + actualAmount(category.id, month), 0)
+      }))
+      .filter((row) => row.plan !== 0 || row.actual !== 0)
+      .sort((left, right) => Math.max(right.plan, right.actual) - Math.max(left.plan, left.actual));
+  }
+
+  function projectExpenseRatioSegments(rows, field) {
+    const ranked = rows
+      .filter((row) => row[field] > 0)
+      .sort((left, right) => right[field] - left[field]);
+    const leading = ranked.slice(0, 5).map((row) => ({
+      label: row.category.name,
+      value: row[field],
+      displayValue: row[field],
+      color: row.category.color
+    }));
+    const remaining = ranked.slice(5).reduce((sum, row) => sum + row[field], 0);
+    if (remaining > 0) leading.push({ label: "その他", value: remaining, displayValue: remaining, color: "#87949d" });
+    return leading;
+  }
+
+  function renderProjectCategoryProgressChart(rows) {
+    if (!rows.length) {
+      return `<section class="card project-progress-card"><div class="section-copy"><p class="section-kicker">PROJECT SPENDING PROGRESS</p><h2>項目ごとの計画と実績</h2><p>プロジェクト全体の支出進捗を項目別に比較します。</p></div><div class="empty-state">支出計画または実績がまだありません。</div></section>`;
+    }
+    const visibleRows = rows.slice(0, 10);
+    const maximum = Math.max(1, ...visibleRows.map((row) => Math.max(row.plan, row.actual)));
+    return `<section class="card project-progress-card"><div class="section-copy"><p class="section-kicker">PROJECT SPENDING PROGRESS</p><h2>項目ごとの計画と実績</h2><p>淡色が計画、濃色が実績です。実績が計画を超えた項目は赤く表示します。</p></div><div class="project-progress-legend"><span><i class="project-progress-plan-key"></i>計画</span><span><i class="project-progress-actual-key"></i>実績</span></div><div class="project-progress-list">${visibleRows.map((row) => {
+      const planWidth = clamp(row.plan / maximum * 100, 0, 100);
+      const actualWidth = clamp(row.actual / maximum * 100, 0, 100);
+      const overspent = row.plan > 0 && row.actual > row.plan;
+      const unplanned = row.plan === 0 && row.actual > 0;
+      return `<article class="project-progress-row"><div class="project-progress-row-head"><strong>${escapeHtml(row.category.name)}</strong><span>計画 ${formatCurrency(row.plan)} ／ 実績 <b class="${overspent || unplanned ? "negative" : ""}">${formatCurrency(row.actual)}</b></span></div><div class="project-progress-track" aria-label="${escapeHtml(row.category.name)}。計画 ${formatCurrency(row.plan)}、実績 ${formatCurrency(row.actual)}"><i class="project-progress-plan" style="--width:${planWidth}%;--category-color:${escapeHtml(row.category.color)}"></i><i class="project-progress-actual${overspent || unplanned ? " is-over" : ""}${row.actual > 0 ? " has-value" : ""}" style="--width:${actualWidth}%;--category-color:${escapeHtml(row.category.color)}"></i></div></article>`;
+    }).join("")}</div>${rows.length > visibleRows.length ? `<p class="chart-note">金額が大きい上位${visibleRows.length}項目を表示しています。</p>` : ""}</section>`;
+  }
+
+  function renderProjectDetailAnalysis(aggregates, projectEndForecast, projectEnd) {
+    const expenseRows = projectExpenseAnalysisRows();
+    const plannedExpense = expenseRows.reduce((sum, row) => sum + row.plan, 0);
+    const actualExpense = expenseRows.reduce((sum, row) => sum + row.actual, 0);
+    const plannedIncome = periodMonths().reduce((sum, month) => sum + incomeCategoriesForReporting(month).reduce((monthSum, category) => monthSum + activeIncomePlanAmount(category, month), 0), 0);
+    const actualIncome = periodMonths().reduce((sum, month) => sum + transactionsForMonth(month, "income").reduce((monthSum, transaction) => monthSum + toInteger(transaction.amount), 0), 0);
+    const unexpectedExpense = expenseRows.filter((row) => isUnexpectedExpenseCategory(row.category)).reduce((sum, row) => sum + row.actual, 0);
+    const unexpectedIncome = periodMonths().reduce((sum, month) => sum + transactionsForMonth(month, "income").reduce((monthSum, transaction) => {
+      return monthSum + (isUnexpectedIncomeCategory(categoryById(transaction.categoryId)) ? toInteger(transaction.amount) : 0);
+    }, 0), 0);
+    const forecastTone = projectEndForecast < 0 ? "negative" : projectEndForecast > 0 ? "positive" : "";
+    const spendingTone = actualExpense > plannedExpense ? "negative" : "";
+    const spendingSummary = `計画との差 ${formatSignedCurrency(plannedExpense - actualExpense)}${unexpectedExpense !== 0 ? ` ・ 想定外 ${formatCurrency(unexpectedExpense)}` : ""}`;
+    return `<section class="overview-detail-stack">
+      <section class="card overview-analysis-hero"><div><p class="section-kicker">PROJECT ANALYSIS</p><h2>プロジェクトの計画と支出を分析</h2><p>計画配分、実績の使い道、項目ごとの消化状況をまとめて確認できます。</p></div><div><span>終了時見込み</span><strong class="${forecastTone}">${formatSignedCurrency(projectEndForecast)}</strong><small>計画終了時 ${formatSignedCurrency(projectEnd.plannedCumulative)}</small></div></section>
+      <section class="summary-grid project-analysis-summary" aria-label="プロジェクト集計">
+        ${summaryCard("計画支出合計", plannedExpense, "プロジェクト全期間")}
+        ${summaryCard("支出実績合計", actualExpense, spendingSummary, spendingTone)}
+        ${summaryCard("計画収入合計", plannedIncome, "プロジェクト全期間", plannedIncome < 0 ? "negative" : "", true)}
+        ${summaryCard("収入実績合計", actualIncome, `想定外収入 ${formatSignedCurrency(unexpectedIncome)}`, actualIncome < 0 ? "negative" : "", true)}
+      </section>
+      ${renderRatioPieCard("PLAN MIX", "プロジェクトの支出計画配分", "計画支出の大きい上位5項目と、その他の構成比です。", projectExpenseRatioSegments(expenseRows, "plan"), "プロジェクト全体の支出計画がまだありません。")}
+      ${renderRatioPieCard("ACTUAL MIX", "プロジェクトの支出実績配分", "実績支出の大きい上位5項目と、その他の構成比です。想定外支出も含みます。", projectExpenseRatioSegments(expenseRows, "actual"), "プロジェクト全体の支出実績がまだありません。")}
+      ${renderProjectCategoryProgressChart(expenseRows)}
+      <section class="card project-analysis-note"><div class="section-copy"><p class="section-kicker">READING THE RESULT</p><h2>見方</h2><p>計画配分は「どこに予算を置いているか」、実績配分と進捗は「実際にどこで使っているか」を示します。終了時見込みは、これまでの実績と今後の計画を組み合わせた値です。</p></div></section>
+    </section>`;
   }
 
   function renderAnalysisRatioPage(rows, incomeMode) {
@@ -2431,6 +2571,18 @@
     return `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}${difference ? `（${difference > 0 ? "＋" : "−"}${formatCurrency(Math.abs(difference))}）` : "（変化なし）"}`;
   }
 
+  function calculatorShiftForecastText(sourceMonth, targetMonth, allocation, planChanges) {
+    const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+    const after = projectEndForecastAfterBudgetPlanChanges(planChanges);
+    const difference = after - before;
+    const budgetSources = [];
+    if (allocation.monthly > 0) budgetSources.push(`今月の残予算 ${formatCurrency(allocation.monthly)}`);
+    if (allocation.carry > 0) budgetSources.push(`持ち越し予算 ${formatCurrency(allocation.carry)}`);
+    const sourceText = budgetSources.join("、") || `${monthLabel(sourceMonth)}の予算`;
+    const forecast = `${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}${difference ? `（${difference > 0 ? "＋" : "−"}${formatCurrency(Math.abs(difference))}）` : "（変化なし）"}`;
+    return `資金残高への影響　変化なし\n${sourceText}を${monthLabel(targetMonth)}の使途へ振り替えます。\n\n計画どおり使った場合の終了時見込み\n${forecast}`;
+  }
+
   function updateCalculatorShiftTargetSummary() {
     if (!calculatorContext || !calculatorContext.canShiftBudget) return;
     const category = categoryById(calculatorContext.categoryId);
@@ -2462,8 +2614,8 @@
     budgetSummary.classList.remove("is-invalid");
     budgetSummary.textContent = calculatorBudgetAfterText(allocation);
     forecast.textContent = requestedAmount > 0 && targetMonth
-      ? calculatorForecastText(budgetPlanChangesForAllocation(sourceMonth, allocation, targetMonth))
-      : "シフト額と移動先を選ぶと、見込み収支への影響を表示します。";
+      ? calculatorShiftForecastText(sourceMonth, targetMonth, allocation, budgetPlanChangesForAllocation(sourceMonth, allocation, targetMonth))
+      : "シフト額と移動先を選ぶと、資金残高と終了時見込みを表示します。";
   }
 
   function calculatorMovableBudget(category, sourceMonth) {
@@ -3282,6 +3434,7 @@
     else if (target.dataset.transactionId) openTransactionEditor(target.dataset.transactionId);
     else if (target.dataset.analysisDate) { analysisSelectedDate = target.dataset.analysisDate; render(); }
     else if (target.dataset.analysisPage !== undefined) selectAnalysisPage(target.dataset.analysisPage);
+    else if (target.dataset.overviewPage !== undefined) selectOverviewPage(target.dataset.overviewPage);
     else if (target.dataset.action === "clear-analysis-date") { analysisSelectedDate = ""; render(); }
     else if (target.dataset.analysisMode) {
       analysisMode = target.dataset.analysisMode === "income" ? "income" : "expense";
@@ -3405,8 +3558,11 @@
 
   viewHost.addEventListener("pointerdown", startExpenseReorder);
   viewHost.addEventListener("pointerdown", startAnalysisPageSwipe);
+  viewHost.addEventListener("pointerdown", startOverviewPageSwipe);
   viewHost.addEventListener("pointerup", finishAnalysisPageSwipe);
+  viewHost.addEventListener("pointerup", finishOverviewPageSwipe);
   viewHost.addEventListener("pointercancel", cancelAnalysisPageSwipe);
+  viewHost.addEventListener("pointercancel", cancelOverviewPageSwipe);
   viewHost.addEventListener("contextmenu", (event) => {
     if (event.target.closest(".reorderable-category-grid .budget-card")) event.preventDefault();
   });
