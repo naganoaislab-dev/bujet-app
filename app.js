@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.56";
+  const APP_VERSION = "0.5.59";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -602,12 +602,17 @@
 
   function dailyBudgetStats(category, month) {
     if (!category || category.group !== "variable" || category.dailyBudgetEnabled !== true) return null;
-    const today = localDateKey();
     const range = periodRange(month);
+    const today = localDateKey();
+    const budgetDate = today < range.start
+      ? range.start
+      : today > range.end
+        ? range.end
+        : today;
     const stats = categoryBudgetStats(category.id, month);
-    const daysRemaining = inclusiveDaysBetween(today, range.end);
+    const daysRemaining = inclusiveDaysBetween(budgetDate, range.end);
     const spentToday = transactionsForMonth(month)
-      .filter((transaction) => transaction.categoryId === category.id && transaction.enteredOn === today)
+      .filter((transaction) => transaction.categoryId === category.id && transaction.enteredOn === budgetDate)
       .reduce((sum, transaction) => sum + toInteger(transaction.amount), 0);
     const dailyStartingBudget = Math.floor((stats.monthlyRemaining + spentToday) / daysRemaining);
     return {
@@ -1225,22 +1230,23 @@
             : stats.monthlyRemaining;
       const remainingBudgetLabel = carryBudgetAvailable ? "持ち越し予算" : "今月の残予算";
       const hasNoPlan = stats.configuredPlan <= 0 && stats.priorCarry === 0 && stats.actual === 0;
+      const progressBase = stats.plan;
       const progress = remainingBudget < 0
         ? 100
-        : stats.configuredPlan > 0
-          ? clamp((stats.actual / stats.configuredPlan) * 100, 0, 100)
+        : progressBase > 0
+          ? clamp((stats.actual / progressBase) * 100, 0, 100)
           : 0;
       const progressBar = !hasNoPlan && (stats.configuredPlan > 0 || remainingBudget < 0)
         ? `<span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>`
         : "";
       const carryLabel = carryBudgetAvailable
-        ? `<span class="budget-card-carry"><span>今月の予算</span><strong>${formatCurrency(0)}</strong></span>`
+        ? `<span class="budget-card-carry"><span>今月の予算</span><strong class="monthly-budget-exhausted">${formatCurrency(0)}</strong></span>`
         : !hasUnresolvedCarryover && stats.carryRemaining !== 0
         ? `<span class="budget-card-carry"><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>`
         : "";
       const budgetSummary = hasNoPlan
         ? '<span class="budget-card-unplanned">計画なし</span>'
-        : `<span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>`;
+        : `<span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : carryBudgetAvailable ? "carry-budget" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>`;
       const cardFooter = carryLabel || progressBar
         ? `<span class="budget-card-footer">${carryLabel}${progressBar}</span>`
         : "";

@@ -197,9 +197,11 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .budget-card-main { display: flex; align-items: baseline; justify-content: space-between; gap: 0.45rem; min-width: 0; }
 .budget-card-main .budget-card-label { min-width: 0; white-space: nowrap; }
 .budget-card-main .budget-card-amount { min-width: 0; margin: 0; overflow: hidden; font-size: clamp(1.24rem, 6vw, 1.6rem); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.budget-card-amount.carry-budget { color: #3686c8; }
 .budget-card-unplanned { align-self: flex-end; color: var(--muted); font-size: 0.72rem; font-weight: 800; }
 .budget-card-carry { display: flex; justify-content: space-between; gap: 0.35rem; margin-top: auto; color: var(--muted); font-size: 0.68rem; }
 .budget-card-carry strong { color: inherit; }
+.budget-card-carry .monthly-budget-exhausted { color: var(--danger); }
 .budget-progress { height: 0.32rem; margin-top: 0.65rem; overflow: hidden; border-radius: 99px; background: var(--surface-2); }
 .budget-progress > span { display: block; width: var(--progress); height: 100%; border-radius: inherit; background: var(--category-color); }
 .budget-card-footer { display: flex; gap: 0.55rem; margin-top: auto; flex-direction: column; }
