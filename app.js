@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.59";
+  const APP_VERSION = "0.5.60";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -1152,9 +1152,9 @@
           <strong>${monthLabel(currentPeriod)}</strong>
         </div>
         <div class="period-total">
-          <p>使える残予算</p>
+          <p>今月の残予算合計</p>
           <strong class="${available < 0 ? "negative" : ""}">${formatCurrency(available)}</strong>
-          ${availableCarry !== 0 ? `<span class="period-carry${availableCarry < 0 ? " negative" : ""}">＋これまでの持ち越し${formatCurrency(availableCarry)}</span>` : ""}
+          ${availableCarry > 0 ? `<span class="period-carry">＋持ち越し合計 ${formatCurrency(availableCarry)}</span>` : availableCarry < 0 ? `<span class="period-carry negative">−超過持ち越し ${formatCurrency(Math.abs(availableCarry))}</span>` : ""}
         </div>
       </section>
 
@@ -2431,6 +2431,18 @@
     return `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}${difference ? `（${difference > 0 ? "＋" : "−"}${formatCurrency(Math.abs(difference))}）` : "（変化なし）"}`;
   }
 
+  function calculatorShiftForecastText(sourceMonth, targetMonth, allocation, planChanges) {
+    const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+    const after = projectEndForecastAfterBudgetPlanChanges(planChanges);
+    const difference = after - before;
+    const budgetSources = [];
+    if (allocation.monthly > 0) budgetSources.push(`今月の残予算 ${formatCurrency(allocation.monthly)}`);
+    if (allocation.carry > 0) budgetSources.push(`持ち越し予算 ${formatCurrency(allocation.carry)}`);
+    const sourceText = budgetSources.join("、") || `${monthLabel(sourceMonth)}の予算`;
+    const forecast = `${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}${difference ? `（${difference > 0 ? "＋" : "−"}${formatCurrency(Math.abs(difference))}）` : "（変化なし）"}`;
+    return `資金残高への影響　変化なし\n${sourceText}を${monthLabel(targetMonth)}の使途へ振り替えます。\n\n計画どおり使った場合の終了時見込み\n${forecast}`;
+  }
+
   function updateCalculatorShiftTargetSummary() {
     if (!calculatorContext || !calculatorContext.canShiftBudget) return;
     const category = categoryById(calculatorContext.categoryId);
@@ -2462,8 +2474,8 @@
     budgetSummary.classList.remove("is-invalid");
     budgetSummary.textContent = calculatorBudgetAfterText(allocation);
     forecast.textContent = requestedAmount > 0 && targetMonth
-      ? calculatorForecastText(budgetPlanChangesForAllocation(sourceMonth, allocation, targetMonth))
-      : "シフト額と移動先を選ぶと、見込み収支への影響を表示します。";
+      ? calculatorShiftForecastText(sourceMonth, targetMonth, allocation, budgetPlanChangesForAllocation(sourceMonth, allocation, targetMonth))
+      : "シフト額と移動先を選ぶと、資金残高と終了時見込みを表示します。";
   }
 
   function calculatorMovableBudget(category, sourceMonth) {

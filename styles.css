@@ -512,6 +512,7 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .calculator-budget-change { padding: 0.65rem; border-radius: 0.65rem; color: var(--ink); background: var(--surface); font-size: 0.74rem; font-weight: 800; line-height: 1.5; white-space: pre-line; }
 .calculator-budget-change.is-invalid { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface)); }
 .calculator-return-forecast { padding: 0.65rem; border-radius: 0.65rem; color: var(--primary-strong); background: var(--primary-soft); font-size: 0.74rem; font-weight: 850; line-height: 1.5; }
+.calculator-shift-forecast { white-space: pre-line; }
 .calculator-return-forecast.is-invalid { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface)); }
 .calculator-add-budget-forecast { padding: 0.65rem; border-radius: 0.65rem; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); font-size: 0.74rem; font-weight: 850; line-height: 1.5; }
 .calculator-keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
