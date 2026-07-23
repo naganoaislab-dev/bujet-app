@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.51";
+  const APP_VERSION = "0.5.52";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -594,7 +594,9 @@
     const plan = configuredPlan - debtAppliedToPlan;
     const carry = priorCarry + debtAppliedToPlan;
     const monthlyRemaining = plan - actual;
-    const carryRemaining = carry - Math.max(0, actual - plan);
+    const carryRemaining = carry > 0
+      ? Math.max(0, carry - Math.max(0, actual - plan))
+      : carry;
     return { configuredPlan, priorCarry, plan, carry, actual, monthlyRemaining, carryRemaining };
   }
 
