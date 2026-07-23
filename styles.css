@@ -188,6 +188,7 @@ p { color: var(--muted); line-height: 1.55; }
 .expense-drag-preview { position: fixed; z-index: 200; top: 0; left: 0; margin: 0; pointer-events: none; opacity: 0.98; box-shadow: 0 20px 42px rgba(var(--primary-rgb), 0.32); transform-origin: center; will-change: transform; }
 body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none; touch-action: none; }
 .budget-card-name { display: block; margin-bottom: 0.8rem; padding-right: 0.5rem; font-size: 0.9rem; font-weight: 800; }
+.budget-card:not(.daily-budget-card) .budget-card-name { display: -webkit-box; min-height: 2.45rem; margin-bottom: 0.5rem; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.35; }
 .budget-card-status { display: inline-block; margin-left: 0.45rem; font-size: 0.68rem; font-style: normal; font-weight: 850; vertical-align: 0.08rem; }
 .budget-card-status.missing { color: var(--danger); }
 .budget-card-status.complete { color: var(--primary-strong); }
@@ -196,10 +197,13 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .budget-card-main { display: flex; align-items: baseline; justify-content: space-between; gap: 0.45rem; min-width: 0; }
 .budget-card-main .budget-card-label { min-width: 0; white-space: nowrap; }
 .budget-card-main .budget-card-amount { min-width: 0; margin: 0; overflow: hidden; font-size: clamp(1.24rem, 6vw, 1.6rem); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.budget-card-unplanned { align-self: flex-end; color: var(--muted); font-size: 0.72rem; font-weight: 800; }
 .budget-card-carry { display: flex; justify-content: space-between; gap: 0.35rem; margin-top: auto; color: var(--muted); font-size: 0.68rem; }
 .budget-card-carry strong { color: inherit; }
 .budget-progress { height: 0.32rem; margin-top: 0.65rem; overflow: hidden; border-radius: 99px; background: var(--surface-2); }
 .budget-progress > span { display: block; width: var(--progress); height: 100%; border-radius: inherit; background: var(--category-color); }
+.budget-card-footer { display: flex; gap: 0.55rem; margin-top: auto; flex-direction: column; }
+.budget-card-footer .budget-card-carry, .budget-card-footer .budget-progress { margin-top: 0; }
 .daily-budget-card { grid-column: 1 / -1; min-height: 11rem; }
 .daily-budget-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.55rem; }
 .daily-budget-value { display: flex; min-width: 0; min-height: 4.4rem; padding: 0.65rem; border-radius: 0.8rem; background: var(--surface-2); flex-direction: column; justify-content: space-between; }
@@ -209,6 +213,7 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .daily-budget-sub { display: flex; gap: 0.45rem; margin-top: auto; padding-top: 0.55rem; border-top: 1px solid var(--line); flex-direction: column; }
 .daily-budget-sub .budget-card-carry { margin-top: 0; }
 .daily-budget-sub .budget-card-main .budget-card-amount { font-size: clamp(1.14rem, 5.2vw, 1.45rem); }
+.daily-budget-sub .budget-card-unplanned { align-self: flex-end; }
 .income-entry-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.95rem 1rem; border: 1px solid rgba(var(--primary-rgb), 0.34); border-radius: 1rem; color: var(--primary-strong); background: linear-gradient(135deg, var(--primary-soft), var(--surface)); }
 .income-entry-card strong { color: var(--primary-strong); }
 .income-entry-card p { margin-bottom: 0; color: var(--primary-strong); font-size: 0.8rem; opacity: 0.8; }
