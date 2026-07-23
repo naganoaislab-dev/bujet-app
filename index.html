@@ -13,9 +13,9 @@
   <link rel="manifest" href="manifest.webmanifest?v=59">
   <link rel="icon" href="icons/icon.svg?v=59" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon.svg?v=59">
-  <link rel="stylesheet" href="styles.css?v=65">
-  <script src="db.js?v=65" defer></script>
-  <script src="app.js?v=65" defer></script>
+  <link rel="stylesheet" href="styles.css?v=66">
+  <script src="db.js?v=66" defer></script>
+  <script src="app.js?v=66" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -73,7 +73,9 @@
       </div>
       <section id="calculator-return-panel" class="calculator-return-panel" aria-labelledby="calculator-return-title" hidden>
         <div><p class="eyebrow">BUDGET RETURN</p><h3 id="calculator-return-title">返納額を入力</h3><p id="calculator-return-source" class="help-text"></p></div>
+        <label id="calculator-return-priority-field" class="calculator-budget-priority" hidden><span class="field-label">返納を優先する予算</span><select id="calculator-return-priority"><option value="monthly">今月の予算を優先</option><option value="carry">持ち越し予算を優先</option></select></label>
         <label><span class="field-label">返納額</span><input id="calculator-return-amount" type="number" min="1" step="1" inputmode="numeric"></label>
+        <p id="calculator-return-budget-summary" class="calculator-budget-change" aria-live="polite"></p>
         <p id="calculator-return-forecast" class="calculator-return-forecast" aria-live="polite"></p>
         <button id="calculator-return-confirm" type="button" class="button primary">予算を返納する</button>
       </section>
@@ -85,9 +87,12 @@
       </section>
       <section id="calculator-shift-panel" class="calculator-shift-panel" aria-labelledby="calculator-shift-title" hidden>
         <div><p class="eyebrow">BUDGET SHIFT</p><h3 id="calculator-shift-title">支出の予算を移す</h3><p id="calculator-shift-source" class="help-text"></p></div>
+        <label id="calculator-shift-priority-field" class="calculator-budget-priority" hidden><span class="field-label">シフトを優先する予算</span><select id="calculator-shift-priority"><option value="monthly">今月の予算を優先</option><option value="carry">持ち越し予算を優先</option></select></label>
         <label><span class="field-label">移動先の月</span><select id="calculator-shift-target-month"></select></label>
         <p id="calculator-shift-target-summary" class="calculator-shift-target-summary" aria-live="polite"></p>
         <label><span class="field-label">移す金額</span><input id="calculator-shift-amount" type="number" min="1" step="1" inputmode="numeric"></label>
+        <p id="calculator-shift-budget-summary" class="calculator-budget-change" aria-live="polite"></p>
+        <p id="calculator-shift-forecast" class="calculator-return-forecast" aria-live="polite"></p>
         <button id="calculator-shift-confirm" type="button" class="button primary">予算をシフトする</button>
       </section>
       <div id="calculator-keys" class="calculator-keys">
@@ -252,7 +257,7 @@
       </div>
       <div class="version-summary">
         <span class="version-mark" aria-hidden="true">B−</span>
-        <div><span>アプリバージョン</span><strong id="app-version-name">v0.5.55</strong></div>
+        <div><span>アプリバージョン</span><strong id="app-version-name">v0.5.56</strong></div>
       </div>
       <p class="help-text">端末内のデータだけで動作する、オフライン対応の予算ベース家計簿です。</p>
       <p id="app-update-status" class="app-update-status" role="status">更新を確認できます。</p>
