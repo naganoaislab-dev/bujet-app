@@ -204,6 +204,7 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .daily-budget-value > strong { display: block; margin-top: 0.25rem; overflow: hidden; font-size: clamp(1.05rem, 5vw, 1.35rem); letter-spacing: -0.04em; text-overflow: ellipsis; white-space: nowrap; }
 .daily-budget-days { display: block; margin: 0.5rem 0; color: var(--primary); font-size: 0.68rem; font-weight: 800; text-align: right; }
 .daily-budget-sub { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; padding-top: 0.55rem; border-top: 1px solid var(--line); }
+.daily-budget-sub.is-single { grid-template-columns: minmax(0, 1fr); }
 .daily-budget-sub > span { min-width: 0; }
 .daily-budget-sub span span, .daily-budget-sub strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .daily-budget-sub span span { color: var(--muted); font-size: 0.62rem; }
