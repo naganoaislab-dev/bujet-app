@@ -4,15 +4,15 @@ const SCOPE_KEY = new URL(self.registration.scope).pathname.replace(/[^a-z0-9]+/
 const IS_LEGACY_VERSIONED_WORKER = new URL(self.location.href).searchParams.has("v");
 const LEGACY_SCOPED_CACHE_PATTERN = new RegExp(`^budget-minus-${SCOPE_KEY}-v\\d+$`);
 const CACHE_PREFIX = `budget-minus-${SCOPE_KEY}--`;
-const CACHE_VERSION = `${CACHE_PREFIX}v70`;
+const CACHE_VERSION = `${CACHE_PREFIX}v71`;
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=70",
-  "./app.js?v=70",
-  "./db.js?v=70",
-  "./manifest.webmanifest?v=70",
-  "./icons/icon.svg?v=70"
+  "./styles.css?v=71",
+  "./app.js?v=71",
+  "./db.js?v=71",
+  "./manifest.webmanifest?v=71",
+  "./icons/icon.svg?v=71"
 ];
 
 function scopedUrl(path) {

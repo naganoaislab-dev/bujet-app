@@ -262,6 +262,7 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .chart-axis-label-plot span { position: absolute; right: 0; width: 2.55rem; color: var(--muted); background: var(--surface); font-size: 0.58rem; text-align: left; transform: translateY(-50%); }
 .chart-canvas { position: relative; width: calc(var(--month-count) * 3.1rem + 2.8rem); min-width: calc(var(--month-count) * 3.1rem + 2.8rem); height: 22rem; margin: 0.5rem 0.7rem 0; }
 .chart-gridline { position: absolute; right: 0; left: 0; border-top: 1px dashed var(--line); }
+.chart-gridline.is-zero { border-top-style: solid; border-top-color: color-mix(in srgb, var(--muted) 62%, var(--line)); }
 .bar-chart { position: absolute; top: 1.25rem; right: 0; bottom: 3.25rem; left: 2.8rem; display: grid; grid-template-columns: repeat(var(--month-count), 3.1rem); align-items: end; gap: 0; }
 .month-bars { position: relative; display: grid; grid-template-columns: repeat(4, 1fr); align-items: end; gap: 0.12rem; height: 100%; padding: 0 0.225rem; }
 .chart-bar { min-height: 1px; border-radius: 0.22rem 0.22rem 0 0; }
@@ -294,6 +295,8 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .cumulative-chart-tooltip .actual { color: #c45e43; }
 .cumulative-chart-tooltip small { color: var(--muted); font-size: 0.57rem; line-height: 1.35; }
 .cumulative-chart-tooltip .cumulative-scale-window { color: var(--muted); font-weight: 700; }
+.cumulative-chart-tooltip .cumulative-variance { font-weight: 900; }
+.cumulative-forecast-start { position: absolute; z-index: 4; top: 0.35rem; padding: 0.18rem 0.35rem; border: 1px solid color-mix(in srgb, #c45e43 42%, var(--line)); border-radius: 99px; color: #a64d36; background: color-mix(in srgb, var(--surface) 90%, #c45e43 10%); font-size: 0.56rem; font-weight: 850; white-space: nowrap; transform: translateX(-50%); pointer-events: none; }
 .cumulative-chart-tap-targets { position: absolute; z-index: 5; top: 1.25rem; right: 0; bottom: 3.25rem; left: 2.8rem; display: grid; grid-template-columns: repeat(var(--month-count), 3.1rem); }
 .cumulative-chart-tap-target { padding: 0; border: 0; outline: 0; background: transparent; cursor: pointer; touch-action: pan-x; -webkit-tap-highlight-color: transparent; }
 .cumulative-chart-tap-target:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
@@ -378,6 +381,36 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .analysis-pages-viewport { width: 100%; overflow: hidden; touch-action: pan-y; }
 .analysis-pages-track { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 300%; align-items: start; transform: translateX(var(--analysis-page-offset, 0%)); transition: transform 220ms ease; }
 .analysis-page { display: grid; min-width: 0; align-content: start; gap: 1rem; padding: 0 0.05rem; }
+.overview-page-tabs { display: flex; align-items: center; justify-content: center; gap: 0.35rem; padding: 0 0.15rem; }
+.overview-page-tab { min-height: 2.25rem; padding: 0.35rem 0.8rem; border: 1px solid transparent; border-radius: 0.7rem; color: var(--muted); background: transparent; font-size: 0.75rem; font-weight: 800; cursor: pointer; }
+.overview-page-tab.active { border-color: var(--line); color: var(--primary-strong); background: var(--primary-soft); }
+.overview-pages-viewport { width: 100%; overflow: hidden; touch-action: pan-y; }
+.overview-pages-track { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 200%; align-items: start; transform: translateX(var(--overview-page-offset, 0%)); transition: transform 220ms ease; }
+.overview-page { display: grid; min-width: 0; align-content: start; gap: 1rem; padding: 0 0.05rem; }
+.overview-detail-stack { display: grid; gap: 1rem; }
+.overview-analysis-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 0.8rem; border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); background: linear-gradient(135deg, var(--primary-soft), var(--surface)); }
+.overview-analysis-hero > div:last-child { min-width: 8.5rem; text-align: right; }
+.overview-analysis-hero span, .overview-analysis-hero small { display: block; color: var(--muted); font-size: 0.68rem; font-weight: 750; }
+.overview-analysis-hero strong { display: block; margin: 0.15rem 0; font-size: clamp(1.28rem, 6vw, 1.75rem); letter-spacing: -0.04em; }
+.project-progress-card { display: grid; gap: 0.75rem; }
+.project-progress-card .section-copy, .project-progress-card .section-copy p { margin-bottom: 0; }
+.project-progress-legend { display: flex; flex-wrap: wrap; gap: 0.65rem; color: var(--muted); font-size: 0.66rem; font-weight: 750; }
+.project-progress-legend span { display: inline-flex; align-items: center; gap: 0.25rem; }
+.project-progress-legend i { width: 0.8rem; height: 0.42rem; border-radius: 0.15rem; }
+.project-progress-plan-key { background: color-mix(in srgb, var(--primary) 32%, var(--surface-2)); }
+.project-progress-actual-key { background: var(--primary); }
+.project-progress-list { display: grid; gap: 0.75rem; }
+.project-progress-row { display: grid; gap: 0.35rem; }
+.project-progress-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.65rem; }
+.project-progress-row-head strong { min-width: 0; overflow: hidden; font-size: 0.76rem; text-overflow: ellipsis; white-space: nowrap; }
+.project-progress-row-head span { flex: 0 1 auto; color: var(--muted); font-size: 0.62rem; text-align: right; }
+.project-progress-track { position: relative; height: 0.72rem; overflow: hidden; border-radius: 99px; background: var(--surface-2); }
+.project-progress-track i { position: absolute; left: 0; display: block; width: var(--width); border-radius: inherit; }
+.project-progress-plan { top: 0; bottom: 0; background: color-mix(in srgb, var(--category-color) 32%, var(--surface-2)); }
+.project-progress-actual { top: 0.2rem; bottom: 0.2rem; background: var(--category-color); }
+.project-progress-actual.has-value { min-width: 0.22rem; }
+.project-progress-actual.is-over { background: var(--danger); }
+.project-analysis-note .section-copy, .project-analysis-note .section-copy p { margin-bottom: 0; }
 .analysis-ratio-page { gap: 0.9rem; }
 .ratio-chart-card { display: grid; gap: 0.75rem; overflow: hidden; }
 .ratio-chart-card .section-copy, .ratio-chart-card .section-copy p { margin-bottom: 0; }
