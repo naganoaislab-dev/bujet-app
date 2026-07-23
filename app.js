@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.57";
+  const APP_VERSION = "0.5.58";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -1246,7 +1246,7 @@
         : "";
       const budgetSummary = hasNoPlan
         ? '<span class="budget-card-unplanned">計画なし</span>'
-        : `<span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>`;
+        : `<span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : carryBudgetAvailable ? "carry-budget" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>`;
       const cardFooter = carryLabel || progressBar
         ? `<span class="budget-card-footer">${carryLabel}${progressBar}</span>`
         : "";
