@@ -4,13 +4,13 @@ const SCOPE_KEY = new URL(self.registration.scope).pathname.replace(/[^a-z0-9]+/
 const IS_LEGACY_VERSIONED_WORKER = new URL(self.location.href).searchParams.has("v");
 const LEGACY_SCOPED_CACHE_PATTERN = new RegExp(`^budget-minus-${SCOPE_KEY}-v\\d+$`);
 const CACHE_PREFIX = `budget-minus-${SCOPE_KEY}--`;
-const CACHE_VERSION = `${CACHE_PREFIX}v80`;
+const CACHE_VERSION = `${CACHE_PREFIX}v81`;
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=80",
-  "./app.js?v=80",
-  "./db.js?v=74",
+  "./styles.css?v=81",
+  "./app.js?v=81",
+  "./db.js?v=75",
   "./manifest.webmanifest?v=71",
   "./icons/icon.svg?v=71"
 ];

@@ -188,6 +188,7 @@
       categories,
       plans,
       transactions: [],
+      budgetAdditions: [],
       createdAt: now,
       updatedAt: now
     };
@@ -236,6 +237,7 @@
       }],
       plans: { "expense-unplanned": {}, "income-unplanned": {} },
       transactions: [],
+      budgetAdditions: [],
       createdAt: now,
       updatedAt: now
     };
@@ -281,7 +283,8 @@
       settings: { ...fallback.settings, ...(value.settings || {}) },
       categories: Array.isArray(value.categories) ? value.categories : fallback.categories,
       plans: value.plans && typeof value.plans === "object" ? value.plans : fallback.plans,
-      transactions: Array.isArray(value.transactions) ? value.transactions : []
+      transactions: Array.isArray(value.transactions) ? value.transactions : [],
+      budgetAdditions: Array.isArray(value.budgetAdditions) ? value.budgetAdditions : []
     };
     state.settings.closingDay = Math.min(31, Math.max(1, Math.round(Number(state.settings.closingDay) || 31)));
     state.settings.themeId = THEME_IDS.has(state.settings.themeId) ? state.settings.themeId : DEFAULT_THEME_ID;
@@ -364,6 +367,18 @@
         updatedAt: transaction.updatedAt || normalizationTimestamp
       };
     });
+    const categoryIds = new Set(state.categories.map((category) => category.id));
+    state.budgetAdditions = state.budgetAdditions
+      .filter((entry) => entry && typeof entry === "object" && categoryIds.has(String(entry.categoryId)) && /^\d{4}-\d{2}$/.test(String(entry.month)) && Number(entry.amount) > 0)
+      .map((entry, index) => ({
+        id: String(entry.id || `budget-addition-${index}`),
+        categoryId: String(entry.categoryId),
+        month: String(entry.month),
+        amount: Math.max(0, Math.round(Number(entry.amount) || 0)),
+        carryUsageFloor: Math.max(0, Math.round(Number(entry.carryUsageFloor) || 0)),
+        kind: entry.kind === "carry" ? "carry" : "new",
+        createdAt: entry.createdAt || normalizationTimestamp
+      }));
     return state;
   }
 

@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.70";
+  const APP_VERSION = "0.5.71";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -479,6 +479,37 @@
     return toInteger(state.plans[categoryId] && state.plans[categoryId][month], 0);
   }
 
+  // A budget added after spending has begun must be available from that point
+  // forward.  Keeping the carryover consumption floor avoids assigning past
+  // spending to the newly added budget and, as a consequence, restoring an
+  // already-used carryover balance.
+  function budgetAdditionsFor(categoryId, month) {
+    if (!Array.isArray(state.budgetAdditions)) return [];
+    return state.budgetAdditions.filter((entry) => entry
+      && entry.categoryId === categoryId
+      && entry.month === month
+      && toInteger(entry.amount) > 0);
+  }
+
+  function budgetAdditionCarryUsageFloor(categoryId, month) {
+    return budgetAdditionsFor(categoryId, month).reduce((floor, entry) => (
+      Math.max(floor, Math.max(0, toInteger(entry.carryUsageFloor)))
+    ), 0);
+  }
+
+  function recordBudgetAddition(categoryId, month, amount, carryUsageFloor, kind) {
+    if (!Array.isArray(state.budgetAdditions)) state.budgetAdditions = [];
+    state.budgetAdditions.push({
+      id: makeId("budget-addition"),
+      categoryId,
+      month,
+      amount: Math.max(0, toInteger(amount)),
+      carryUsageFloor: Math.max(0, toInteger(carryUsageFloor)),
+      kind: kind === "carry" ? "carry" : "new",
+      createdAt: appTimestamp()
+    });
+  }
+
   function periodPlanTotal(categoryId) {
     return periodMonths().reduce((sum, month) => sum + planAmount(categoryId, month), 0);
   }
@@ -600,11 +631,13 @@
     const debtAppliedToPlan = Math.min(configuredPlan, Math.max(0, -priorCarry));
     const plan = configuredPlan - debtAppliedToPlan;
     const carry = priorCarry + debtAppliedToPlan;
-    const monthlyRemaining = plan - actual;
+    const carryUsageFloor = budgetAdditionCarryUsageFloor(categoryId, month);
+    const carryUsage = Math.max(carryUsageFloor, Math.max(0, actual - plan));
+    const monthlyRemaining = plan - actual + carryUsageFloor;
     const carryRemaining = carry > 0
-      ? Math.max(0, carry - Math.max(0, actual - plan))
+      ? Math.max(0, carry - carryUsage)
       : carry;
-    return { configuredPlan, priorCarry, plan, carry, actual, monthlyRemaining, carryRemaining };
+    return { configuredPlan, priorCarry, plan, carry, actual, monthlyRemaining, carryRemaining, carryUsage, carryUsageFloor };
   }
 
   function dailyBudgetStats(category, month) {
@@ -2687,7 +2720,7 @@
       debt += unmetDeficit;
     });
     const stats = categoryBudgetStats(categoryId, sourceMonth);
-    consumeCarryOriginQueue(queue, Math.max(0, stats.actual - stats.plan));
+    consumeCarryOriginQueue(queue, Math.max(0, stats.carryUsage));
     return queue;
   }
 
@@ -2929,7 +2962,7 @@
       button.setAttribute("aria-pressed", String(active));
     });
     document.querySelector("#calculator-add-budget-title").textContent = isCarryMode ? "持ち越しから予算を充当" : "追加する金額を入力";
-    document.querySelector("#calculator-add-budget-amount-label").textContent = isCarryMode ? "対象項目へ充当する金額" : "追加する金額";
+    document.querySelector("#calculator-add-budget-amount-label").textContent = isCarryMode ? "充当して追加する金額" : "追加する金額";
     document.querySelector("#calculator-add-budget-carry-panel").hidden = !isCarryMode;
     document.querySelector("#calculator-add-budget-confirm").textContent = isCarryMode ? "持ち越し予算を充当する" : "予算を追加する";
     updateCalculatorAddBudgetSummary();
@@ -2939,7 +2972,7 @@
     const amount = Math.max(0, toInteger(document.querySelector("#calculator-add-budget-amount").value));
     const rows = Array.from(document.querySelectorAll("#calculator-add-budget-carry-sources [data-carry-source-id]")).filter((row) => row.querySelector("[data-carry-source-select]").checked);
     if (amount <= 0) {
-      showToast("先に対象項目へ充当する金額を入力してください");
+      showToast("先に充当して追加する金額を入力してください");
       return;
     }
     if (!rows.length) {
@@ -3017,20 +3050,20 @@
     }
     if (amount <= 0) {
       carrySummary.classList.remove("is-invalid");
-      carrySummary.textContent = "対象項目へ充当する金額を入力し、充当元と各項目から集める金額を指定してください。";
+      carrySummary.textContent = "追加額を入力し、充当元と各項目から集める金額を指定してください。";
       forecast.textContent = "持ち越しから充当すると、見込み収支を変えずに予算の置き場所を移せます。";
       return;
     }
     if (invalidSourceAmount || funded > amount) {
       carrySummary.classList.add("is-invalid");
-      carrySummary.textContent = `持ち越しから集めた金額 ${formatCurrency(funded)} は、対象項目へ充当する金額 ${formatCurrency(amount)} を超えています。`;
-      forecast.textContent = "項目ごとの充当額を、対象項目へ充当する金額以内にしてください。";
+      carrySummary.textContent = `充当額の合計 ${formatCurrency(funded)} は、追加額 ${formatCurrency(amount)} を超えています。`;
+      forecast.textContent = "項目ごとの充当額を追加額以内にしてください。";
       return;
     }
     if (funded < amount) {
       carrySummary.classList.add("is-invalid");
-      carrySummary.textContent = `持ち越しから集めた金額 ${formatCurrency(funded)} ／ 対象項目へ充当する金額 ${formatCurrency(amount)}。あと ${formatCurrency(amount - funded)} を指定してください。選択中の項目からは最大 ${formatCurrency(selectedCapacity)} まで充当できます。`;
-      forecast.textContent = "対象項目へ充当する金額と同額になるよう、各項目からの充当額を指定してください。";
+      carrySummary.textContent = `充当額の合計 ${formatCurrency(funded)} ／ 追加額 ${formatCurrency(amount)}。あと ${formatCurrency(amount - funded)} を指定してください。選択中の項目からは最大 ${formatCurrency(selectedCapacity)} まで充当できます。`;
+      forecast.textContent = "追加額と同額になるよう、各項目からの充当額を指定してください。";
       return;
     }
     const preview = calculatorCarryFundingPreview(sourceMonth, selections);
@@ -3333,7 +3366,8 @@
     if (calculatorAddBudgetMode === "carry") {
       const selections = calculatorCarryFundingSelections().filter((selection) => selection.selected && selection.amount > 0);
       const funded = selections.reduce((sum, selection) => sum + selection.amount, 0);
-      if (funded !== amount) throw new Error("対象項目へ充当する金額と同額になるよう、持ち越しからの充当額を指定してください");
+      if (funded !== amount) throw new Error("追加額と同額になるよう、持ち越しからの充当額を指定してください");
+      const targetCarryUsageFloor = categoryBudgetStats(category.id, sourceMonth).carryUsage;
       const funding = selections.map((selection) => {
         const sourceCategory = categoryById(selection.categoryId);
         if (!sourceCategory || sourceCategory.id === category.id || !["variable", "fixed"].includes(sourceCategory.group) || isUnexpectedExpenseCategory(sourceCategory)) {
@@ -3355,10 +3389,12 @@
       ]));
       const previousDefaultAmount = category.defaultAmount;
       const previousPlanRule = category.planRule ? { ...category.planRule } : null;
+      const previousBudgetAdditions = Array.isArray(state.budgetAdditions) ? [...state.budgetAdditions] : [];
       affectedCategories.forEach((affectedCategory) => {
         state.plans[affectedCategory.id] = { ...(state.plans[affectedCategory.id] || {}) };
       });
       state.plans[category.id][sourceMonth] = sourceBudget + amount;
+      recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "carry");
       funding.forEach((source) => {
         source.origins.forEach((origin) => {
           const originBudget = planAmount(source.category.id, origin.month);
@@ -3376,6 +3412,7 @@
         });
         category.defaultAmount = previousDefaultAmount;
         category.planRule = previousPlanRule;
+        state.budgetAdditions = previousBudgetAdditions;
         updateCalculatorAddBudgetSummary();
         throw error;
       }
@@ -3385,10 +3422,13 @@
     }
 
     const sourceBudget = planAmount(category.id, sourceMonth);
+    const targetCarryUsageFloor = categoryBudgetStats(category.id, sourceMonth).carryUsage;
     const previousDefaultAmount = category.defaultAmount;
     const previousPlanRule = category.planRule ? { ...category.planRule } : null;
+    const previousBudgetAdditions = Array.isArray(state.budgetAdditions) ? [...state.budgetAdditions] : [];
     state.plans[category.id] = { ...(state.plans[category.id] || {}) };
     state.plans[category.id][sourceMonth] = sourceBudget + amount;
+    recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "new");
     category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
     category.planRule = null;
     try {
@@ -3397,6 +3437,7 @@
       state.plans[category.id][sourceMonth] = sourceBudget;
       category.defaultAmount = previousDefaultAmount;
       category.planRule = previousPlanRule;
+      state.budgetAdditions = previousBudgetAdditions;
       updateCalculatorAddBudgetSummary();
       throw error;
     }
@@ -4326,6 +4367,8 @@
     const normalizedPlanDraft = {};
     Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = allowsNegative ? toInteger(amount) : Math.max(0, toInteger(amount)); });
     state.plans[editingPlanCategoryId] = { ...(state.plans[editingPlanCategoryId] || {}), ...normalizedPlanDraft };
+    state.budgetAdditions = (Array.isArray(state.budgetAdditions) ? state.budgetAdditions : [])
+      .filter((entry) => entry && entry.categoryId !== editingPlanCategoryId);
     category.name = name;
     category.group = group;
     category.color = color;
