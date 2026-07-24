@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.63";
+  const APP_VERSION = "0.5.64";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -95,6 +95,7 @@
   let cumulativeScaleWindow = null;
   let overviewChartScrollSyncing = false;
   let overviewChartScaleTimer = null;
+  let overviewProjectOverviewEnabled = false;
   const overviewChartScrollPositions = new Map();
   let settingsPane = "basic";
   let incomeExpanded = false;
@@ -1123,9 +1124,13 @@
   function synchronizeOverviewChartScroll(source) {
     if (overviewChartScrollSyncing || currentView !== "overview") return;
     overviewChartScrollSyncing = true;
-    const left = source.scrollLeft;
+    const sourceMaximum = Math.max(0, source.scrollWidth - source.clientWidth);
+    const progress = sourceMaximum > 0 ? source.scrollLeft / sourceMaximum : 0;
     viewHost.querySelectorAll("[data-chart-scroll-key]").forEach((element) => {
-      if (element !== source && Math.abs(element.scrollLeft - left) > 0.5) element.scrollLeft = left;
+      if (element === source) return;
+      const maximum = Math.max(0, element.scrollWidth - element.clientWidth);
+      const left = progress * maximum;
+      if (Math.abs(element.scrollLeft - left) > 0.5) element.scrollLeft = left;
     });
     overviewChartScrollSyncing = false;
     scheduleCumulativeScaleRefresh();
@@ -1134,8 +1139,12 @@
   function configureOverviewChartInteractions() {
     const scrolls = Array.from(viewHost.querySelectorAll("[data-chart-scroll-key]"));
     if (!scrolls.length) return;
-    const left = scrolls[0].scrollLeft;
+    const source = scrolls[0];
+    const sourceMaximum = Math.max(0, source.scrollWidth - source.clientWidth);
+    const progress = sourceMaximum > 0 ? source.scrollLeft / sourceMaximum : 0;
     scrolls.forEach((scroll) => {
+      const maximum = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
+      const left = progress * maximum;
       if (Math.abs(scroll.scrollLeft - left) > 0.5) scroll.scrollLeft = left;
       scroll.addEventListener("scroll", () => synchronizeOverviewChartScroll(scroll), { passive: true });
     });
@@ -1618,16 +1627,7 @@
     if (overviewPageTransitionTimer) window.clearTimeout(overviewPageTransitionTimer);
     overviewPageTransitionTimer = null;
     overviewDetailPage = nextPage;
-    const track = viewHost.querySelector(".overview-pages-track");
-    if (!animate || !track) {
-      render();
-      return;
-    }
-    track.style.setProperty("--overview-page-offset", `${nextPage * -100}%`);
-    overviewPageTransitionTimer = window.setTimeout(() => {
-      overviewPageTransitionTimer = null;
-      render();
-    }, 230);
+    render();
   }
 
   function finishOverviewPageSwipe(event) {
@@ -1710,7 +1710,7 @@
         <button type="button" class="overview-page-tab${overviewDetailPage === 1 ? " active" : ""}" data-overview-page="1" aria-current="${overviewDetailPage === 1 ? "page" : "false"}">詳細分析</button>
       </div>
       <div class="overview-pages-viewport" data-overview-pages tabindex="0" aria-label="全体状況。左右にスライドして推移と詳細分析を切り替えます。">
-        <div class="overview-pages-track" style="--overview-page-offset:${overviewDetailPage * -100}%">
+        ${overviewDetailPage === 0 ? `
           <section class="overview-page overview-trends-page">
       <section class="card overview-hero" aria-label="${projectDateLabel(state.settings.endDate)}時点の見込み収支">
         <div><p class="section-kicker">PROJECT END FORECAST</p><h2>${projectDateLabel(state.settings.endDate)}時点の見込み収支</h2><p>これまでの実績と、残りの計画から算出した見込み収支。</p></div>
@@ -1760,16 +1760,26 @@
         </tbody></table></div>
       </section>
           </section>
+        ` : `
           <section class="overview-page overview-detail-page">
             ${renderProjectDetailAnalysis(aggregates, projectEndForecast, projectEnd)}
           </section>
-        </div>
+        `}
       </div>
     </div>`;
   }
 
   function legend(color, label) {
     return `<span class="legend-item"><span class="legend-swatch" style="--legend-color:${color}"></span>${label}</span>`;
+  }
+
+  function overviewProjectViewButton() {
+    return `<button type="button" class="button small secondary overview-project-toggle${overviewProjectOverviewEnabled ? " is-active" : ""}" data-action="toggle-overview-project-view" aria-pressed="${overviewProjectOverviewEnabled}">全体俯瞰</button>`;
+  }
+
+  function overviewMonthAxisLabel(month, index) {
+    if (overviewProjectOverviewEnabled && index % 3 !== 0) return "";
+    return `${monthParts(month).month}月度`;
   }
 
   function niceChartStep(range, targetIntervals = 3) {
@@ -1848,13 +1858,15 @@
   function renderInteractiveOverviewBarChart({ id, title, description, aggregates, selectedIndex, series }) {
     const scale = chartValueScale(aggregates.flatMap((item) => series.map((itemSeries) => item[itemSeries.field])));
     const selected = aggregates[selectedIndex] || aggregates[0] || { month: currentPeriod };
-    const selectionLeft = selectedIndex * 3.1 + 1.55;
-    return `<section class="card chart-card interactive-bar-chart-card" aria-labelledby="${id}-chart-title">
-      <div class="section-copy"><p class="section-kicker">${aggregates.length} MONTHS</p><h2 id="${id}-chart-title">${title}</h2><p>${description}</p></div>
+    const selectionLeft = overviewProjectOverviewEnabled
+      ? `${((selectedIndex + 0.5) / Math.max(1, aggregates.length)) * 100}%`
+      : `${selectedIndex * 3.1 + 1.55}rem`;
+    return `<section class="card chart-card interactive-bar-chart-card${overviewProjectOverviewEnabled ? " is-project-overview" : ""}" aria-labelledby="${id}-chart-title">
+      <div class="chart-card-heading"><div class="section-copy"><p class="section-kicker">${aggregates.length} MONTHS</p><h2 id="${id}-chart-title">${title}</h2><p>${description}</p></div>${overviewProjectViewButton()}</div>
       <div class="chart-legend">${series.map((item) => legend(item.color, item.label)).join("")}</div>
       <div class="chart-scroll" data-chart-scroll-key="${id}">
         ${renderChartAxisLabels(scale)}
-        <div class="chart-canvas interactive-chart-canvas" style="--month-count:${aggregates.length};--selection-left:${selectionLeft}rem">
+        <div class="chart-canvas interactive-chart-canvas" style="--month-count:${aggregates.length};--selection-left:${selectionLeft}">
           <div class="chart-plot">
             ${renderChartGridlines(scale)}
             <div class="interactive-bar-series">${aggregates.map((item, index) => renderInteractiveMonthBars(item, index, series, scale, selectedIndex)).join("")}</div>
@@ -1865,7 +1877,7 @@
             </aside>
             <div class="interactive-chart-tap-targets">${aggregates.map((item, index) => `<button type="button" class="interactive-chart-tap-target${index === selectedIndex ? " is-selected" : ""}" data-overview-chart-index="${index}" aria-label="${monthLabel(item.month)}を表示。${series.map((itemSeries) => `${itemSeries.label} ${formatSignedCurrency(item[itemSeries.field])}`).join("、")}"></button>`).join("")}</div>
           </div>
-          <div class="cumulative-chart-months" aria-hidden="true">${aggregates.map((item) => `<span>${monthParts(item.month).month}月度</span>`).join("")}</div>
+          <div class="cumulative-chart-months" aria-hidden="true">${aggregates.map((item, index) => `<span>${overviewMonthAxisLabel(item.month, index)}</span>`).join("")}</div>
         </div>
       </div>
     </section>`;
@@ -1924,13 +1936,15 @@
     const forecastGapPoints = shouldShowForecastGap
       ? `${points("actualForecastCumulative", activeIndex)} ${reversePoints("planExpenseForecastCumulative", activeIndex)}`
       : "";
-    const selectionLeft = selectedIndex * 3.1 + 1.55;
-    return `<section class="card chart-card cumulative-chart-card" aria-labelledby="cumulative-chart-title">
-      <div class="cumulative-chart-heading"><div class="section-copy"><p class="section-kicker">CUMULATIVE NET</p><h2 id="cumulative-chart-title">累積予定収支と累積実績収支</h2><p>予定は青の破線、実績は橙の実線です。点滅する現在地からの予測に加え、今月の残る計画消費を織り込んだ予測を表示します。</p></div><button type="button" class="button small secondary cumulative-scale-toggle${cumulativeAutoScaleEnabled ? " is-active" : ""}" data-action="toggle-cumulative-auto-scale" aria-pressed="${cumulativeAutoScaleEnabled}">自動スケール ${cumulativeAutoScaleEnabled ? "ON" : "OFF"}</button></div>
+    const selectionLeft = overviewProjectOverviewEnabled
+      ? `${((selectedIndex + 0.5) / Math.max(1, aggregates.length)) * 100}%`
+      : `${selectedIndex * 3.1 + 1.55}rem`;
+    return `<section class="card chart-card cumulative-chart-card${overviewProjectOverviewEnabled ? " is-project-overview" : ""}" aria-labelledby="cumulative-chart-title">
+      <div class="cumulative-chart-heading"><div class="section-copy"><p class="section-kicker">CUMULATIVE NET</p><h2 id="cumulative-chart-title">累積予定収支と累積実績収支</h2><p>予定は青の破線、実績は橙の実線です。点滅する現在地からの予測に加え、今月の残る計画消費を織り込んだ予測を表示します。</p></div><div class="chart-heading-actions">${overviewProjectViewButton()}<button type="button" class="button small secondary cumulative-scale-toggle${cumulativeAutoScaleEnabled ? " is-active" : ""}" data-action="toggle-cumulative-auto-scale" aria-pressed="${cumulativeAutoScaleEnabled}">自動スケール ${cumulativeAutoScaleEnabled ? "ON" : "OFF"}</button></div></div>
       <div class="chart-legend">${legend("#3c78b4", "累積予定収支（破線）")}${legend("#c45e43", "累積実績収支（実線）")}${legend("#c45e43", "実績予測（点線）")}${hasPlanExpenseForecast ? legend("#9a6274", "今月計画込み予測") : ""}</div>
       <div class="chart-scroll" data-chart-scroll-key="cumulative-net">
         ${renderChartAxisLabels(scale)}
-        <div class="chart-canvas cumulative-chart-canvas" style="--month-count:${aggregates.length};--selection-left:${selectionLeft}rem">
+        <div class="chart-canvas cumulative-chart-canvas" style="--month-count:${aggregates.length};--selection-left:${selectionLeft}">
           <div class="chart-plot">
             ${renderChartGridlines(scale)}
             <svg class="line-overlay" viewBox="0 0 ${width} 100" preserveAspectRatio="none" aria-hidden="true">
@@ -1956,7 +1970,7 @@
             </aside>
             <div class="cumulative-chart-tap-targets">${aggregates.map((item, index) => `<button type="button" class="cumulative-chart-tap-target${index === selectedIndex ? " is-selected" : ""}" data-overview-chart-index="${index}" aria-label="${monthLabel(item.month)}を表示。累積予定収支 ${formatSignedCurrency(item.plannedCumulative)}、${index > activeIndex ? "実績予測" : "累積実績収支"} ${formatSignedCurrency(index > activeIndex ? item.actualForecastCumulative : item.actualCumulative)}"></button>`).join("")}</div>
           </div>
-          <div class="cumulative-chart-months" aria-hidden="true">${aggregates.map((item) => `<span>${monthParts(item.month).month}月度</span>`).join("")}</div>
+          <div class="cumulative-chart-months" aria-hidden="true">${aggregates.map((item, index) => `<span>${overviewMonthAxisLabel(item.month, index)}</span>`).join("")}</div>
         </div>
       </div>
     </section>`;
@@ -2139,6 +2153,36 @@
     return leading;
   }
 
+  function projectIncomeAnalysisRows() {
+    const months = periodMonths();
+    return state.categories
+      .filter((category) => isIncomeCategory(category))
+      .map((category) => ({
+        category,
+        plan: months.reduce((sum, month) => sum + activeIncomePlanAmount(category, month), 0),
+        actual: months.reduce((sum, month) => sum + actualAmount(category.id, month), 0)
+      }))
+      .filter((row) => row.plan !== 0 || row.actual !== 0)
+      .sort((left, right) => Math.max(Math.abs(right.plan), Math.abs(right.actual)) - Math.max(Math.abs(left.plan), Math.abs(left.actual)));
+  }
+
+  function projectIncomeRatioSegments(rows, field) {
+    const ranked = rows
+      .filter((row) => row[field] !== 0)
+      .sort((left, right) => Math.abs(right[field]) - Math.abs(left[field]));
+    const leading = ranked.slice(0, 5).map((row) => ({
+      label: row.category.name,
+      value: Math.abs(row[field]),
+      displayValue: row[field],
+      color: row.category.color,
+      signed: true
+    }));
+    const remainingValue = ranked.slice(5).reduce((sum, row) => sum + Math.abs(row[field]), 0);
+    const remainingDisplayValue = ranked.slice(5).reduce((sum, row) => sum + row[field], 0);
+    if (remainingValue > 0) leading.push({ label: "その他", value: remainingValue, displayValue: remainingDisplayValue, color: "#87949d", signed: true });
+    return leading;
+  }
+
   function renderProjectCategoryProgressChart(rows) {
     if (!rows.length) {
       return `<section class="card project-progress-card"><div class="section-copy"><p class="section-kicker">PROJECT SPENDING PROGRESS</p><h2>項目ごとの計画と実績</h2><p>プロジェクト全体の支出進捗を項目別に比較します。</p></div><div class="empty-state">支出計画または実績がまだありません。</div></section>`;
@@ -2154,8 +2198,35 @@
     }).join("")}</div>${rows.length > visibleRows.length ? `<p class="chart-note">金額が大きい上位${visibleRows.length}項目を表示しています。</p>` : ""}</section>`;
   }
 
+  function renderProjectExpenseTimeline(rows) {
+    const months = periodMonths();
+    const isProjectOverview = overviewProjectOverviewEnabled;
+    if (!rows.length || !months.length) {
+      return `<section class="card project-timeline-card"><div class="section-copy"><p class="section-kicker">SPENDING TIMELINE</p><h2>支出項目ごとの計画・実績</h2><p>プロジェクト期間を横軸に、支出項目ごとの推移を表示します。</p></div><div class="empty-state">支出計画または実績がまだありません。</div></section>`;
+    }
+    const maximum = Math.max(1, ...rows.flatMap((row) => months.flatMap((month) => [
+      Math.max(0, activeExpensePlanAmount(row.category, month)),
+      Math.max(0, actualAmount(row.category.id, month))
+    ])));
+    const columns = isProjectOverview ? `5.6rem repeat(${months.length}, minmax(0, 1fr))` : `7.45rem repeat(${months.length}, 2.65rem)`;
+    const cells = rows.map((row) => {
+      const label = `<div class="project-timeline-label"><strong>${escapeHtml(row.category.name)}</strong><span>計 ${formatCurrency(row.plan)} ／ 実 ${formatCurrency(row.actual)}</span></div>`;
+      const monthsMarkup = months.map((month) => {
+        const plan = Math.max(0, activeExpensePlanAmount(row.category, month));
+        const actual = Math.max(0, actualAmount(row.category.id, month));
+        const planOpacity = plan > 0 ? Math.max(0.16, plan / maximum) : 0;
+        const actualOpacity = actual > 0 ? Math.max(0.22, actual / maximum) : 0;
+        const unplanned = plan === 0 && actual > 0;
+        return `<div class="project-timeline-cell${unplanned ? " is-unplanned" : ""}" aria-label="${escapeHtml(row.category.name)}、${monthLabel(month)}。計画 ${formatCurrency(plan)}、実績 ${formatCurrency(actual)}" style="--category-color:${escapeHtml(row.category.color)};--plan-opacity:${planOpacity.toFixed(3)};--actual-opacity:${actualOpacity.toFixed(3)}"><i class="project-timeline-plan"></i><i class="project-timeline-actual"></i></div>`;
+      }).join("");
+      return `${label}${monthsMarkup}`;
+    }).join("");
+    return `<section class="card project-timeline-card${isProjectOverview ? " is-project-overview" : ""}"><div class="project-timeline-heading"><div class="section-copy"><p class="section-kicker">SPENDING TIMELINE</p><h2>支出項目ごとの計画・実績</h2><p>横軸はプロジェクト期間です。淡い帯が計画、濃い帯が実績で、横にスライドして全期間を確認できます。</p></div>${overviewProjectViewButton()}</div><div class="project-timeline-legend"><span><i class="project-timeline-plan-key"></i>計画</span><span><i class="project-timeline-actual-key"></i>実績</span></div><div class="project-timeline-scroll"><div class="project-timeline-grid" style="grid-template-columns:${columns}${isProjectOverview ? ";width:100%;min-width:100%" : ""}"><div class="project-timeline-corner">項目</div>${months.map((month, index) => `<div class="project-timeline-month">${isProjectOverview && index % 3 !== 0 ? "" : `${monthParts(month).month}月度`}</div>`).join("")}${cells}</div></div></section>`;
+  }
+
   function renderProjectDetailAnalysis(aggregates, projectEndForecast, projectEnd) {
     const expenseRows = projectExpenseAnalysisRows();
+    const incomeRows = projectIncomeAnalysisRows();
     const plannedExpense = expenseRows.reduce((sum, row) => sum + row.plan, 0);
     const actualExpense = expenseRows.reduce((sum, row) => sum + row.actual, 0);
     const plannedIncome = periodMonths().reduce((sum, month) => sum + incomeCategoriesForReporting(month).reduce((monthSum, category) => monthSum + activeIncomePlanAmount(category, month), 0), 0);
@@ -2177,7 +2248,10 @@
       </section>
       ${renderRatioPieCard("PLAN MIX", "プロジェクトの支出計画配分", "計画支出の大きい上位5項目と、その他の構成比です。", projectExpenseRatioSegments(expenseRows, "plan"), "プロジェクト全体の支出計画がまだありません。")}
       ${renderRatioPieCard("ACTUAL MIX", "プロジェクトの支出実績配分", "実績支出の大きい上位5項目と、その他の構成比です。想定外支出も含みます。", projectExpenseRatioSegments(expenseRows, "actual"), "プロジェクト全体の支出実績がまだありません。")}
+      ${renderRatioPieCard("INCOME PLAN MIX", "プロジェクトの収入計画配分", "計画収入の大きい上位5項目と、その他の構成比です。マイナスを含む収入は金額の大きさで比率を算出します。", projectIncomeRatioSegments(incomeRows, "plan"), "プロジェクト全体の収入計画がまだありません。")}
+      ${renderRatioPieCard("INCOME ACTUAL MIX", "プロジェクトの収入実績配分", "実績収入の大きい上位5項目と、その他の構成比です。想定外収入も含みます。マイナスを含む収入は金額の大きさで比率を算出します。", projectIncomeRatioSegments(incomeRows, "actual"), "プロジェクト全体の収入実績がまだありません。")}
       ${renderProjectCategoryProgressChart(expenseRows)}
+      ${renderProjectExpenseTimeline(expenseRows)}
       <section class="card project-analysis-note"><div class="section-copy"><p class="section-kicker">READING THE RESULT</p><h2>見方</h2><p>計画配分は「どこに予算を置いているか」、実績配分と進捗は「実際にどこで使っているか」を示します。終了時見込みは、これまでの実績と今後の計画を組み合わせた値です。</p></div></section>
     </section>`;
   }
@@ -3485,6 +3559,12 @@
     else if (target.dataset.settingsPane) { settingsPane = target.dataset.settingsPane; render(); }
     else if (target.dataset.addCategory) openCategoryEditor(target.dataset.addCategory);
     else if (target.dataset.editCategory) openPlanEditor(target.dataset.editCategory);
+    else if (target.dataset.action === "toggle-overview-project-view") {
+      overviewProjectOverviewEnabled = !overviewProjectOverviewEnabled;
+      overviewChartScrollPositions.clear();
+      cumulativeScaleWindow = null;
+      render();
+    }
     else if (target.dataset.action === "toggle-cumulative-auto-scale") {
       cumulativeAutoScaleEnabled = !cumulativeAutoScaleEnabled;
       cumulativeScaleWindow = null;
