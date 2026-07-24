@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.68";
+  const APP_VERSION = "0.5.69";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -113,6 +113,7 @@
   let toastTimer = null;
   let calculatorContext = null;
   let calculator = createCalculatorState();
+  let calculatorAddBudgetMode = "new";
   let lastRenderedDate = "";
   let nextDayRenderTimer = null;
   let serviceWorkerRegistration = null;
@@ -664,6 +665,24 @@
     };
   }
 
+  function budgetedExpenseOveragesByMonth() {
+    const overages = new Map(periodMonths().map((month) => [month, 0]));
+    state.categories
+      .filter((category) => !isIncomeCategory(category) && !isUnexpectedExpenseCategory(category))
+      .forEach((category) => {
+        let plannedThroughMonth = 0;
+        let actualThroughMonth = 0;
+        let largestOverage = 0;
+        periodMonths().forEach((month) => {
+          plannedThroughMonth += Math.max(0, planAmount(category.id, month));
+          actualThroughMonth += Math.max(0, actualAmount(category.id, month));
+          largestOverage = Math.max(largestOverage, actualThroughMonth - plannedThroughMonth);
+          overages.set(month, toInteger(overages.get(month)) + largestOverage);
+        });
+      });
+    return overages;
+  }
+
   function projectEndForecastFromAggregates(aggregates) {
     if (!aggregates.length) return 0;
 
@@ -671,9 +690,7 @@
     // これにより、未入力のまま月度だけが進んでも予定額が消えず、持ち越しや
     // 予算シフトも単なる予算の配置変更として扱われます。
     let forecast = 0;
-    let plannedExpenseThroughMonth = 0;
-    let budgetedExpenseActualThroughMonth = 0;
-    let largestBudgetedOverage = 0;
+    const budgetedOverages = budgetedExpenseOveragesByMonth();
 
     aggregates.forEach((item) => {
       forecast += item.plannedNet;
@@ -685,16 +702,13 @@
       // 想定外支出は計画外のため、入力された時点で直接差し引きます。
       forecast -= item.unexpectedExpenseActual;
 
-      // 計画内の支出は、過去からの持ち越しも含めた予算コミットメントで
-      // 相殺します。相殺できない超過だけを見込み収支から引き、月度が
-      // 進んだからといって回復・悪化しないよう、最大超過額を保持します。
-      plannedExpenseThroughMonth += item.expensePlan;
-      budgetedExpenseActualThroughMonth += Math.max(0, item.expenseActual - item.unexpectedExpenseActual);
-      largestBudgetedOverage = Math.max(largestBudgetedOverage, budgetedExpenseActualThroughMonth - plannedExpenseThroughMonth);
-      item.commitmentForecastCumulative = forecast - largestBudgetedOverage;
+      // 計画内の支出は、項目ごとの過去からの持ち越しを含めた予算
+      // コミットメントで相殺します。ある項目の余りで別項目の超過を
+      // 見かけ上相殺しないため、各項目で相殺できない超過だけを反映します。
+      item.commitmentForecastCumulative = forecast - toInteger(budgetedOverages.get(item.month));
     });
 
-    return forecast - largestBudgetedOverage;
+    return forecast - toInteger(budgetedOverages.get(aggregates[aggregates.length - 1].month));
   }
 
   function projectEndForecastAfterBudgetReturn(month, amount) {
@@ -2848,6 +2862,117 @@
       : "返納額を入力すると、見込み収支への影響を表示します。";
   }
 
+  function calculatorCarryFundingSources(targetCategory, sourceMonth) {
+    if (!targetCategory) return [];
+    return state.categories
+      .filter((category) => category.id !== targetCategory.id && ["variable", "fixed"].includes(category.group) && !isUnexpectedExpenseCategory(category))
+      .map((category) => {
+        const carry = Math.max(0, categoryBudgetStats(category.id, sourceMonth).carryRemaining);
+        const origins = carryBudgetOriginQueue(category.id, sourceMonth);
+        const originTotal = origins.reduce((sum, origin) => sum + origin.amount, 0);
+        return { category, carry: Math.min(carry, originTotal) };
+      })
+      .filter((source) => source.carry > 0)
+      .sort((left, right) => Number(left.category.order) - Number(right.category.order));
+  }
+
+  function renderCalculatorAddBudgetCarrySources() {
+    const container = document.querySelector("#calculator-add-budget-carry-sources");
+    const targetCategory = calculatorContext && categoryById(calculatorContext.categoryId);
+    const sourceMonth = calculatorContext && calculatorContext.sourceMonth;
+    const sources = calculatorCarryFundingSources(targetCategory, sourceMonth);
+    container.dataset.targetCategoryId = targetCategory ? targetCategory.id : "";
+    container.dataset.sourceMonth = sourceMonth || "";
+    container.innerHTML = sources.length
+      ? sources.map(({ category, carry }) => `<label class="calculator-add-budget-carry-source" data-carry-source-id="${escapeHtml(category.id)}" data-carry-source-available="${carry}"><input type="checkbox" data-carry-source-select aria-label="${escapeHtml(category.name)}の持ち越しから充当"><span class="calculator-add-budget-carry-source-copy"><strong>${escapeHtml(category.name)}</strong><span>充当できる持ち越し ${formatCurrency(carry)}</span></span><input type="number" min="0" max="${carry}" step="1" inputmode="numeric" value="0" data-carry-source-amount aria-label="${escapeHtml(category.name)}から充当する金額" disabled></label>`).join("")
+      : '<p class="calculator-add-budget-carry-empty">他項目から充当できる持ち越し予算はありません。</p>';
+  }
+
+  function calculatorCarryFundingSelections() {
+    return Array.from(document.querySelectorAll("#calculator-add-budget-carry-sources [data-carry-source-id]")).map((row) => {
+      const checkbox = row.querySelector("[data-carry-source-select]");
+      const amountInput = row.querySelector("[data-carry-source-amount]");
+      return {
+        categoryId: row.dataset.carrySourceId,
+        available: Math.max(0, toInteger(row.dataset.carrySourceAvailable)),
+        selected: Boolean(checkbox && checkbox.checked),
+        amount: checkbox && checkbox.checked ? Math.max(0, toInteger(amountInput.value)) : 0
+      };
+    });
+  }
+
+  function calculatorCarryFundingPlanChanges(sourceMonth, funding) {
+    const changes = new Map();
+    const addChange = (month, amount) => changes.set(month, toInteger(changes.get(month)) + toInteger(amount));
+    funding.forEach((source) => source.origins.forEach((origin) => addChange(origin.month, -origin.amount)));
+    const total = funding.reduce((sum, source) => sum + source.amount, 0);
+    if (total > 0) addChange(sourceMonth, total);
+    return changes;
+  }
+
+  function calculatorCarryFundingPreview(sourceMonth, selections) {
+    const funding = selections.map((selection) => {
+      const origins = carryBudgetOriginAllocations(selection.categoryId, sourceMonth, selection.amount);
+      return { ...selection, origins };
+    });
+    return {
+      funding,
+      planChanges: calculatorCarryFundingPlanChanges(sourceMonth, funding)
+    };
+  }
+
+  function updateCalculatorAddBudgetMode() {
+    const isCarryMode = calculatorAddBudgetMode === "carry";
+    document.querySelectorAll("[data-add-budget-mode]").forEach((button) => {
+      const active = button.dataset.addBudgetMode === calculatorAddBudgetMode;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+    document.querySelector("#calculator-add-budget-title").textContent = isCarryMode ? "持ち越しから予算を充当" : "追加する金額を入力";
+    document.querySelector("#calculator-add-budget-amount-label").textContent = isCarryMode ? "充当して追加する金額" : "追加する金額";
+    document.querySelector("#calculator-add-budget-carry-panel").hidden = !isCarryMode;
+    document.querySelector("#calculator-add-budget-confirm").textContent = isCarryMode ? "持ち越し予算を充当する" : "予算を追加する";
+    updateCalculatorAddBudgetSummary();
+  }
+
+  function distributeCalculatorCarryFundingEvenly() {
+    const amount = Math.max(0, toInteger(document.querySelector("#calculator-add-budget-amount").value));
+    const rows = Array.from(document.querySelectorAll("#calculator-add-budget-carry-sources [data-carry-source-id]")).filter((row) => row.querySelector("[data-carry-source-select]").checked);
+    if (amount <= 0) {
+      showToast("先に充当して追加する金額を入力してください");
+      return;
+    }
+    if (!rows.length) {
+      showToast("均等に配分する項目を選択してください");
+      return;
+    }
+    const allocations = rows.map((row) => ({
+      row,
+      available: Math.max(0, toInteger(row.dataset.carrySourceAvailable)),
+      amount: 0
+    }));
+    let remaining = amount;
+    while (remaining > 0) {
+      const eligible = allocations.filter((allocation) => allocation.amount < allocation.available);
+      if (!eligible.length) break;
+      const share = Math.floor(remaining / eligible.length);
+      const remainder = remaining % eligible.length;
+      let moved = 0;
+      eligible.forEach((allocation, index) => {
+        const requested = share + (index < remainder ? 1 : 0);
+        const value = Math.min(requested, allocation.available - allocation.amount);
+        allocation.amount += value;
+        moved += value;
+      });
+      if (moved <= 0) break;
+      remaining -= moved;
+    }
+    allocations.forEach((allocation) => {
+      allocation.row.querySelector("[data-carry-source-amount]").value = String(allocation.amount);
+    });
+    updateCalculatorAddBudgetSummary();
+  }
+
   function updateCalculatorAddBudgetSummary() {
     if (!calculatorContext || !calculatorContext.canShiftBudget) return;
     const category = categoryById(calculatorContext.categoryId);
@@ -2857,16 +2982,64 @@
     const currentBudget = category ? planAmount(category.id, sourceMonth) : 0;
     const forecast = document.querySelector("#calculator-add-budget-forecast");
     const confirm = document.querySelector("#calculator-add-budget-confirm");
-    document.querySelector("#calculator-add-budget-source").textContent = `${monthLabel(sourceMonth)}の現在の予算は${formatCurrency(currentBudget)}です。`;
-    confirm.disabled = amount <= 0;
-    if (amount <= 0) {
-      forecast.textContent = "追加する金額を入力すると、見込み収支への影響を表示します。";
+    const carryMode = calculatorAddBudgetMode === "carry";
+    document.querySelector("#calculator-add-budget-source").textContent = `${monthLabel(sourceMonth)}の${category ? category.name : "対象項目"}の現在の予算は${formatCurrency(currentBudget)}です。`;
+    forecast.classList.remove("positive");
+
+    if (!carryMode) {
+      confirm.disabled = amount <= 0;
+      if (amount <= 0) {
+        forecast.textContent = "追加する金額を入力すると、見込み収支への影響を表示します。";
+        return;
+      }
+      const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+      const after = projectEndForecastAfterBudgetAddition(sourceMonth, amount);
+      const decrease = Math.max(0, before - after);
+      forecast.textContent = `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}${decrease ? `（${formatCurrency(decrease)}減少）` : "（変化なし）"}`;
       return;
     }
+
+    const carrySummary = document.querySelector("#calculator-add-budget-carry-summary");
+    const sources = calculatorCarryFundingSources(category, sourceMonth);
+    const selections = calculatorCarryFundingSelections().filter((selection) => selection.selected);
+    const funded = selections.reduce((sum, selection) => sum + selection.amount, 0);
+    const selectedCapacity = selections.reduce((sum, selection) => sum + selection.available, 0);
+    const invalidSourceAmount = selections.some((selection) => selection.amount > selection.available);
+    const sourceRowsAreCurrent = document.querySelector("#calculator-add-budget-carry-sources").dataset.targetCategoryId === (category ? category.id : "")
+      && document.querySelector("#calculator-add-budget-carry-sources").dataset.sourceMonth === sourceMonth;
+    if (!sourceRowsAreCurrent) renderCalculatorAddBudgetCarrySources();
+    confirm.disabled = amount <= 0 || !sources.length || invalidSourceAmount || funded !== amount;
+    if (!sources.length) {
+      carrySummary.classList.add("is-invalid");
+      carrySummary.textContent = "他項目から充当できる持ち越し予算がありません。";
+      forecast.textContent = "持ち越し予算を充当するには、他項目に使える持ち越しが必要です。";
+      return;
+    }
+    if (amount <= 0) {
+      carrySummary.classList.remove("is-invalid");
+      carrySummary.textContent = "追加額を入力し、充当元と各項目から集める金額を指定してください。";
+      forecast.textContent = "持ち越しから充当すると、見込み収支を変えずに予算の置き場所を移せます。";
+      return;
+    }
+    if (invalidSourceAmount || funded > amount) {
+      carrySummary.classList.add("is-invalid");
+      carrySummary.textContent = `充当額の合計 ${formatCurrency(funded)} は、追加額 ${formatCurrency(amount)} を超えています。`;
+      forecast.textContent = "項目ごとの充当額を追加額以内にしてください。";
+      return;
+    }
+    if (funded < amount) {
+      carrySummary.classList.add("is-invalid");
+      carrySummary.textContent = `充当額の合計 ${formatCurrency(funded)} ／ 追加額 ${formatCurrency(amount)}。あと ${formatCurrency(amount - funded)} を指定してください。選択中の項目からは最大 ${formatCurrency(selectedCapacity)} まで充当できます。`;
+      forecast.textContent = "追加額と同額になるよう、各項目からの充当額を指定してください。";
+      return;
+    }
+    const preview = calculatorCarryFundingPreview(sourceMonth, selections);
     const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
-    const after = projectEndForecastAfterBudgetAddition(sourceMonth, amount);
-    const decrease = Math.max(0, before - after);
-    forecast.textContent = `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}${decrease ? `（${formatCurrency(decrease)}減少）` : "（変化なし）"}`;
+    const after = projectEndForecastAfterBudgetPlanChanges(preview.planChanges);
+    carrySummary.classList.remove("is-invalid");
+    carrySummary.textContent = `${selections.length}項目の持ち越し ${formatCurrency(funded)} を充当します。${category ? category.name : "対象項目"}の${monthLabel(sourceMonth)}の予算は ${formatCurrency(currentBudget)} → ${formatCurrency(currentBudget + funded)} になります。`;
+    forecast.classList.add("positive");
+    forecast.textContent = `持ち越し予算の配置を変更します。プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}${after === before ? "（変化なし）" : ""}`;
   }
 
   function resetCalculatorShiftPanel(category) {
@@ -2901,9 +3074,11 @@
     document.querySelector("#calculator-add-budget-amount").value = "";
     addToggle.disabled = false;
     addToggle.title = `${monthLabel(sourceMonth)}の計画予算を追加します`;
+    calculatorAddBudgetMode = "new";
+    renderCalculatorAddBudgetCarrySources();
     updateCalculatorShiftTargetSummary();
     updateCalculatorReturnSummary();
-    updateCalculatorAddBudgetSummary();
+    updateCalculatorAddBudgetMode();
   }
 
   function openCalculator(categoryId) {
@@ -3154,6 +3329,61 @@
     const amount = Math.max(0, toInteger(document.querySelector("#calculator-add-budget-amount").value));
     if (!category || !["variable", "fixed"].includes(category.group)) throw new Error("予算を追加できる支出項目を選択してください");
     if (amount <= 0) throw new Error("追加する金額を入力してください");
+
+    if (calculatorAddBudgetMode === "carry") {
+      const selections = calculatorCarryFundingSelections().filter((selection) => selection.selected && selection.amount > 0);
+      const funded = selections.reduce((sum, selection) => sum + selection.amount, 0);
+      if (funded !== amount) throw new Error("追加額と同額になるよう、持ち越しからの充当額を指定してください");
+      const funding = selections.map((selection) => {
+        const sourceCategory = categoryById(selection.categoryId);
+        if (!sourceCategory || sourceCategory.id === category.id || !["variable", "fixed"].includes(sourceCategory.group) || isUnexpectedExpenseCategory(sourceCategory)) {
+          throw new Error("充当元の項目を確認してください");
+        }
+        const available = Math.max(0, categoryBudgetStats(sourceCategory.id, sourceMonth).carryRemaining);
+        if (selection.amount > available) throw new Error(`${sourceCategory.name}から充当できる持ち越しは${formatCurrency(available)}までです`);
+        const origins = carryBudgetOriginAllocations(sourceCategory.id, sourceMonth, selection.amount);
+        if (origins.reduce((sum, origin) => sum + origin.amount, 0) !== selection.amount) {
+          throw new Error(`${sourceCategory.name}の持ち越し元を確認できませんでした`);
+        }
+        return { category: sourceCategory, amount: selection.amount, origins };
+      });
+      const sourceBudget = planAmount(category.id, sourceMonth);
+      const affectedCategories = [category, ...funding.map((source) => source.category).filter((sourceCategory, index, list) => list.findIndex((item) => item.id === sourceCategory.id) === index)];
+      const previousPlans = new Map(affectedCategories.map((affectedCategory) => [
+        affectedCategory.id,
+        Object.prototype.hasOwnProperty.call(state.plans, affectedCategory.id) ? { ...(state.plans[affectedCategory.id] || {}) } : null
+      ]));
+      const previousDefaultAmount = category.defaultAmount;
+      const previousPlanRule = category.planRule ? { ...category.planRule } : null;
+      affectedCategories.forEach((affectedCategory) => {
+        state.plans[affectedCategory.id] = { ...(state.plans[affectedCategory.id] || {}) };
+      });
+      state.plans[category.id][sourceMonth] = sourceBudget + amount;
+      funding.forEach((source) => {
+        source.origins.forEach((origin) => {
+          const originBudget = planAmount(source.category.id, origin.month);
+          state.plans[source.category.id][origin.month] = Math.max(0, originBudget - origin.amount);
+        });
+      });
+      category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
+      category.planRule = null;
+      try {
+        await persist(`${funding.map((source) => source.category.name).join("、")}の持ち越しから${formatCurrency(amount)}を、${category.name}の${monthLabel(sourceMonth)}の予算へ充当しました`);
+      } catch (error) {
+        previousPlans.forEach((plans, categoryId) => {
+          if (plans === null) delete state.plans[categoryId];
+          else state.plans[categoryId] = plans;
+        });
+        category.defaultAmount = previousDefaultAmount;
+        category.planRule = previousPlanRule;
+        updateCalculatorAddBudgetSummary();
+        throw error;
+      }
+      closeDialog(calculatorDialog);
+      render();
+      return;
+    }
+
     const sourceBudget = planAmount(category.id, sourceMonth);
     const previousDefaultAmount = category.defaultAmount;
     const previousPlanRule = category.planRule ? { ...category.planRule } : null;
@@ -3835,6 +4065,35 @@
   document.querySelector("#calculator-return-priority").addEventListener("change", updateCalculatorReturnSummary);
   document.querySelector("#calculator-return-amount").addEventListener("input", updateCalculatorReturnSummary);
   document.querySelector("#calculator-return-confirm").addEventListener("click", () => returnCalculatorBudget().catch((error) => showToast(error.message)));
+  document.querySelectorAll("[data-add-budget-mode]").forEach((button) => button.addEventListener("click", () => {
+    calculatorAddBudgetMode = button.dataset.addBudgetMode === "carry" ? "carry" : "new";
+    updateCalculatorAddBudgetMode();
+  }));
+  document.querySelector("#calculator-add-budget-carry-sources").addEventListener("change", (event) => {
+    const checkbox = event.target.closest("[data-carry-source-select]");
+    if (!checkbox) return;
+    const row = checkbox.closest("[data-carry-source-id]");
+    const amountInput = row && row.querySelector("[data-carry-source-amount]");
+    if (!row || !amountInput) return;
+    amountInput.disabled = !checkbox.checked;
+    if (!checkbox.checked) amountInput.value = "0";
+    row.classList.toggle("is-selected", checkbox.checked);
+    updateCalculatorAddBudgetSummary();
+  });
+  document.querySelector("#calculator-add-budget-carry-sources").addEventListener("input", (event) => {
+    const amountInput = event.target.closest("[data-carry-source-amount]");
+    if (!amountInput) return;
+    const row = amountInput.closest("[data-carry-source-id]");
+    const checkbox = row && row.querySelector("[data-carry-source-select]");
+    if (!row || !checkbox) return;
+    if (toInteger(amountInput.value) > 0 && !checkbox.checked) {
+      checkbox.checked = true;
+      amountInput.disabled = false;
+    }
+    row.classList.toggle("is-selected", checkbox.checked);
+    updateCalculatorAddBudgetSummary();
+  });
+  document.querySelector("#calculator-add-budget-even-split").addEventListener("click", distributeCalculatorCarryFundingEvenly);
   document.querySelector("#calculator-add-budget-amount").addEventListener("input", updateCalculatorAddBudgetSummary);
   document.querySelector("#calculator-add-budget-confirm").addEventListener("click", () => addCalculatorBudget().catch((error) => showToast(error.message)));
   document.querySelector("#calculator-form").addEventListener("submit", (event) => event.preventDefault());
