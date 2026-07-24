@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.69";
+  const APP_VERSION = "0.5.72";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -314,6 +314,22 @@
     return `${date.getMonth() + 1}月${date.getDate()}日`;
   }
 
+  function timestampDateTimeLabel(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return `${date.getMonth() + 1}/${date.getDate()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function transactionActivityLabel(transaction) {
+    const created = new Date(transaction.createdAt);
+    const updated = new Date(transaction.updatedAt);
+    const wasEdited = !Number.isNaN(created.getTime())
+      && !Number.isNaN(updated.getTime())
+      && updated.getTime() - created.getTime() > 1000;
+    const timestamp = wasEdited ? transaction.updatedAt : transaction.createdAt;
+    return `${wasEdited ? "最終編集日" : "入力日"} ${timestampDateTimeLabel(timestamp)}`;
+  }
+
   function projectDateLabel(value) {
     if (!isValidDateKey(value)) return "未設定";
     const date = parseLocalDate(value);
@@ -479,6 +495,37 @@
     return toInteger(state.plans[categoryId] && state.plans[categoryId][month], 0);
   }
 
+  // A budget added after spending has begun must be available from that point
+  // forward.  Keeping the carryover consumption floor avoids assigning past
+  // spending to the newly added budget and, as a consequence, restoring an
+  // already-used carryover balance.
+  function budgetAdditionsFor(categoryId, month) {
+    if (!Array.isArray(state.budgetAdditions)) return [];
+    return state.budgetAdditions.filter((entry) => entry
+      && entry.categoryId === categoryId
+      && entry.month === month
+      && toInteger(entry.amount) > 0);
+  }
+
+  function budgetAdditionCarryUsageFloor(categoryId, month) {
+    return budgetAdditionsFor(categoryId, month).reduce((floor, entry) => (
+      Math.max(floor, Math.max(0, toInteger(entry.carryUsageFloor)))
+    ), 0);
+  }
+
+  function recordBudgetAddition(categoryId, month, amount, carryUsageFloor, kind) {
+    if (!Array.isArray(state.budgetAdditions)) state.budgetAdditions = [];
+    state.budgetAdditions.push({
+      id: makeId("budget-addition"),
+      categoryId,
+      month,
+      amount: Math.max(0, toInteger(amount)),
+      carryUsageFloor: Math.max(0, toInteger(carryUsageFloor)),
+      kind: kind === "carry" ? "carry" : "new",
+      createdAt: appTimestamp()
+    });
+  }
+
   function periodPlanTotal(categoryId) {
     return periodMonths().reduce((sum, month) => sum + planAmount(categoryId, month), 0);
   }
@@ -600,11 +647,13 @@
     const debtAppliedToPlan = Math.min(configuredPlan, Math.max(0, -priorCarry));
     const plan = configuredPlan - debtAppliedToPlan;
     const carry = priorCarry + debtAppliedToPlan;
-    const monthlyRemaining = plan - actual;
+    const carryUsageFloor = budgetAdditionCarryUsageFloor(categoryId, month);
+    const carryUsage = Math.max(carryUsageFloor, Math.max(0, actual - plan));
+    const monthlyRemaining = plan - actual + carryUsageFloor;
     const carryRemaining = carry > 0
-      ? Math.max(0, carry - Math.max(0, actual - plan))
+      ? Math.max(0, carry - carryUsage)
       : carry;
-    return { configuredPlan, priorCarry, plan, carry, actual, monthlyRemaining, carryRemaining };
+    return { configuredPlan, priorCarry, plan, carry, actual, monthlyRemaining, carryRemaining, carryUsage, carryUsageFloor };
   }
 
   function dailyBudgetStats(category, month) {
@@ -1214,10 +1263,7 @@
         </div>
       </section>
 
-      <div class="month-switcher">
-        <label class="field-label" for="entry-period">表示する月</label>
-        <select id="entry-period">${monthOptions(currentPeriod)}</select>
-      </div>
+      <div class="month-switcher"><select id="entry-period" aria-label="表示する月">${monthOptions(currentPeriod)}</select></div>
 
       <section class="section" aria-labelledby="variable-title">
         <div class="section-header"><div><p class="section-kicker">VARIABLE</p><h2 id="variable-title">変動支出</h2></div><p class="section-description">タップで入力・長押しで並べ替え</p></div>
@@ -1237,7 +1283,7 @@
 
       ${(unexpectedCategory || unexpectedIncome) ? `<section class="income-entry-card unexpected-entry-toggle-card">
         <div><strong>想定外の支出と収入</strong><p>計画外の収支を、プロジェクト終了時の見込み収支へ直接反映します。</p></div>
-        <button type="button" class="button small secondary" data-action="toggle-unexpected-entries">${unexpectedEntriesExpanded ? "閉じる" : "開く"}</button>
+        <button type="button" class="button small primary" data-action="toggle-unexpected-entries">${unexpectedEntriesExpanded ? "閉じる" : "開く"}</button>
       </section>
       ${unexpectedEntriesExpanded ? `<section class="section unexpected-expense-section"><div class="category-grid">${unexpectedCategory ? renderUnexpectedExpenseCard(unexpectedCategory, currentPeriod) : ""}${unexpectedIncome ? renderUnexpectedIncomeCard(unexpectedIncome, currentPeriod) : ""}</div></section>` : ""}` : ""}
 
@@ -1296,7 +1342,9 @@
         ? `<span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>`
         : "";
       const carryLabel = carryBudgetAvailable
-        ? `<span class="budget-card-carry"><span>今月の予算</span><strong class="monthly-budget-exhausted">${formatCurrency(0)}</strong></span>`
+        ? stats.configuredPlan <= 0
+          ? '<span class="budget-card-carry plan-none"><span>計画なし</span></span>'
+          : `<span class="budget-card-carry"><span>今月の予算</span><strong class="monthly-budget-exhausted">${formatCurrency(0)}</strong></span>`
         : !hasUnresolvedCarryover && stats.carryRemaining !== 0
         ? `<span class="budget-card-carry"><span>＋これまでの持ち越し</span><strong class="${stats.carryRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(stats.carryRemaining)}</strong></span>`
         : "";
@@ -1687,9 +1735,19 @@
     const signedAmount = transaction.direction === "income" ? transaction.amount : -transaction.amount;
     return `<button type="button" class="transaction-row" data-transaction-id="${escapeHtml(transaction.id)}" style="--category-color:${escapeHtml(color)}">
       <span class="transaction-dot" aria-hidden="true"></span>
-      <span class="transaction-main"><strong>${escapeHtml(categoryName)}</strong><span>${dateTimeLabel(transaction.date)}${transaction.memo ? `・${escapeHtml(transaction.memo)}` : ""}</span></span>
+      <span class="transaction-main"><strong>${escapeHtml(categoryName)}</strong><span>${shortDate(transaction.date)} <small class="transaction-activity">（${transactionActivityLabel(transaction)}）</small>${transaction.memo ? `・${escapeHtml(transaction.memo)}` : ""}</span></span>
       <strong class="transaction-amount ${signedAmount < 0 ? "negative" : "positive"}">${formatSignedCurrency(signedAmount)}</strong>
     </button>`;
+  }
+
+  function renderProjectEndForecastHero(projectEndForecast) {
+    const projectEndTone = projectEndForecast < 0 ? "negative" : projectEndForecast > 0 ? "positive" : "";
+    const digits = String(Math.abs(toInteger(projectEndForecast))).length;
+    const fontSize = Math.max(5.5, 8.4 - Math.max(0, digits - 8) * 0.7);
+    return `<section class="card overview-hero project-forecast-hero" aria-label="${projectDateLabel(state.settings.endDate)}時点の見込み収支">
+      <div><p class="section-kicker">PROJECT END FORECAST</p><h2>${projectDateLabel(state.settings.endDate)}時点の見込み収支</h2></div>
+      <div class="overview-hero-total"><strong class="${projectEndTone}" style="--forecast-value-size:${fontSize.toFixed(2)}vw">${formatSignedCurrency(projectEndForecast)}</strong></div>
+    </section>`;
   }
 
   function renderOverview() {
@@ -1703,9 +1761,7 @@
       item.actualCumulative = actualCumulative;
     });
 
-    const projectEnd = aggregates[aggregates.length - 1] || { plannedCumulative: 0, actualCumulative: 0 };
     const projectEndForecast = projectEndForecastFromAggregates(aggregates);
-    const projectEndTone = projectEndForecast < 0 ? "negative" : projectEndForecast > 0 ? "positive" : "";
     const preferredCumulativeIndex = aggregates.findIndex((item) => item.month === currentPeriod);
     const cumulativeIndexMaximum = Math.max(0, aggregates.length - 1);
     const activeCumulativeIndex = clamp(Math.max(0, aggregates.findIndex((item) => item.month === currentPeriodForToday())), 0, cumulativeIndexMaximum);
@@ -1713,11 +1769,13 @@
     const activeBudgetedExpenseActual = Math.max(0, activeAggregate.expenseActual - activeAggregate.unexpectedExpenseActual);
     const currentPlanExpenseRemaining = Math.max(0, activeAggregate.expensePlan - activeBudgetedExpenseActual);
     let planExpenseForecastCumulative = (aggregates[activeCumulativeIndex]?.actualCumulative || 0) - currentPlanExpenseRemaining;
+    let actualForecastCumulative = activeAggregate.actualCumulative;
     aggregates.forEach((item, index) => {
       if (index <= activeCumulativeIndex) {
         item.actualForecastCumulative = item.actualCumulative;
       } else {
-        item.actualForecastCumulative = item.commitmentForecastCumulative;
+        actualForecastCumulative += item.plannedNet;
+        item.actualForecastCumulative = actualForecastCumulative;
       }
       if (index < activeCumulativeIndex) {
         item.planExpenseForecastCumulative = item.actualCumulative;
@@ -1745,10 +1803,7 @@
       <div class="overview-pages-viewport" data-overview-pages tabindex="0" aria-label="全体状況。左右にスライドして推移と詳細分析を切り替えます。">
         ${overviewDetailPage === 0 ? `
           <section class="overview-page overview-trends-page">
-      <section class="card overview-hero" aria-label="${projectDateLabel(state.settings.endDate)}時点の見込み収支">
-        <div><p class="section-kicker">PROJECT END FORECAST</p><h2>${projectDateLabel(state.settings.endDate)}時点の見込み収支</h2><p>これまでの実績と、残りの計画から算出した見込み収支。</p></div>
-        <div class="overview-hero-total"><strong class="${projectEndTone}">${formatSignedCurrency(projectEndForecast)}</strong><span>計画時 ${formatSignedCurrency(projectEnd.plannedCumulative)}</span></div>
-      </section>
+      ${renderProjectEndForecastHero(projectEndForecast)}
 
       ${renderInteractiveOverviewBarChart({
         id: "expense",
@@ -1795,7 +1850,7 @@
           </section>
         ` : `
           <section class="overview-page overview-detail-page">
-            ${renderProjectDetailAnalysis(aggregates, projectEndForecast, projectEnd)}
+            ${renderProjectDetailAnalysis(aggregates, projectEndForecast)}
           </section>
         `}
       </div>
@@ -2320,7 +2375,7 @@
     </section>`;
   }
 
-  function renderProjectDetailAnalysis(aggregates, projectEndForecast, projectEnd) {
+  function renderProjectDetailAnalysis(aggregates, projectEndForecast) {
     const expenseRows = projectExpenseAnalysisRows();
     const incomeRows = projectIncomeAnalysisRows();
     const plannedExpense = expenseRows.reduce((sum, row) => sum + row.plan, 0);
@@ -2331,11 +2386,10 @@
     const unexpectedIncome = periodMonths().reduce((sum, month) => sum + transactionsForMonth(month, "income").reduce((monthSum, transaction) => {
       return monthSum + (isUnexpectedIncomeCategory(categoryById(transaction.categoryId)) ? toInteger(transaction.amount) : 0);
     }, 0), 0);
-    const forecastTone = projectEndForecast < 0 ? "negative" : projectEndForecast > 0 ? "positive" : "";
     const spendingTone = actualExpense > plannedExpense ? "negative" : "";
     const spendingSummary = `計画との差 ${formatSignedCurrency(plannedExpense - actualExpense)}${unexpectedExpense !== 0 ? ` ・ 想定外 ${formatCurrency(unexpectedExpense)}` : ""}`;
     return `<section class="overview-detail-stack">
-      <section class="card overview-analysis-hero"><div><p class="section-kicker">PROJECT ANALYSIS</p><h2>プロジェクトの計画と支出を分析</h2><p>計画配分、実績の使い道、項目ごとの消化状況をまとめて確認できます。</p></div><div><span>終了時見込み</span><strong class="${forecastTone}">${formatSignedCurrency(projectEndForecast)}</strong><small>計画終了時 ${formatSignedCurrency(projectEnd.plannedCumulative)}</small></div></section>
+      ${renderProjectEndForecastHero(projectEndForecast)}
       <section class="summary-grid project-analysis-summary" aria-label="プロジェクト集計">
         ${summaryCard("計画支出合計", plannedExpense, "プロジェクト全期間")}
         ${summaryCard("支出実績合計", actualExpense, spendingSummary, spendingTone)}
@@ -2687,7 +2741,7 @@
       debt += unmetDeficit;
     });
     const stats = categoryBudgetStats(categoryId, sourceMonth);
-    consumeCarryOriginQueue(queue, Math.max(0, stats.actual - stats.plan));
+    consumeCarryOriginQueue(queue, Math.max(0, stats.carryUsage));
     return queue;
   }
 
@@ -2865,15 +2919,15 @@
   function calculatorCarryFundingSources(targetCategory, sourceMonth) {
     if (!targetCategory) return [];
     return state.categories
-      .filter((category) => category.id !== targetCategory.id && ["variable", "fixed"].includes(category.group) && !isUnexpectedExpenseCategory(category))
+      .filter((category) => ["variable", "fixed"].includes(category.group) && !isUnexpectedExpenseCategory(category))
       .map((category) => {
         const carry = Math.max(0, categoryBudgetStats(category.id, sourceMonth).carryRemaining);
         const origins = carryBudgetOriginQueue(category.id, sourceMonth);
         const originTotal = origins.reduce((sum, origin) => sum + origin.amount, 0);
-        return { category, carry: Math.min(carry, originTotal) };
+        return { category, carry: Math.min(carry, originTotal), isTarget: category.id === targetCategory.id };
       })
       .filter((source) => source.carry > 0)
-      .sort((left, right) => Number(left.category.order) - Number(right.category.order));
+      .sort((left, right) => Number(right.isTarget) - Number(left.isTarget) || Number(left.category.order) - Number(right.category.order));
   }
 
   function renderCalculatorAddBudgetCarrySources() {
@@ -2884,8 +2938,8 @@
     container.dataset.targetCategoryId = targetCategory ? targetCategory.id : "";
     container.dataset.sourceMonth = sourceMonth || "";
     container.innerHTML = sources.length
-      ? sources.map(({ category, carry }) => `<label class="calculator-add-budget-carry-source" data-carry-source-id="${escapeHtml(category.id)}" data-carry-source-available="${carry}"><input type="checkbox" data-carry-source-select aria-label="${escapeHtml(category.name)}の持ち越しから充当"><span class="calculator-add-budget-carry-source-copy"><strong>${escapeHtml(category.name)}</strong><span>充当できる持ち越し ${formatCurrency(carry)}</span></span><input type="number" min="0" max="${carry}" step="1" inputmode="numeric" value="0" data-carry-source-amount aria-label="${escapeHtml(category.name)}から充当する金額" disabled></label>`).join("")
-      : '<p class="calculator-add-budget-carry-empty">他項目から充当できる持ち越し予算はありません。</p>';
+      ? sources.map(({ category, carry, isTarget }) => `<label class="calculator-add-budget-carry-source" data-carry-source-id="${escapeHtml(category.id)}" data-carry-source-available="${carry}"><input type="checkbox" data-carry-source-select aria-label="${escapeHtml(category.name)}の持ち越しから充当"><span class="calculator-add-budget-carry-source-copy"><strong>${escapeHtml(category.name)}${isTarget ? "（この項目）" : ""}</strong><span>充当できる持ち越し ${formatCurrency(carry)}</span></span><input type="number" min="0" max="${carry}" step="1" inputmode="numeric" value="0" data-carry-source-amount aria-label="${escapeHtml(category.name)}から充当する金額" disabled></label>`).join("")
+      : '<p class="calculator-add-budget-carry-empty">充当できる持ち越し予算はありません。</p>';
   }
 
   function calculatorCarryFundingSelections() {
@@ -3011,8 +3065,8 @@
     confirm.disabled = amount <= 0 || !sources.length || invalidSourceAmount || funded !== amount;
     if (!sources.length) {
       carrySummary.classList.add("is-invalid");
-      carrySummary.textContent = "他項目から充当できる持ち越し予算がありません。";
-      forecast.textContent = "持ち越し予算を充当するには、他項目に使える持ち越しが必要です。";
+      carrySummary.textContent = "充当できる持ち越し予算がありません。";
+      forecast.textContent = "持ち越し予算を充当するには、使える持ち越しが必要です。";
       return;
     }
     if (amount <= 0) {
@@ -3217,6 +3271,7 @@
     const amount = calculatorContext && calculatorContext.allowsNegative ? toInteger(calculator.current) : Math.max(0, toInteger(calculator.current));
     if (!calculatorContext || (calculatorContext.allowsNegative ? amount === 0 : amount <= 0)) return;
     const category = categoryById(calculatorContext.categoryId);
+    const createdAt = appTimestamp();
     const transaction = {
       id: makeId("tx"),
       direction: calculatorContext.direction,
@@ -3225,8 +3280,8 @@
       enteredOn: localDateKey(),
       amount,
       memo: "",
-      createdAt: appTimestamp(),
-      updatedAt: appTimestamp()
+      createdAt,
+      updatedAt: createdAt
     };
     pendingTransaction = transaction;
     state.transactions.push(transaction);
@@ -3334,9 +3389,10 @@
       const selections = calculatorCarryFundingSelections().filter((selection) => selection.selected && selection.amount > 0);
       const funded = selections.reduce((sum, selection) => sum + selection.amount, 0);
       if (funded !== amount) throw new Error("追加額と同額になるよう、持ち越しからの充当額を指定してください");
+      const targetCarryUsageFloor = categoryBudgetStats(category.id, sourceMonth).carryUsage;
       const funding = selections.map((selection) => {
         const sourceCategory = categoryById(selection.categoryId);
-        if (!sourceCategory || sourceCategory.id === category.id || !["variable", "fixed"].includes(sourceCategory.group) || isUnexpectedExpenseCategory(sourceCategory)) {
+        if (!sourceCategory || !["variable", "fixed"].includes(sourceCategory.group) || isUnexpectedExpenseCategory(sourceCategory)) {
           throw new Error("充当元の項目を確認してください");
         }
         const available = Math.max(0, categoryBudgetStats(sourceCategory.id, sourceMonth).carryRemaining);
@@ -3355,10 +3411,12 @@
       ]));
       const previousDefaultAmount = category.defaultAmount;
       const previousPlanRule = category.planRule ? { ...category.planRule } : null;
+      const previousBudgetAdditions = Array.isArray(state.budgetAdditions) ? [...state.budgetAdditions] : [];
       affectedCategories.forEach((affectedCategory) => {
         state.plans[affectedCategory.id] = { ...(state.plans[affectedCategory.id] || {}) };
       });
       state.plans[category.id][sourceMonth] = sourceBudget + amount;
+      recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "carry");
       funding.forEach((source) => {
         source.origins.forEach((origin) => {
           const originBudget = planAmount(source.category.id, origin.month);
@@ -3376,6 +3434,7 @@
         });
         category.defaultAmount = previousDefaultAmount;
         category.planRule = previousPlanRule;
+        state.budgetAdditions = previousBudgetAdditions;
         updateCalculatorAddBudgetSummary();
         throw error;
       }
@@ -3385,10 +3444,13 @@
     }
 
     const sourceBudget = planAmount(category.id, sourceMonth);
+    const targetCarryUsageFloor = categoryBudgetStats(category.id, sourceMonth).carryUsage;
     const previousDefaultAmount = category.defaultAmount;
     const previousPlanRule = category.planRule ? { ...category.planRule } : null;
+    const previousBudgetAdditions = Array.isArray(state.budgetAdditions) ? [...state.budgetAdditions] : [];
     state.plans[category.id] = { ...(state.plans[category.id] || {}) };
     state.plans[category.id][sourceMonth] = sourceBudget + amount;
+    recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "new");
     category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
     category.planRule = null;
     try {
@@ -3397,6 +3459,7 @@
       state.plans[category.id][sourceMonth] = sourceBudget;
       category.defaultAmount = previousDefaultAmount;
       category.planRule = previousPlanRule;
+      state.budgetAdditions = previousBudgetAdditions;
       updateCalculatorAddBudgetSummary();
       throw error;
     }
@@ -3409,7 +3472,6 @@
     const stored = state.transactions.find((transaction) => transaction.id === pendingTransaction.id);
     if (stored) {
       stored.memo = String(memo || "").trim();
-      stored.updatedAt = appTimestamp();
     }
     const category = categoryById(pendingTransaction.categoryId);
     const amount = pendingTransaction.amount;
@@ -4326,6 +4388,8 @@
     const normalizedPlanDraft = {};
     Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = allowsNegative ? toInteger(amount) : Math.max(0, toInteger(amount)); });
     state.plans[editingPlanCategoryId] = { ...(state.plans[editingPlanCategoryId] || {}), ...normalizedPlanDraft };
+    state.budgetAdditions = (Array.isArray(state.budgetAdditions) ? state.budgetAdditions : [])
+      .filter((entry) => entry && entry.categoryId !== editingPlanCategoryId);
     category.name = name;
     category.group = group;
     category.color = color;
