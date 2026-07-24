@@ -634,6 +634,12 @@
     const expenseCategories = expenseCategoriesForReporting(month);
     const incomeCategories = incomeCategoriesForReporting(month);
     const expensePlan = expenseCategories.reduce((sum, category) => sum + activeExpensePlanAmount(category, month), 0);
+    const expenseCarryover = expenseCategories.reduce((sum, category) => {
+      const planned = activeExpensePlanAmount(category, month);
+      if (planned <= 0) return sum;
+      const carry = Math.max(0, categoryBudgetStats(category.id, month).carry);
+      return sum + Math.min(planned, carry);
+    }, 0);
     const incomePlan = incomeCategories.reduce((sum, category) => sum + activeIncomePlanAmount(category, month), 0);
     const incomeForecast = incomeCategories.reduce((sum, category) => {
       const planned = activeIncomePlanAmount(category, month);
@@ -653,6 +659,7 @@
     return {
       month,
       expensePlan,
+      expenseCarryover,
       incomePlan,
       incomeForecast,
       expenseActual,
@@ -1858,18 +1865,20 @@
   function renderInteractiveOverviewBarChart({ id, title, description, aggregates, selectedIndex, series }) {
     const scale = chartValueScale(aggregates.flatMap((item) => series.map((itemSeries) => item[itemSeries.field])));
     const selected = aggregates[selectedIndex] || aggregates[0] || { month: currentPeriod };
+    const carryoverHighlights = id === "expense" ? expenseCarryoverHighlights(aggregates, scale) : [];
     const selectionLeft = overviewProjectOverviewEnabled
       ? `${((selectedIndex + 0.5) / Math.max(1, aggregates.length)) * 100}%`
       : `${selectedIndex * 3.1 + 1.55}rem`;
     return `<section class="card chart-card interactive-bar-chart-card${overviewProjectOverviewEnabled ? " is-project-overview" : ""}" aria-labelledby="${id}-chart-title">
       <div class="chart-card-heading"><div class="section-copy"><p class="section-kicker">${aggregates.length} MONTHS</p><h2 id="${id}-chart-title">${title}</h2><p>${description}</p></div>${overviewProjectViewButton()}</div>
-      <div class="chart-legend">${series.map((item) => legend(item.color, item.label)).join("")}</div>
+      <div class="chart-legend">${series.map((item) => legend(item.color, item.label)).join("")}${id === "expense" ? legend("#f6cc3d", "持ち越し分（過去月）") : ""}</div>
       <div class="chart-scroll" data-chart-scroll-key="${id}">
         ${renderChartAxisLabels(scale)}
         <div class="chart-canvas interactive-chart-canvas" style="--month-count:${aggregates.length};--selection-left:${selectionLeft}">
           <div class="chart-plot">
             ${renderChartGridlines(scale)}
             <div class="interactive-bar-series">${aggregates.map((item, index) => renderInteractiveMonthBars(item, index, series, scale, selectedIndex)).join("")}</div>
+            ${renderExpenseCarryoverAnnotation(carryoverHighlights, aggregates.length)}
             <span class="interactive-chart-selection-guide" aria-hidden="true"></span>
             <aside class="interactive-chart-tooltip" aria-live="polite">
               <strong>${monthLabel(selected.month)}</strong>
@@ -1888,8 +1897,39 @@
       const value = item[itemSeries.field];
       const geometry = chartBarGeometry(value, scale);
       const isCurrentActual = item.month === currentPeriodForToday() && itemSeries.tone.endsWith("-actual");
-      return `<span class="interactive-chart-bar ${itemSeries.tone}${value < 0 ? " is-negative" : ""}${isCurrentActual ? " is-current-actual" : ""}" style="--bar-top:${geometry.top}%;--bar-height:${geometry.height}%"></span>`;
+      const carryover = itemSeries.field === "expensePlan" && item.month < currentPeriodForToday()
+        ? Math.min(Math.max(0, toInteger(item.expenseCarryover)), Math.max(0, value))
+        : 0;
+      const carryoverRatio = value > 0 ? clamp(carryover / value * 100, 0, 100) : 0;
+      const carryoverHighlight = carryoverRatio > 0 ? `<i class="interactive-chart-carryover-highlight" style="--carryover-height:${carryoverRatio}%"></i>` : "";
+      return `<span class="interactive-chart-bar ${itemSeries.tone}${value < 0 ? " is-negative" : ""}${isCurrentActual ? " is-current-actual" : ""}" style="--bar-top:${geometry.top}%;--bar-height:${geometry.height}%">${carryoverHighlight}</span>`;
     }).join("")}</div>`;
+  }
+
+  function expenseCarryoverHighlights(aggregates, scale) {
+    const currentMonth = currentPeriodForToday();
+    return aggregates.map((item, index) => {
+      const amount = item.month < currentMonth
+        ? Math.min(Math.max(0, toInteger(item.expenseCarryover)), Math.max(0, toInteger(item.expensePlan)))
+        : 0;
+      return { index, amount, geometry: chartBarGeometry(item.expensePlan, scale) };
+    }).filter((item) => item.amount > 0);
+  }
+
+  function renderExpenseCarryoverAnnotation(highlights, monthCount) {
+    if (!highlights.length) return "";
+    const width = Math.max(1, monthCount * 100);
+    const total = highlights.reduce((sum, item) => sum + item.amount, 0);
+    const averageX = highlights.reduce((sum, item) => sum + item.index * 100 + 31, 0) / highlights.length;
+    const labelLeft = clamp(averageX / width * 100 + 12, 17, 83);
+    const labelX = width * labelLeft / 100;
+    const labelTop = clamp(Math.min(...highlights.map((item) => item.geometry.top)) - 13, 3, 72);
+    const connectorY = labelTop + 8;
+    const connectors = highlights.map((item) => {
+      const x = item.index * 100 + 31;
+      return `<polyline points="${x},${item.geometry.top.toFixed(2)} ${x},${connectorY.toFixed(2)} ${labelX.toFixed(2)},${connectorY.toFixed(2)}"></polyline>`;
+    }).join("");
+    return `<svg class="expense-carryover-annotation" viewBox="0 0 ${width} 100" preserveAspectRatio="none" aria-hidden="true">${connectors}</svg><span class="expense-carryover-total" style="--carryover-label-left:${labelLeft.toFixed(2)}%;--carryover-label-top:${labelTop.toFixed(2)}%"><span>持ち越し額</span><strong>${formatCurrency(total)}</strong></span>`;
   }
 
   function renderCumulativeNetChart(aggregates, selectedIndex, activeIndex) {
