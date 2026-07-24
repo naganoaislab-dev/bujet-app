@@ -393,8 +393,8 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .overview-page-tab { min-height: 2.25rem; padding: 0.35rem 0.8rem; border: 1px solid transparent; border-radius: 0.7rem; color: var(--muted); background: transparent; font-size: 0.75rem; font-weight: 800; cursor: pointer; }
 .overview-page-tab.active { border-color: var(--line); color: var(--primary-strong); background: var(--primary-soft); }
 .overview-pages-viewport { width: 100%; overflow: hidden; touch-action: pan-y; }
-.overview-pages-track { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 200%; align-items: start; transform: translateX(var(--overview-page-offset, 0%)); transition: transform 220ms ease; }
-.overview-page { display: grid; min-width: 0; align-content: start; gap: 1rem; padding: 0 0.05rem; }
+.overview-pages-track { display: flex; width: 100%; align-items: flex-start; transform: translateX(var(--overview-page-offset, 0%)); transition: transform 220ms ease; }
+.overview-page { position: relative; display: grid; flex: 0 0 100%; width: 100%; min-width: 0; align-content: start; gap: 1rem; padding: 0 0.05rem; background: var(--bg); isolation: isolate; }
 .overview-detail-stack { display: grid; gap: 1rem; }
 .overview-analysis-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 0.8rem; border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); background: linear-gradient(135deg, var(--primary-soft), var(--surface)); }
 .overview-analysis-hero > div:last-child { min-width: 8.5rem; text-align: right; }

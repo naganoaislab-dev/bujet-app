@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.62";
+  const APP_VERSION = "0.5.63";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -1623,7 +1623,7 @@
       render();
       return;
     }
-    track.style.setProperty("--overview-page-offset", `${nextPage * -(100 / OVERVIEW_PAGE_COUNT)}%`);
+    track.style.setProperty("--overview-page-offset", `${nextPage * -100}%`);
     overviewPageTransitionTimer = window.setTimeout(() => {
       overviewPageTransitionTimer = null;
       render();
@@ -1710,7 +1710,7 @@
         <button type="button" class="overview-page-tab${overviewDetailPage === 1 ? " active" : ""}" data-overview-page="1" aria-current="${overviewDetailPage === 1 ? "page" : "false"}">詳細分析</button>
       </div>
       <div class="overview-pages-viewport" data-overview-pages tabindex="0" aria-label="全体状況。左右にスライドして推移と詳細分析を切り替えます。">
-        <div class="overview-pages-track" style="--overview-page-offset:${overviewDetailPage * -(100 / OVERVIEW_PAGE_COUNT)}%">
+        <div class="overview-pages-track" style="--overview-page-offset:${overviewDetailPage * -100}%">
           <section class="overview-page overview-trends-page">
       <section class="card overview-hero" aria-label="${projectDateLabel(state.settings.endDate)}時点の見込み収支">
         <div><p class="section-kicker">PROJECT END FORECAST</p><h2>${projectDateLabel(state.settings.endDate)}時点の見込み収支</h2><p>これまでの実績と、残りの計画から算出した見込み収支。</p></div>
