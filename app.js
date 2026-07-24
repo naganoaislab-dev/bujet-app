@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.64";
+  const APP_VERSION = "0.5.68";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -664,16 +664,37 @@
     };
   }
 
-  function projectEndForecastFromAggregates(aggregates, today = localDateKey()) {
+  function projectEndForecastFromAggregates(aggregates) {
     if (!aggregates.length) return 0;
-    if (today > state.settings.endDate) return aggregates.reduce((sum, item) => sum + item.actualNet, 0);
-    const activePeriodIndex = Math.max(0, aggregates.findIndex((item) => item.month === currentPeriodForToday()));
-    return aggregates.reduce((sum, item, index) => {
-      if (index < activePeriodIndex) return sum + item.actualNet;
-      if (index > activePeriodIndex) return sum + item.plannedNet - item.unexpectedExpenseActual + item.unexpectedIncomeActual;
-      const budgetedExpenseActual = Math.max(0, item.expenseActual - item.unexpectedExpenseActual);
-      return sum + item.incomeForecast - Math.max(budgetedExpenseActual, item.expensePlan) - item.unexpectedExpenseActual;
-    }, 0);
+
+    // 見込み収支は、日付の経過ではなく「現在置いている予算」を基準にします。
+    // これにより、未入力のまま月度だけが進んでも予定額が消えず、持ち越しや
+    // 予算シフトも単なる予算の配置変更として扱われます。
+    let forecast = 0;
+    let plannedExpenseThroughMonth = 0;
+    let budgetedExpenseActualThroughMonth = 0;
+    let largestBudgetedOverage = 0;
+
+    aggregates.forEach((item) => {
+      forecast += item.plannedNet;
+
+      // 通常収入の上振れ、または「収入（マイナス込み）」の実績だけを
+      // 計画からの差分として反映します。未入力の通常収入は計画を維持します。
+      forecast += item.incomeForecast - item.incomePlan;
+
+      // 想定外支出は計画外のため、入力された時点で直接差し引きます。
+      forecast -= item.unexpectedExpenseActual;
+
+      // 計画内の支出は、過去からの持ち越しも含めた予算コミットメントで
+      // 相殺します。相殺できない超過だけを見込み収支から引き、月度が
+      // 進んだからといって回復・悪化しないよう、最大超過額を保持します。
+      plannedExpenseThroughMonth += item.expensePlan;
+      budgetedExpenseActualThroughMonth += Math.max(0, item.expenseActual - item.unexpectedExpenseActual);
+      largestBudgetedOverage = Math.max(largestBudgetedOverage, budgetedExpenseActualThroughMonth - plannedExpenseThroughMonth);
+      item.commitmentForecastCumulative = forecast - largestBudgetedOverage;
+    });
+
+    return forecast - largestBudgetedOverage;
   }
 
   function projectEndForecastAfterBudgetReturn(month, amount) {
@@ -1677,14 +1698,12 @@
     const activeAggregate = aggregates[activeCumulativeIndex] || { actualCumulative: 0, expensePlan: 0, expenseActual: 0, unexpectedExpenseActual: 0 };
     const activeBudgetedExpenseActual = Math.max(0, activeAggregate.expenseActual - activeAggregate.unexpectedExpenseActual);
     const currentPlanExpenseRemaining = Math.max(0, activeAggregate.expensePlan - activeBudgetedExpenseActual);
-    let actualForecastCumulative = aggregates[activeCumulativeIndex]?.actualCumulative || 0;
-    let planExpenseForecastCumulative = actualForecastCumulative - currentPlanExpenseRemaining;
+    let planExpenseForecastCumulative = (aggregates[activeCumulativeIndex]?.actualCumulative || 0) - currentPlanExpenseRemaining;
     aggregates.forEach((item, index) => {
       if (index <= activeCumulativeIndex) {
         item.actualForecastCumulative = item.actualCumulative;
       } else {
-        actualForecastCumulative += item.plannedNet;
-        item.actualForecastCumulative = actualForecastCumulative;
+        item.actualForecastCumulative = item.commitmentForecastCumulative;
       }
       if (index < activeCumulativeIndex) {
         item.planExpenseForecastCumulative = item.actualCumulative;
