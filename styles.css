@@ -161,14 +161,14 @@ p { color: var(--muted); line-height: 1.55; }
 .summary-card .label { display: block; margin-bottom: 0.35rem; color: var(--muted); font-size: 0.72rem; font-weight: 700; }
 .summary-card strong { display: block; overflow: hidden; font-size: clamp(1.05rem, 5vw, 1.35rem); letter-spacing: -0.03em; text-overflow: ellipsis; white-space: nowrap; }
 .summary-card .subvalue { display: block; margin-top: 0.25rem; color: var(--muted); font-size: 0.7rem; }
-.overview-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 1rem; border-color: transparent; color: #fff; background: linear-gradient(135deg, var(--primary-strong), var(--primary-glow)); }
+.overview-hero { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; gap: 0.6rem; border-color: transparent; color: #fff; background: linear-gradient(135deg, var(--primary-strong), var(--primary-glow)); }
 .overview-hero > div:first-child { min-width: 0; }
 .overview-hero h2, .overview-hero p { margin-bottom: 0; }
 .overview-hero h2 { color: #fff; }
 .overview-hero .section-kicker, .overview-hero p { color: rgba(255, 255, 255, 0.78); }
 .overview-hero-total { min-width: 0; text-align: right; }
 .overview-hero-total strong, .overview-hero-total span { display: block; }
-.overview-hero-total strong { overflow: hidden; color: #fff; font-size: clamp(1.45rem, 7vw, 2.15rem); letter-spacing: -0.05em; text-overflow: ellipsis; white-space: nowrap; }
+.overview-hero-total strong { overflow: hidden; color: #fff; font-size: var(--forecast-value-size, 8.4vw); font-variant-numeric: tabular-nums; letter-spacing: -0.055em; text-overflow: ellipsis; white-space: nowrap; }
 .overview-hero-total strong.positive { color: var(--hero-positive) !important; }
 .overview-hero-total strong.negative { color: var(--hero-negative) !important; }
 .overview-hero-total span { margin-top: 0.25rem; color: rgba(255, 255, 255, 0.78); font-size: 0.7rem; font-weight: 700; }
@@ -202,6 +202,7 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .budget-card-carry { display: flex; justify-content: space-between; gap: 0.35rem; margin-top: auto; color: var(--muted); font-size: 0.68rem; }
 .budget-card-carry strong { color: inherit; }
 .budget-card-carry .monthly-budget-exhausted { color: var(--danger); }
+.budget-card-carry.plan-none { justify-content: flex-start; }
 .budget-progress { height: 0.32rem; margin-top: 0.65rem; overflow: hidden; border-radius: 99px; background: var(--surface-2); }
 .budget-progress > span { display: block; width: var(--progress); height: 100%; border-radius: inherit; background: var(--category-color); }
 .budget-card-footer { display: flex; gap: 0.55rem; margin-top: auto; flex-direction: column; }
@@ -247,6 +248,7 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .transaction-main { min-width: 0; }
 .transaction-main strong, .transaction-main span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .transaction-main span { margin-top: 0.18rem; color: var(--muted); font-size: 0.7rem; }
+.transaction-activity { color: var(--muted); font-size: 0.64rem; font-weight: 700; }
 .transaction-amount { font-size: 0.9rem; font-weight: 850; }
 .empty-state { padding: 1.4rem 1rem; border: 1px dashed var(--line); border-radius: 1rem; color: var(--muted); text-align: center; font-size: 0.85rem; }
 
@@ -412,10 +414,6 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .overview-page { display: grid; width: 100%; min-width: 0; max-width: 100%; align-content: start; gap: 1rem; padding: 0 0.05rem; }
 .overview-page > * { min-width: 0; max-width: 100%; }
 .overview-detail-stack { display: grid; min-width: 0; max-width: 100%; gap: 1rem; }
-.overview-analysis-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; max-width: 100%; align-items: end; gap: 0.8rem; overflow: hidden; border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); background: linear-gradient(135deg, var(--primary-soft), var(--surface)); }
-.overview-analysis-hero > div:last-child { min-width: 8.5rem; text-align: right; }
-.overview-analysis-hero span, .overview-analysis-hero small { display: block; color: var(--muted); font-size: 0.68rem; font-weight: 750; }
-.overview-analysis-hero strong { display: block; margin: 0.15rem 0; font-size: clamp(1.28rem, 6vw, 1.75rem); letter-spacing: -0.04em; }
 .project-progress-card { display: grid; gap: 0.75rem; }
 .project-progress-card .section-copy, .project-progress-card .section-copy p { margin-bottom: 0; }
 .project-progress-legend { display: flex; flex-wrap: wrap; gap: 0.65rem; color: var(--muted); font-size: 0.66rem; font-weight: 750; }
@@ -473,8 +471,6 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
   .chart-heading-actions { width: 100%; justify-content: flex-start; }
   .chart-heading-actions .button { flex: 1 1 auto; }
   .overview-project-toggle { align-self: flex-start; }
-  .overview-analysis-hero { grid-template-columns: 1fr; }
-  .overview-analysis-hero > div:last-child { min-width: 0; text-align: left; }
 }
 .analysis-ratio-page { gap: 0.9rem; }
 .ratio-chart-card { display: grid; gap: 0.75rem; overflow: hidden; }
