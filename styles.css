@@ -321,7 +321,7 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .chart-plot .line-overlay { inset: 0; width: 100%; height: 100%; }
 .interactive-bar-series { position: absolute; z-index: 2; inset: 0; display: grid; grid-template-columns: repeat(var(--month-count), 3.1rem); }
 .interactive-month-bars { position: relative; height: 100%; }
-.interactive-chart-bar { position: absolute; top: var(--bar-top); width: 30%; height: var(--bar-height); min-height: 0; border-radius: 0.22rem 0.22rem 0 0; }
+.interactive-chart-bar { position: absolute; top: var(--bar-top); width: 30%; height: var(--bar-height); min-height: 0; overflow: hidden; border-radius: 0.22rem 0.22rem 0 0; }
 .interactive-chart-bar:nth-child(1) { left: 16%; }
 .interactive-chart-bar:nth-child(2) { right: 16%; }
 .interactive-chart-bar.is-negative { border-radius: 0 0 0.22rem 0.22rem; }
@@ -333,6 +333,8 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .interactive-chart-bar.income-actual.is-negative { background: #d66735; }
 .interactive-chart-bar.monthly-net-planned { background: #7f9dc2; }
 .interactive-chart-bar.monthly-net-actual { background: #3c69a1; }
+.interactive-chart-carryover-highlight { position: absolute; top: 0; right: 0; left: 0; display: block; height: var(--carryover-height); background: linear-gradient(180deg, #ffe98c, #f6c72e); box-shadow: 0 0 0.45rem color-mix(in srgb, #f6c72e 94%, transparent), 0 0 0.9rem color-mix(in srgb, #f6c72e 48%, transparent); animation: expense-carryover-glow 1.6s ease-in-out infinite; }
+@keyframes expense-carryover-glow { 0%, 100% { filter: brightness(1); opacity: 0.86; } 50% { filter: brightness(1.24); opacity: 1; } }
 .interactive-chart-bar.expense-actual.is-current-actual { --current-actual-glow: #d66735; }
 .interactive-chart-bar.income-actual.is-current-actual { --current-actual-glow: #2f8057; }
 .interactive-chart-bar.monthly-net-actual.is-current-actual { --current-actual-glow: #3c69a1; }
@@ -341,6 +343,10 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 @keyframes current-actual-point-pulse { 0%, 100% { transform: translate(-50%, -50%) scale(1); box-shadow: 0 0 0.12rem color-mix(in srgb, #c45e43 42%, transparent); } 50% { transform: translate(-50%, -50%) scale(1.55); box-shadow: 0 0 0.52rem color-mix(in srgb, #c45e43 88%, transparent); } }
 .interactive-chart-selection-guide, .cumulative-chart-selection-guide { top: 0; bottom: 0; left: var(--selection-left); }
 .interactive-chart-selection-guide { position: absolute; z-index: 4; border-left: 1px dashed var(--ink); opacity: 0.42; pointer-events: none; }
+.expense-carryover-annotation { position: absolute; z-index: 3; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.expense-carryover-annotation polyline { fill: none; stroke: #f6cc3d; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 0.16rem color-mix(in srgb, #f6cc3d 75%, transparent)); }
+.expense-carryover-total { position: absolute; z-index: 7; top: var(--carryover-label-top); left: var(--carryover-label-left); display: grid; min-width: 5.9rem; gap: 0.04rem; padding: 0.24rem 0.38rem; border: 1px solid color-mix(in srgb, #f6cc3d 75%, var(--line)); border-radius: 0.45rem; color: #6f5710; background: color-mix(in srgb, #fff5bf 88%, var(--surface)); box-shadow: 0 0.16rem 0.55rem color-mix(in srgb, #f6cc3d 32%, transparent); font-size: 0.53rem; line-height: 1.15; pointer-events: none; transform: translateX(-50%); }
+.expense-carryover-total strong { color: #5c4500; font-size: 0.65rem; }
 .interactive-chart-tooltip { position: absolute; z-index: 6; top: 0.25rem; left: clamp(5rem, var(--selection-left), calc(100% - 5rem)); display: grid; width: 9.65rem; gap: 0.2rem; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 0.65rem; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 5px 14px rgba(29, 38, 32, 0.13); font-size: 0.64rem; line-height: 1.35; pointer-events: none; transform: translateX(-50%); }
 .interactive-chart-tooltip strong { font-size: 0.72rem; }
 .interactive-chart-tooltip span { display: flex; align-items: center; gap: 0.28rem; font-weight: 800; }
