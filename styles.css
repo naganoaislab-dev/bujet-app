@@ -252,11 +252,16 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 
 .chart-card { padding: 1rem 0 0.85rem; overflow: hidden; }
 .chart-card > .section-copy, .chart-card > .chart-legend, .chart-card > .chart-note { padding-right: 1rem; padding-left: 1rem; }
+.chart-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.7rem; padding: 0 1rem; }
+.chart-card-heading .section-copy { min-width: 0; }
 .cumulative-chart-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.7rem; padding: 0 1rem; }
 .cumulative-chart-heading .section-copy { min-width: 0; }
+.chart-heading-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: end; gap: 0.35rem; }
+.overview-project-toggle { flex: 0 0 auto; min-height: 2.35rem; margin-top: 0.1rem; padding: 0.45rem 0.65rem; border-color: var(--line); font-size: 0.68rem; white-space: nowrap; }
+.overview-project-toggle.is-active { border-color: color-mix(in srgb, var(--primary) 68%, var(--line)); color: var(--primary-strong); background: var(--primary-soft); }
 .cumulative-scale-toggle { flex: 0 0 auto; min-height: 2.35rem; margin-top: 0.1rem; padding: 0.45rem 0.65rem; border-color: var(--line); font-size: 0.68rem; white-space: nowrap; }
 .cumulative-scale-toggle.is-active { border-color: color-mix(in srgb, var(--primary) 68%, var(--line)); color: var(--primary-strong); background: color-mix(in srgb, var(--primary) 11%, var(--surface)); }
-.chart-scroll { position: relative; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
+.chart-scroll { position: relative; width: 100%; max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
 .chart-axis-labels { position: sticky; z-index: 8; left: 0; width: 3.5rem; height: 22rem; margin: 0.5rem 0 -22.5rem; border-right: 1px solid color-mix(in srgb, var(--line) 78%, var(--surface)); background: var(--surface); box-shadow: 0 0 0.3rem 0.08rem var(--surface); isolation: isolate; pointer-events: none; }
 .chart-axis-label-plot { position: absolute; top: 1.25rem; right: 0.25rem; bottom: 3.25rem; left: 0.7rem; }
 .chart-axis-label-plot span { position: absolute; right: 0; width: 2.55rem; color: var(--muted); background: var(--surface); font-size: 0.58rem; text-align: left; transform: translateY(-50%); }
@@ -352,11 +357,16 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .interactive-chart-tap-target.is-selected { background: color-mix(in srgb, var(--primary) 7%, transparent); }
 .chart-plot .cumulative-chart-tooltip { top: 0.25rem; }
 .chart-plot .cumulative-chart-tap-targets { inset: 0; }
+.chart-card.is-project-overview .chart-scroll { overflow-x: hidden; }
+.chart-card.is-project-overview .chart-canvas { width: 100%; min-width: 0; margin-right: 0; }
+.chart-card.is-project-overview .interactive-bar-series, .chart-card.is-project-overview .interactive-chart-tap-targets, .chart-card.is-project-overview .cumulative-chart-tap-targets { grid-template-columns: repeat(var(--month-count), minmax(0, 1fr)); }
+.chart-card.is-project-overview .cumulative-chart-months { grid-template-columns: repeat(var(--month-count), minmax(0, 1fr)); }
+.chart-card.is-project-overview .cumulative-chart-months span { font-size: 0.46rem; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 0.55rem 0.9rem; margin: 0.65rem 0 0.4rem; }
 .legend-item { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--muted); font-size: 0.64rem; font-weight: 700; }
 .legend-swatch { width: 0.75rem; height: 0.5rem; border-radius: 0.15rem; background: var(--legend-color); }
 .chart-note { margin-bottom: 0; font-size: 0.7rem; }
-.table-scroll { overflow-x: auto; }
+.table-scroll { width: 100%; max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; -webkit-overflow-scrolling: touch; }
 .data-table { width: 100%; min-width: 40rem; border-collapse: collapse; font-size: 0.72rem; }
 .data-table th, .data-table td { padding: 0.65rem 0.5rem; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
 .data-table th:first-child, .data-table td:first-child { position: sticky; left: 0; text-align: left; background: var(--surface); }
@@ -392,9 +402,8 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .overview-page-tabs { display: flex; align-items: center; justify-content: center; gap: 0.35rem; padding: 0 0.15rem; }
 .overview-page-tab { min-height: 2.25rem; padding: 0.35rem 0.8rem; border: 1px solid transparent; border-radius: 0.7rem; color: var(--muted); background: transparent; font-size: 0.75rem; font-weight: 800; cursor: pointer; }
 .overview-page-tab.active { border-color: var(--line); color: var(--primary-strong); background: var(--primary-soft); }
-.overview-pages-viewport { width: 100%; overflow: hidden; touch-action: pan-y; }
-.overview-pages-track { display: flex; width: 100%; align-items: flex-start; transform: translateX(var(--overview-page-offset, 0%)); transition: transform 220ms ease; }
-.overview-page { position: relative; display: grid; flex: 0 0 100%; width: 100%; min-width: 0; align-content: start; gap: 1rem; padding: 0 0.05rem; background: var(--bg); isolation: isolate; }
+.overview-pages-viewport { width: 100%; min-width: 0; overflow: hidden; touch-action: pan-y; }
+.overview-page { display: grid; width: 100%; min-width: 0; align-content: start; gap: 1rem; padding: 0 0.05rem; }
 .overview-detail-stack { display: grid; gap: 1rem; }
 .overview-analysis-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 0.8rem; border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); background: linear-gradient(135deg, var(--primary-soft), var(--surface)); }
 .overview-analysis-hero > div:last-child { min-width: 8.5rem; text-align: right; }
@@ -418,6 +427,34 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .project-progress-actual { top: 0.2rem; bottom: 0.2rem; background: var(--category-color); }
 .project-progress-actual.has-value { min-width: 0.22rem; }
 .project-progress-actual.is-over { background: var(--danger); }
+.project-timeline-card { display: grid; gap: 0.75rem; overflow: hidden; }
+.project-timeline-card .section-copy, .project-timeline-card .section-copy p { margin-bottom: 0; }
+.project-timeline-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.7rem; }
+.project-timeline-heading .section-copy { min-width: 0; }
+.project-timeline-legend { display: flex; flex-wrap: wrap; gap: 0.65rem; color: var(--muted); font-size: 0.66rem; font-weight: 750; }
+.project-timeline-legend span { display: inline-flex; align-items: center; gap: 0.25rem; }
+.project-timeline-legend i { width: 0.8rem; height: 0.42rem; border-radius: 0.15rem; }
+.project-timeline-plan-key { background: color-mix(in srgb, var(--primary) 32%, var(--surface-2)); }
+.project-timeline-actual-key { background: var(--primary); }
+.project-timeline-scroll { width: 100%; max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 0.8rem; }
+.project-timeline-grid { display: grid; min-width: max-content; background: var(--surface); }
+.project-timeline-corner, .project-timeline-month, .project-timeline-label, .project-timeline-cell { min-height: 2.6rem; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.project-timeline-corner, .project-timeline-month { display: grid; place-items: center; padding: 0.35rem; color: var(--muted); background: var(--surface-2); font-size: 0.59rem; font-weight: 800; text-align: center; white-space: nowrap; }
+.project-timeline-corner { position: sticky; z-index: 4; left: 0; box-shadow: 0.28rem 0 0.3rem rgba(var(--surface-rgb), 0.94); }
+.project-timeline-label { position: sticky; z-index: 3; left: 0; display: grid; align-content: center; gap: 0.18rem; padding: 0.35rem 0.45rem; background: var(--surface); box-shadow: 0.28rem 0 0.3rem rgba(var(--surface-rgb), 0.94); }
+.project-timeline-label strong { overflow: hidden; font-size: 0.66rem; text-overflow: ellipsis; white-space: nowrap; }
+.project-timeline-label span { overflow: hidden; color: var(--muted); font-size: 0.52rem; text-overflow: ellipsis; white-space: nowrap; }
+.project-timeline-cell { position: relative; display: grid; place-items: center; overflow: hidden; background: var(--surface); }
+.project-timeline-cell i { position: absolute; right: 0.22rem; left: 0.22rem; display: block; border-radius: 999px; background: var(--category-color); }
+.project-timeline-plan { top: 0.52rem; bottom: 0.52rem; opacity: var(--plan-opacity); }
+.project-timeline-actual { top: 0.93rem; bottom: 0.93rem; opacity: var(--actual-opacity); }
+.project-timeline-cell.is-unplanned .project-timeline-actual { background: var(--danger); }
+.project-timeline-card.is-project-overview .project-timeline-scroll { overflow-x: hidden; }
+.project-timeline-card.is-project-overview .project-timeline-corner, .project-timeline-card.is-project-overview .project-timeline-label { min-width: 0; padding-right: 0.25rem; padding-left: 0.25rem; }
+.project-timeline-card.is-project-overview .project-timeline-label strong { font-size: 0.57rem; }
+.project-timeline-card.is-project-overview .project-timeline-label span { display: none; }
+.project-timeline-card.is-project-overview .project-timeline-month { padding-right: 0; padding-left: 0; font-size: 0.43rem; }
+.project-timeline-card.is-project-overview .project-timeline-cell i { right: 0.08rem; left: 0.08rem; }
 .project-analysis-note .section-copy, .project-analysis-note .section-copy p { margin-bottom: 0; }
 .analysis-ratio-page { gap: 0.9rem; }
 .ratio-chart-card { display: grid; gap: 0.75rem; overflow: hidden; }
