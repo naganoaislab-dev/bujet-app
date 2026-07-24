@@ -2198,30 +2198,52 @@
     }).join("")}</div>${rows.length > visibleRows.length ? `<p class="chart-note">金額が大きい上位${visibleRows.length}項目を表示しています。</p>` : ""}</section>`;
   }
 
-  function renderProjectExpenseTimeline(rows) {
-    const months = periodMonths();
+  function renderProjectFinanceAreaChart(aggregates) {
     const isProjectOverview = overviewProjectOverviewEnabled;
-    if (!rows.length || !months.length) {
-      return `<section class="card project-timeline-card"><div class="section-copy"><p class="section-kicker">SPENDING TIMELINE</p><h2>支出項目ごとの計画・実績</h2><p>プロジェクト期間を横軸に、支出項目ごとの推移を表示します。</p></div><div class="empty-state">支出計画または実績がまだありません。</div></section>`;
+    if (!aggregates.length) {
+      return `<section class="card project-area-card"><div class="section-copy"><p class="section-kicker">PROJECT AREA</p><h2>プロジェクトの収支推移</h2><p>プロジェクト期間を横軸に、収支の計画と実績を面グラフで表示します。</p></div><div class="empty-state">計画または実績がまだありません。</div></section>`;
     }
-    const maximum = Math.max(1, ...rows.flatMap((row) => months.flatMap((month) => [
-      Math.max(0, activeExpensePlanAmount(row.category, month)),
-      Math.max(0, actualAmount(row.category.id, month))
-    ])));
-    const columns = isProjectOverview ? `5.6rem repeat(${months.length}, minmax(0, 1fr))` : `7.45rem repeat(${months.length}, 2.65rem)`;
-    const cells = rows.map((row) => {
-      const label = `<div class="project-timeline-label"><strong>${escapeHtml(row.category.name)}</strong><span>計 ${formatCurrency(row.plan)} ／ 実 ${formatCurrency(row.actual)}</span></div>`;
-      const monthsMarkup = months.map((month) => {
-        const plan = Math.max(0, activeExpensePlanAmount(row.category, month));
-        const actual = Math.max(0, actualAmount(row.category.id, month));
-        const planOpacity = plan > 0 ? Math.max(0.16, plan / maximum) : 0;
-        const actualOpacity = actual > 0 ? Math.max(0.22, actual / maximum) : 0;
-        const unplanned = plan === 0 && actual > 0;
-        return `<div class="project-timeline-cell${unplanned ? " is-unplanned" : ""}" aria-label="${escapeHtml(row.category.name)}、${monthLabel(month)}。計画 ${formatCurrency(plan)}、実績 ${formatCurrency(actual)}" style="--category-color:${escapeHtml(row.category.color)};--plan-opacity:${planOpacity.toFixed(3)};--actual-opacity:${actualOpacity.toFixed(3)}"><i class="project-timeline-plan"></i><i class="project-timeline-actual"></i></div>`;
-      }).join("");
-      return `${label}${monthsMarkup}`;
+
+    const series = [
+      { field: "expensePlan", label: "支出計画", tone: "expense-plan", color: "#e8b59b" },
+      { field: "expenseActual", label: "支出実績", tone: "expense-actual", color: "#d66735" },
+      { field: "incomePlan", label: "収入計画", tone: "income-plan", color: "#a8ceba" },
+      { field: "incomeActual", label: "収入実績", tone: "income-actual", color: "#2f8057" }
+    ];
+    const scale = chartValueScale(aggregates.flatMap((item) => series.map((itemSeries) => item[itemSeries.field] || 0)));
+    const graphWidth = Math.max(260, aggregates.length * 92);
+    const leftPadding = 13;
+    const rightPadding = 13;
+    const xFor = (index) => aggregates.length === 1
+      ? graphWidth / 2
+      : leftPadding + (index / (aggregates.length - 1)) * (graphWidth - leftPadding - rightPadding);
+    const yFor = (value) => 94 - ((value - scale.minimum) / scale.range) * 88;
+    const zeroY = yFor(0);
+    const seriesPaths = series.map((itemSeries) => {
+      const values = aggregates.map((item) => item[itemSeries.field] || 0);
+      const points = values.map((value, index) => [xFor(index), yFor(value)]);
+      const areaPath = aggregates.length === 1
+        ? `M ${leftPadding} ${zeroY.toFixed(2)} L ${(graphWidth - rightPadding).toFixed(2)} ${zeroY.toFixed(2)} L ${(graphWidth - rightPadding).toFixed(2)} ${points[0][1].toFixed(2)} L ${leftPadding} ${points[0][1].toFixed(2)} Z`
+        : `M ${xFor(0).toFixed(2)} ${zeroY.toFixed(2)} L ${points.map((point) => `${point[0].toFixed(2)} ${point[1].toFixed(2)}`).join(" L ")} L ${xFor(aggregates.length - 1).toFixed(2)} ${zeroY.toFixed(2)} Z`;
+      const singlePoint = aggregates.length === 1 ? `<circle class="project-area-point ${itemSeries.tone}" cx="${points[0][0].toFixed(2)}" cy="${points[0][1].toFixed(2)}" r="2.6"></circle>` : "";
+      return `<path class="project-area-fill ${itemSeries.tone}" d="${areaPath}"></path><polyline class="project-area-line ${itemSeries.tone}" points="${points.map((point) => `${point[0].toFixed(2)},${point[1].toFixed(2)}`).join(" ")}"></polyline>${singlePoint}`;
     }).join("");
-    return `<section class="card project-timeline-card${isProjectOverview ? " is-project-overview" : ""}"><div class="project-timeline-heading"><div class="section-copy"><p class="section-kicker">SPENDING TIMELINE</p><h2>支出項目ごとの計画・実績</h2><p>横軸はプロジェクト期間です。淡い帯が計画、濃い帯が実績で、横にスライドして全期間を確認できます。</p></div>${overviewProjectViewButton()}</div><div class="project-timeline-legend"><span><i class="project-timeline-plan-key"></i>計画</span><span><i class="project-timeline-actual-key"></i>実績</span></div><div class="project-timeline-scroll"><div class="project-timeline-grid" style="grid-template-columns:${columns}${isProjectOverview ? ";width:100%;min-width:100%" : ""}"><div class="project-timeline-corner">項目</div>${months.map((month, index) => `<div class="project-timeline-month">${isProjectOverview && index % 3 !== 0 ? "" : `${monthParts(month).month}月度`}</div>`).join("")}${cells}</div></div></section>`;
+    const gridValues = chartAxisValues(scale);
+    return `<section class="card project-area-card${isProjectOverview ? " is-project-overview" : ""}">
+      <div class="project-area-heading"><div class="section-copy"><p class="section-kicker">PROJECT AREA</p><h2>プロジェクトの収支推移</h2><p>横軸はプロジェクト期間です。支出計画・支出実績・収入計画・収入実績を、ゼロ線を基準に面で比較できます。</p></div>${overviewProjectViewButton()}</div>
+      <div class="chart-legend">${series.map((itemSeries) => legend(itemSeries.color, itemSeries.label)).join("")}</div>
+      <div class="project-area-scroll" data-chart-scroll-key="project-finance-area">
+        <div class="project-area-canvas" style="--month-count:${aggregates.length};--area-width:${graphWidth}">
+          <svg class="project-area-svg" viewBox="0 0 ${graphWidth} 100" preserveAspectRatio="none" role="img" aria-label="プロジェクトの収支推移。支出計画・支出実績・収入計画・収入実績を表示">
+            ${gridValues.map((value) => `<line class="project-area-gridline${value === 0 ? " is-zero" : ""}" x1="0" y1="${yFor(value).toFixed(2)}" x2="${graphWidth}" y2="${yFor(value).toFixed(2)}"></line>`).join("")}
+            ${seriesPaths}
+          </svg>
+          <div class="project-area-scale" aria-hidden="true">${gridValues.map((value) => `<span style="top:${((yFor(value) - 6) / 88 * 100).toFixed(2)}%">${formatChartAxisValue(value)}</span>`).join("")}</div>
+          <div class="project-area-months" aria-hidden="true">${aggregates.map((item, index) => `<span>${overviewMonthAxisLabel(item.month, index)}</span>`).join("")}</div>
+        </div>
+      </div>
+      <p class="chart-note">${isProjectOverview ? "全体俯瞰を表示中です。" : "横にスライドして全期間を確認できます。"}</p>
+    </section>`;
   }
 
   function renderProjectDetailAnalysis(aggregates, projectEndForecast, projectEnd) {
@@ -2251,7 +2273,7 @@
       ${renderRatioPieCard("INCOME PLAN MIX", "プロジェクトの収入計画配分", "計画収入の大きい上位5項目と、その他の構成比です。マイナスを含む収入は金額の大きさで比率を算出します。", projectIncomeRatioSegments(incomeRows, "plan"), "プロジェクト全体の収入計画がまだありません。")}
       ${renderRatioPieCard("INCOME ACTUAL MIX", "プロジェクトの収入実績配分", "実績収入の大きい上位5項目と、その他の構成比です。想定外収入も含みます。マイナスを含む収入は金額の大きさで比率を算出します。", projectIncomeRatioSegments(incomeRows, "actual"), "プロジェクト全体の収入実績がまだありません。")}
       ${renderProjectCategoryProgressChart(expenseRows)}
-      ${renderProjectExpenseTimeline(expenseRows)}
+      ${renderProjectFinanceAreaChart(aggregates)}
       <section class="card project-analysis-note"><div class="section-copy"><p class="section-kicker">READING THE RESULT</p><h2>見方</h2><p>計画配分は「どこに予算を置いているか」、実績配分と進捗は「実際にどこで使っているか」を示します。終了時見込みは、これまでの実績と今後の計画を組み合わせた値です。</p></div></section>
     </section>`;
   }
