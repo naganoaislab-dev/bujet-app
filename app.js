@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.72";
+  const APP_VERSION = "0.5.73";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -2010,7 +2010,16 @@
     const width = Math.max(1, monthCount * 100);
     const total = highlights.reduce((sum, item) => sum + item.amount, 0);
     const averageX = highlights.reduce((sum, item) => sum + item.index * 100 + 31, 0) / highlights.length;
-    const labelLeft = clamp(averageX / width * 100 + 12, 17, 83);
+    const anchorPercent = averageX / width * 100;
+    // Keep the callout next to the highlighted bar.  The previous fixed 12%
+    // offset becomes several whole months when all project months are fitted
+    // into the viewport, making the label look detached from its carryover.
+    const labelPlacement = anchorPercent < 24 ? "start" : anchorPercent > 76 ? "end" : "center";
+    const labelLeft = labelPlacement === "start"
+      ? clamp(anchorPercent + 1.4, 1.4, 88)
+      : labelPlacement === "end"
+        ? clamp(anchorPercent - 1.4, 12, 98.6)
+        : clamp(anchorPercent, 12, 88);
     const labelX = width * labelLeft / 100;
     const labelTop = clamp(Math.min(...highlights.map((item) => item.geometry.top)) - 13, 3, 72);
     const connectorY = labelTop + 8;
@@ -2018,7 +2027,7 @@
       const x = item.index * 100 + 31;
       return `<polyline points="${x},${item.geometry.top.toFixed(2)} ${x},${connectorY.toFixed(2)} ${labelX.toFixed(2)},${connectorY.toFixed(2)}"></polyline>`;
     }).join("");
-    return `<svg class="expense-carryover-annotation" viewBox="0 0 ${width} 100" preserveAspectRatio="none" aria-hidden="true">${connectors}</svg><span class="expense-carryover-total" style="--carryover-label-left:${labelLeft.toFixed(2)}%;--carryover-label-top:${labelTop.toFixed(2)}%"><span>持ち越し額</span><strong>${formatCurrency(total)}</strong></span>`;
+    return `<svg class="expense-carryover-annotation" viewBox="0 0 ${width} 100" preserveAspectRatio="none" aria-hidden="true">${connectors}</svg><span class="expense-carryover-total is-label-${labelPlacement}" style="--carryover-label-left:${labelLeft.toFixed(2)}%;--carryover-label-top:${labelTop.toFixed(2)}%"><span>持ち越し額</span><strong>${formatCurrency(total)}</strong></span>`;
   }
 
   function renderCumulativeNetChart(aggregates, selectedIndex, activeIndex) {
@@ -3097,9 +3106,6 @@
   }
 
   function resetCalculatorShiftPanel(category) {
-    const panel = document.querySelector("#calculator-shift-panel");
-    const returnPanel = document.querySelector("#calculator-return-panel");
-    const addPanel = document.querySelector("#calculator-add-budget-panel");
     const actions = document.querySelector("#calculator-budget-actions");
     const toggle = document.querySelector("#calculator-shift-toggle");
     const returnToggle = document.querySelector("#calculator-return-toggle");
@@ -3109,12 +3115,7 @@
     const targets = canShiftBudget ? calculatorShiftTargetMonths(sourceMonth) : [];
     const sources = calculatorBudgetSources(category, sourceMonth);
     const movableBudget = sources.total;
-    panel.hidden = true;
-    returnPanel.hidden = true;
-    addPanel.hidden = true;
-    document.querySelector("#calculator-expression").hidden = false;
-    document.querySelector("#calculator-display").hidden = false;
-    document.querySelector("#calculator-keys").hidden = false;
+    setCalculatorBudgetOperation();
     actions.hidden = !canShiftBudget;
     returnToggle.disabled = false;
     returnToggle.title = movableBudget <= 0 ? "返納する予算がありません" : "今月の予算と持ち越し予算から返納します";
@@ -3133,6 +3134,26 @@
     updateCalculatorShiftTargetSummary();
     updateCalculatorReturnSummary();
     updateCalculatorAddBudgetMode();
+  }
+
+  function setCalculatorBudgetOperation(operation = "") {
+    const returnPanel = document.querySelector("#calculator-return-panel");
+    const addPanel = document.querySelector("#calculator-add-budget-panel");
+    const shiftPanel = document.querySelector("#calculator-shift-panel");
+    const isAdjusting = Boolean(operation);
+    returnPanel.hidden = operation !== "return";
+    addPanel.hidden = operation !== "add";
+    shiftPanel.hidden = operation !== "shift";
+    document.querySelector("#calculator-expression").hidden = isAdjusting;
+    document.querySelector("#calculator-display").hidden = isAdjusting;
+    document.querySelector("#calculator-keys").hidden = isAdjusting;
+    document.querySelector("#calculator-budget-back").hidden = !isAdjusting;
+    document.querySelector("#calculator-budget-actions").classList.toggle("is-adjusting", isAdjusting);
+    document.querySelectorAll("[data-budget-operation]").forEach((button) => {
+      const isActive = button.dataset.budgetOperation === operation;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-selected", String(isActive));
+    });
   }
 
   function openCalculator(categoryId) {
@@ -4069,7 +4090,7 @@
     if (key) handleCalculatorKey(key.dataset.calc);
   });
   document.querySelector("#calculator-ok").addEventListener("click", () => acceptCalculator().catch((error) => showToast(error.message)));
-  document.querySelector("#calculator-shift-toggle").addEventListener("click", (event) => {
+  document.querySelector("#calculator-shift-toggle").addEventListener("click", () => {
     const category = calculatorContext && categoryById(calculatorContext.categoryId);
     if (calculatorMovableBudget(category, calculatorContext && calculatorContext.sourceMonth) <= 0) {
       showToast("シフトする予算がありません");
@@ -4079,15 +4100,7 @@
       showToast("移動先の月がありません");
       return;
     }
-    const panel = document.querySelector("#calculator-shift-panel");
-    if (!panel.hidden) return;
-    panel.hidden = false;
-    document.querySelector("#calculator-return-panel").hidden = true;
-    document.querySelector("#calculator-add-budget-panel").hidden = true;
-    document.querySelector("#calculator-expression").hidden = true;
-    document.querySelector("#calculator-display").hidden = true;
-    document.querySelector("#calculator-keys").hidden = true;
-    document.querySelector("#calculator-budget-actions").hidden = true;
+    setCalculatorBudgetOperation("shift");
     updateCalculatorShiftTargetSummary();
   });
   document.querySelector("#calculator-return-toggle").addEventListener("click", () => {
@@ -4096,30 +4109,15 @@
       showToast("返納する予算がありません");
       return;
     }
-    const panel = document.querySelector("#calculator-return-panel");
-    if (!panel.hidden) return;
-    panel.hidden = false;
-    document.querySelector("#calculator-shift-panel").hidden = true;
-    document.querySelector("#calculator-add-budget-panel").hidden = true;
-    document.querySelector("#calculator-expression").hidden = true;
-    document.querySelector("#calculator-display").hidden = true;
-    document.querySelector("#calculator-keys").hidden = true;
-    document.querySelector("#calculator-budget-actions").hidden = true;
+    setCalculatorBudgetOperation("return");
     updateCalculatorReturnSummary();
   });
   document.querySelector("#calculator-add-budget-toggle").addEventListener("click", () => {
     if (!calculatorContext || !calculatorContext.canShiftBudget) return;
-    const panel = document.querySelector("#calculator-add-budget-panel");
-    if (!panel.hidden) return;
-    panel.hidden = false;
-    document.querySelector("#calculator-return-panel").hidden = true;
-    document.querySelector("#calculator-shift-panel").hidden = true;
-    document.querySelector("#calculator-expression").hidden = true;
-    document.querySelector("#calculator-display").hidden = true;
-    document.querySelector("#calculator-keys").hidden = true;
-    document.querySelector("#calculator-budget-actions").hidden = true;
+    setCalculatorBudgetOperation("add");
     updateCalculatorAddBudgetSummary();
   });
+  document.querySelector("#calculator-budget-back").addEventListener("click", () => setCalculatorBudgetOperation());
   document.querySelector("#calculator-shift-target-month").addEventListener("change", updateCalculatorShiftTargetSummary);
   document.querySelector("#calculator-shift-priority").addEventListener("change", updateCalculatorShiftTargetSummary);
   document.querySelector("#calculator-shift-amount").addEventListener("input", updateCalculatorShiftTargetSummary);
