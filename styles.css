@@ -251,14 +251,27 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .budget-card-carry .monthly-budget-exhausted { color: var(--danger); }
 .budget-card-carry.plan-none { justify-content: flex-start; }
 .budget-progress { height: 0.32rem; margin-top: 0.65rem; overflow: hidden; border-radius: 99px; background: var(--surface-2); }
-.budget-progress > span { display: block; width: var(--progress); height: 100%; border-radius: inherit; background: var(--category-color); }
+.budget-progress > span { display: block; width: var(--progress); height: 100%; border-radius: inherit; background: var(--category-color); transition: width 3s cubic-bezier(.2,.82,.24,1), filter 3s cubic-bezier(.2,.82,.24,1), box-shadow 3s cubic-bezier(.2,.82,.24,1); }
+.budget-progress > span.is-entry-progress-changing { filter: brightness(1.32); box-shadow: 0 0 0.5rem color-mix(in srgb, var(--category-color) 60%, transparent); }
 .budget-card-footer { display: flex; gap: 0.55rem; margin-top: auto; flex-direction: column; }
 .budget-card-footer .budget-card-carry, .budget-card-footer .budget-progress { margin-top: 0; }
 .daily-budget-card { grid-column: 1 / -1; min-height: 11rem; }
 .daily-budget-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.55rem; }
-.daily-budget-value { display: flex; min-width: 0; min-height: 4.4rem; padding: 0.65rem; border-radius: 0.8rem; background: var(--surface-2); flex-direction: column; justify-content: space-between; }
+.daily-budget-value { display: flex; min-width: 0; min-height: 4.4rem; padding: 0.65rem; overflow: hidden; border-radius: 0.8rem; background: var(--surface-2); flex-direction: column; justify-content: space-between; }
 .daily-budget-value > span { color: var(--muted); font-size: 0.64rem; font-weight: 750; line-height: 1.35; }
 .daily-budget-value > strong { display: block; margin-top: 0.25rem; overflow: hidden; font-size: clamp(1.42rem, 6.8vw, 1.72rem); font-variant-numeric: tabular-nums; letter-spacing: -0.04em; text-overflow: ellipsis; white-space: nowrap; }
+.daily-budget-amount.is-entry-value-increase { animation: daily-entry-value-increase 3s cubic-bezier(.2,.82,.24,1); }
+.daily-budget-amount.is-entry-value-decrease { animation: daily-entry-value-decrease 3s cubic-bezier(.2,.82,.24,1); }
+@keyframes daily-entry-value-increase {
+  0% { transform: scale(1); filter: brightness(1); }
+  34% { transform: scale(1.055); filter: brightness(1.24) drop-shadow(0 .18rem .3rem color-mix(in srgb, var(--success) 44%, transparent)); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+@keyframes daily-entry-value-decrease {
+  0% { transform: scale(1); filter: brightness(1); }
+  34% { transform: scale(1.05); filter: brightness(1.14) drop-shadow(0 .16rem .28rem color-mix(in srgb, var(--danger) 38%, transparent)); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
 .daily-budget-days { display: block; margin: 0.5rem 0; color: var(--primary); font-size: 0.68rem; font-weight: 800; text-align: right; }
 .daily-budget-sub { display: flex; gap: 0.45rem; margin-top: auto; padding-top: 0.55rem; border-top: 1px solid var(--line); flex-direction: column; }
 .daily-budget-sub .budget-card-carry { margin-top: 0; }
@@ -648,6 +661,7 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .calculator-expression[hidden], .calculator-display[hidden], .calculator-keys[hidden] { display: none; }
 .calculator-project-forecast { margin: -0.45rem 0 0.85rem; padding: 0.68rem 0.75rem; border-radius: 0.72rem; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); font-size: 0.78rem; font-weight: 850; line-height: 1.5; text-align: right; }
 .calculator-project-forecast.positive { color: var(--success); background: color-mix(in srgb, var(--success) 12%, var(--surface)); }
+.calculator-project-forecast.neutral { color: var(--primary-strong); background: var(--primary-soft); }
 .calculator-project-forecast[hidden] { display: none; }
 .calculator-budget-entry { margin: -0.1rem 0 0.75rem; }
 .calculator-budget-entry[hidden] { display: none; }

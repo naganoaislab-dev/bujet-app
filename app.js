@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.80";
+  const APP_VERSION = "0.5.82";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -542,6 +542,10 @@
     return category && isIncomeCategory(category) && !isUnexpectedIncomeCategory(category) && category.active !== false ? planAmount(category.id, month) : 0;
   }
 
+  function isBudgetedExpenseCategory(category) {
+    return Boolean(category) && !isIncomeCategory(category) && !isUnexpectedExpenseCategory(category);
+  }
+
   function transactionsForMonth(month, direction = null) {
     return state.transactions.filter((transaction) => {
       if (direction && transaction.direction !== direction) return false;
@@ -718,19 +722,25 @@
     };
   }
 
-  function budgetedExpenseOveragesByMonth() {
-    const overages = new Map(periodMonths().map((month) => [month, 0]));
+  function budgetedExpenseOveragesByMonth(extraExpense = null) {
+    const months = periodMonths();
+    const overages = new Map(months.map((month) => [month, 0]));
     state.categories
-      .filter((category) => !isIncomeCategory(category) && !isUnexpectedExpenseCategory(category))
+      .filter(isBudgetedExpenseCategory)
       .forEach((category) => {
-        let plannedThroughMonth = 0;
+        const projectPlanTotal = months.reduce((sum, month) => sum + Math.max(0, planAmount(category.id, month)), 0);
         let actualThroughMonth = 0;
-        let largestOverage = 0;
-        periodMonths().forEach((month) => {
-          plannedThroughMonth += Math.max(0, planAmount(category.id, month));
-          actualThroughMonth += Math.max(0, actualAmount(category.id, month));
-          largestOverage = Math.max(largestOverage, actualThroughMonth - plannedThroughMonth);
-          overages.set(month, toInteger(overages.get(month)) + largestOverage);
+        months.forEach((month) => {
+          const pendingAmount = extraExpense
+            && extraExpense.categoryId === category.id
+            && extraExpense.month === month
+            ? Math.max(0, toInteger(extraExpense.amount))
+            : 0;
+          actualThroughMonth += Math.max(0, actualAmount(category.id, month)) + pendingAmount;
+          // 予算超過は、まず同じ項目の後続月予算で吸収します。プロジェクト全体の
+          // 計画額まで使い切った分だけを、見込み収支に影響する未充当超過として扱います。
+          const unfundedOverage = Math.max(0, actualThroughMonth - projectPlanTotal);
+          overages.set(month, toInteger(overages.get(month)) + unfundedOverage);
         });
       });
     return overages;
@@ -772,6 +782,67 @@
   function projectEndForecastAfterBudgetAddition(month, amount) {
     const current = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
     return current - Math.max(0, toInteger(amount));
+  }
+
+  function projectEndForecastAfterBudgetedExpense(categoryId, month, amount) {
+    const months = periodMonths();
+    const lastMonth = months[months.length - 1];
+    if (!lastMonth) return projectEndForecastFromAggregates([]);
+    const current = projectEndForecastFromAggregates(months.map(aggregateMonth));
+    const beforeOverage = toInteger(budgetedExpenseOveragesByMonth().get(lastMonth));
+    const afterOverage = toInteger(budgetedExpenseOveragesByMonth({ categoryId, month, amount }).get(lastMonth));
+    return current - Math.max(0, afterOverage - beforeOverage);
+  }
+
+  function normalExpenseOverageProjection(category, sourceMonth, amount) {
+    const requested = Math.max(0, toInteger(amount));
+    if (!isBudgetedExpenseCategory(category) || requested <= 0) {
+      const forecast = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+      return {
+        currentAvailable: 0,
+        currentOverage: 0,
+        futurePlans: [],
+        futureCovered: 0,
+        uncovered: 0,
+        forecastBefore: forecast,
+        forecastAfter: forecast,
+        forecastImpact: 0
+      };
+    }
+    const currentSources = calculatorBudgetSources(category, sourceMonth);
+    const currentOverage = Math.max(0, requested - currentSources.total);
+    let unallocated = currentOverage;
+    const futurePlans = [];
+    calculatorShiftTargetMonths(sourceMonth).forEach((month) => {
+      if (unallocated <= 0) return;
+      const available = Math.max(0, Math.min(
+        planAmount(category.id, month),
+        categoryBudgetStats(category.id, month).monthlyRemaining
+      ));
+      const moved = Math.min(unallocated, available);
+      if (moved > 0) {
+        futurePlans.push({
+          month,
+          categoryName: category.name,
+          before: available,
+          after: available - moved,
+          amount: moved
+        });
+        unallocated -= moved;
+      }
+    });
+    const forecastBefore = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+    const forecastAfter = projectEndForecastAfterBudgetedExpense(category.id, sourceMonth, requested);
+    return {
+      currentAvailable: currentSources.total,
+      currentOverage,
+      futurePlans,
+      futureCovered: futurePlans.reduce((sum, plan) => sum + plan.amount, 0),
+      uncovered: unallocated,
+      forecastBefore,
+      forecastAfter,
+      forecastImpact: Math.max(0, forecastBefore - forecastAfter)
+    };
   }
 
   function projectEndForecastAfterBudgetPlanChanges(planChanges) {
@@ -1168,6 +1239,7 @@
     if (currentView === "overview") configureOverviewChartInteractions();
     scheduleNextDateRefresh();
     if (currentView === "entry" && pendingEntryAnimation) {
+      preparePendingEntryAnimation();
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(playPendingEntryAnimation);
       });
@@ -1183,9 +1255,20 @@
     return `${Math.floor(months / 12)}年${months % 12}ヶ月後`;
   }
 
-  function entryBudgetValueElement(categoryId) {
+  function entryBudgetValueElements(categoryId) {
     return Array.from(viewHost.querySelectorAll("[data-entry-budget-value]"))
-      .find((element) => element.dataset.entryBudgetValue === categoryId) || null;
+      .filter((element) => element.dataset.entryBudgetValue === categoryId);
+  }
+
+  function entryBudgetValueElement(categoryId) {
+    return entryBudgetValueElements(categoryId)[0] || null;
+  }
+
+  function entryBudgetProgressElements(categoryId) {
+    return Array.from(viewHost.querySelectorAll("[data-entry-budget-progress]"))
+      .filter((element) => element.dataset.entryBudgetProgress === categoryId)
+      .map((element) => element.querySelector("[data-entry-progress-value]"))
+      .filter(Boolean);
   }
 
   function entryForecastValueElement() {
@@ -1202,11 +1285,18 @@
   function entryAnimationSnapshot(categoryIds = []) {
     const values = {};
     Array.from(new Set(categoryIds.filter(Boolean))).forEach((categoryId) => {
-      const element = entryBudgetValueElement(categoryId);
-      if (!element) return;
-      values[categoryId] = {
+      const entries = entryBudgetValueElements(categoryId).map((element) => ({
         value: toInteger(element.dataset.entryAmount),
         rect: entryAnimationRect(element)
+      }));
+      if (!entries.length) return;
+      values[categoryId] = {
+        value: entries[0].value,
+        rect: entries[0].rect,
+        entries,
+        progresses: entryBudgetProgressElements(categoryId).map((element) => ({
+          value: Number(element.dataset.entryProgressValue) || 0
+        }))
       };
     });
     const forecast = entryForecastValueElement();
@@ -1252,6 +1342,7 @@
     const finalText = element.textContent;
     const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduceMotion) return;
+    element.textContent = entryNumberText(before, finalText);
     element.classList.remove("is-entry-value-increase", "is-entry-value-decrease");
     element.classList.add(direction || (after >= before ? "is-entry-value-increase" : "is-entry-value-decrease"));
     const duration = ENTRY_ANIMATION_DURATION;
@@ -1269,6 +1360,19 @@
     window.requestAnimationFrame(tick);
   }
 
+  function animateEntryProgress(element, before, after) {
+    if (!element || before === after) return;
+    const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) return;
+    element.style.setProperty("--progress", `${before}%`);
+    element.classList.remove("is-entry-progress-changing");
+    window.requestAnimationFrame(() => {
+      element.classList.add("is-entry-progress-changing");
+      element.style.setProperty("--progress", `${after}%`);
+      window.setTimeout(() => element.classList.remove("is-entry-progress-changing"), ENTRY_ANIMATION_DURATION + 80);
+    });
+  }
+
   function entryPoint(rect) {
     return rect ? {
       x: rect.left + rect.width / 2,
@@ -1283,7 +1387,12 @@
     const layer = entryMoneyLayer();
     const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const distance = Math.hypot(to.x - from.x, to.y - from.y);
-    const particleCount = reduceMotion ? 1 : clamp(Math.round(distance / 90), 3, 6);
+    // 数値が動いている3秒間に合わせて、資金も途切れずに流れ続けるようにします。
+    // 同時に出し切るのではなく、発生タイミングをアニメーション全体へ均等に広げます。
+    const travelDuration = 520;
+    const particleCount = reduceMotion ? 1 : clamp(Math.round(distance / 85) + 8, 10, 16);
+    const latestStart = Math.max(delay, ENTRY_ANIMATION_DURATION - travelDuration);
+    const spawnWindow = Math.max(0, latestStart - delay);
     for (let index = 0; index < particleCount; index += 1) {
       const particle = document.createElement("i");
       const startX = from.x + (Math.random() - 0.5) * 18;
@@ -1295,13 +1404,15 @@
       particle.style.left = `${startX}px`;
       particle.style.top = `${startY}px`;
       layer.append(particle);
-      const particleDelay = reduceMotion ? 0 : delay + index * 52;
+      const particleDelay = reduceMotion || particleCount === 1
+        ? delay
+        : delay + (spawnWindow * index) / (particleCount - 1);
       const animation = particle.animate([
         { transform: "translate(-50%, -50%) scale(.45)", opacity: 0 },
         { transform: `translate(${(endX - startX) * 0.22}px, ${(endY - startY) * 0.08 - 16}px) scale(1)`, opacity: 1, offset: 0.24 },
         { transform: `translate(${endX - startX}px, ${endY - startY}px) scale(.55)`, opacity: 0 }
       ], {
-        duration: reduceMotion ? 1 : Math.max(420, ENTRY_ANIMATION_DURATION - particleDelay),
+        duration: reduceMotion ? 1 : Math.min(travelDuration, Math.max(360, ENTRY_ANIMATION_DURATION - particleDelay)),
         delay: particleDelay,
         easing: "cubic-bezier(.22,.75,.25,1)",
         fill: "forwards"
@@ -1327,6 +1438,32 @@
     return entryAnimationRect(flyout.querySelector(".entry-month-plan-bar"));
   }
 
+  function preparePendingEntryAnimation() {
+    const animation = pendingEntryAnimation;
+    if (!animation || currentView !== "entry") return;
+    const before = animation.before || { values: {}, forecast: null };
+    Object.entries(before.values).forEach(([categoryId, snapshot]) => {
+      const snapshots = Array.isArray(snapshot.entries) && snapshot.entries.length
+        ? snapshot.entries
+        : [snapshot];
+      entryBudgetValueElements(categoryId).forEach((element, index) => {
+        const valueSnapshot = snapshots[index] || snapshots[0];
+        if (!valueSnapshot) return;
+        element.textContent = entryNumberText(valueSnapshot.value, element.textContent);
+      });
+      const progressSnapshots = Array.isArray(snapshot.progresses) ? snapshot.progresses : [];
+      entryBudgetProgressElements(categoryId).forEach((element, index) => {
+        const progressSnapshot = progressSnapshots[index] || progressSnapshots[0];
+        if (!progressSnapshot) return;
+        element.style.setProperty("--progress", `${progressSnapshot.value}%`);
+      });
+    });
+    const forecast = entryForecastValueElement();
+    if (before.forecast && forecast) {
+      forecast.textContent = entryNumberText(before.forecast.value, forecast.textContent);
+    }
+  }
+
   function playPendingEntryAnimation() {
     const animation = pendingEntryAnimation;
     pendingEntryAnimation = null;
@@ -1339,9 +1476,20 @@
     const forecastRect = entryAnimationRect(forecast);
 
     Object.entries(before.values).forEach(([categoryId, snapshot]) => {
-      const element = entryBudgetValueElement(categoryId);
-      if (!element) return;
-      animateEntryNumber(element, snapshot.value, toInteger(element.dataset.entryAmount));
+      const snapshots = Array.isArray(snapshot.entries) && snapshot.entries.length
+        ? snapshot.entries
+        : [snapshot];
+      entryBudgetValueElements(categoryId).forEach((element, index) => {
+        const valueSnapshot = snapshots[index] || snapshots[0];
+        if (!valueSnapshot) return;
+        animateEntryNumber(element, valueSnapshot.value, toInteger(element.dataset.entryAmount));
+      });
+      const progressSnapshots = Array.isArray(snapshot.progresses) ? snapshot.progresses : [];
+      entryBudgetProgressElements(categoryId).forEach((element, index) => {
+        const progressSnapshot = progressSnapshots[index] || progressSnapshots[0];
+        if (!progressSnapshot) return;
+        animateEntryProgress(element, progressSnapshot.value, Number(element.dataset.entryProgressValue) || 0);
+      });
     });
     if (before.forecast && forecast) {
       animateEntryNumber(forecast, before.forecast.value, toInteger(forecast.dataset.entryAmount));
@@ -1365,6 +1513,17 @@
         const source = showEntryMonthPlanFlight({ ...plan, direction: "out" }, index);
         flyEntryMoney(source, targetRect, "primary", index * 80);
       });
+      return;
+    }
+    if (animation.type === "transaction-expense") {
+      (animation.details.futurePlans || []).forEach((plan, index) => {
+        const source = showEntryMonthPlanFlight({ ...plan, direction: "out" }, index);
+        flyEntryMoney(source, targetRect, "primary", index * 80);
+      });
+      if (toInteger(animation.details.forecastImpact) > 0) {
+        flyEntryMoney(forecastRect, targetRect, "danger", (animation.details.futurePlans || []).length * 80);
+        showToast("次月度以降の予算がもうないため見込み収支が減ってしまいます。今月度以降の予算を追加してください。");
+      }
       return;
     }
     if (animation.type === "carry" || animation.type === "reallocate") {
@@ -1541,7 +1700,7 @@
           ? clamp((stats.actual / progressBase) * 100, 0, 100)
           : 0;
       const progressBar = !hasNoPlan && (stats.configuredPlan > 0 || remainingBudget < 0)
-        ? `<span class="budget-progress" aria-label="予算消化率 ${Math.round(progress)}%"><span style="--progress:${progress}%"></span></span>`
+        ? `<span class="budget-progress" data-entry-budget-progress="${escapeHtml(category.id)}" aria-label="予算消化率 ${Math.round(progress)}%"><span data-entry-progress-value="${progress}" style="--progress:${progress}%"></span></span>`
         : "";
       const carryLabel = carryBudgetAvailable
         ? stats.configuredPlan <= 0
@@ -3955,16 +4114,37 @@
     document.querySelector("#calculator-expression").textContent = calculator.expression;
     document.querySelector("#calculator-ok").disabled = calculatorContext && calculatorContext.allowsNegative ? value === 0 : value <= 0;
     const forecast = document.querySelector("#calculator-project-forecast");
+    const category = calculatorContext && categoryById(calculatorContext.categoryId);
     if (calculatorContext && (calculatorContext.isUnexpectedExpense || calculatorContext.isUnexpectedIncome)) {
       const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
       const after = calculatorContext.isUnexpectedIncome
         ? projectEndForecastAfterUnexpectedIncome(calculatorContext.sourceMonth, value)
         : projectEndForecastAfterUnexpectedExpense(calculatorContext.sourceMonth, value);
+      forecast.classList.remove("neutral");
       forecast.classList.toggle("positive", calculatorContext.isUnexpectedIncome);
       forecast.hidden = false;
       forecast.textContent = `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}`;
+    } else if (calculatorContext && calculatorContext.direction === "expense" && isBudgetedExpenseCategory(category)) {
+      const projection = normalExpenseOverageProjection(category, calculatorContext.sourceMonth, value);
+      if (projection.currentOverage > 0) {
+        forecast.classList.remove("positive");
+        forecast.classList.toggle("neutral", projection.forecastImpact === 0);
+        forecast.hidden = false;
+        if (projection.forecastImpact > 0) {
+          const covered = projection.futureCovered > 0
+            ? `次月度以降の予算から${formatCurrency(projection.futureCovered)}を充当しますが、`
+            : "";
+          forecast.textContent = `${covered}次月度以降の予算がもうないため見込み収支が減ってしまいます。今月度以降の予算を追加してください。 プロジェクト終了時の見込み収支 ${formatSignedCurrency(projection.forecastBefore)} → ${formatSignedCurrency(projection.forecastAfter)}`;
+        } else {
+          forecast.textContent = `今月の予算を超えた${formatCurrency(projection.currentOverage)}は、次月度以降の予算から充当します。プロジェクト終了時の見込み収支は変わりません。`;
+        }
+      } else {
+        forecast.classList.remove("positive", "neutral");
+        forecast.hidden = true;
+        forecast.textContent = "";
+      }
     } else {
-      forecast.classList.remove("positive");
+      forecast.classList.remove("positive", "neutral");
       forecast.hidden = true;
       forecast.textContent = "";
     }
@@ -4066,6 +4246,9 @@
       : isUnexpectedExpenseCategory(category)
         ? "transaction-unexpected-expense"
         : "transaction-expense";
+    const expenseOverageProjection = entryAnimationType === "transaction-expense"
+      ? normalExpenseOverageProjection(category, calculatorContext.sourceMonth, amount)
+      : null;
     const createdAt = appTimestamp();
     const transaction = {
       id: makeId("tx"),
@@ -4095,11 +4278,13 @@
         type: entryAnimationType,
         targetCategoryId: category.id,
         sourceCategoryIds: [],
-        details: {},
+        details: expenseOverageProjection ? {
+          futurePlans: expenseOverageProjection.futurePlans,
+          forecastImpact: expenseOverageProjection.forecastImpact
+        } : {},
         before: entryAnimationBefore
       };
     }
-    render();
     document.querySelector("#memo-summary").textContent = `${category.name}・${calculatorContext.allowsNegative ? formatSignedCurrency(amount) : formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
     document.querySelector("#memo-input").value = "";
     openDialog(memoDialog);
