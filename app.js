@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.75";
+  const APP_VERSION = "0.5.76";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -676,7 +676,7 @@
       ...stats,
       daysRemaining,
       dailyRemaining: dailyStartingBudget - spentToday,
-      dailyLabel: "今日の残り予算",
+      dailyLabel: "今日の残予算",
       daysLabel: `締日まで残り${daysRemaining}日`
     };
   }
@@ -814,6 +814,11 @@
   function remainingAmountLabel(value) {
     const amount = toInteger(value);
     return amount < 0 ? `${formatCurrency(Math.abs(amount))} 超過` : formatCurrency(amount);
+  }
+
+  function budgetCardAmountSizeClass(value) {
+    const digits = Math.max(1, String(Math.abs(toInteger(value))).length);
+    return digits <= 6 ? "is-standard" : `is-digits-${Math.min(digits, 12)}`;
   }
 
   function makeId(prefix) {
@@ -1337,7 +1342,7 @@
         : "";
       const budgetSummary = hasNoPlan
         ? '<span class="budget-card-unplanned">計画なし</span>'
-        : `<span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${remainingBudget < 0 ? "negative" : carryBudgetAvailable ? "carry-budget" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>`;
+        : `<span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${budgetCardAmountSizeClass(remainingBudget)} ${remainingBudget < 0 ? "negative" : carryBudgetAvailable ? "carry-budget" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>`;
       const cardFooter = carryLabel || progressBar
         ? `<span class="budget-card-footer">${carryLabel}${progressBar}</span>`
         : "";
@@ -1345,7 +1350,7 @@
         return `<button type="button" class="budget-card daily-budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
           <span class="budget-card-name">${escapeHtml(category.name)}</span>
           <span class="daily-budget-main">
-            <span class="daily-budget-value"><span>${dailyStats.dailyLabel}</span><strong class="${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
+            <span class="daily-budget-value"><span>${dailyStats.dailyLabel}</span><strong class="daily-budget-amount ${budgetCardAmountSizeClass(dailyStats.dailyRemaining)} ${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
           </span>
           <span class="daily-budget-days">${dailyStats.daysLabel}</span>
           <span class="daily-budget-sub">
@@ -2323,51 +2328,107 @@
     }).join("")}</div>${rows.length > visibleRows.length ? `<p class="chart-note">金額が大きい上位${visibleRows.length}項目を表示しています。</p>` : ""}</section>`;
   }
 
-  function renderProjectFinanceAreaChart(aggregates) {
-    const isProjectOverview = overviewProjectOverviewEnabled;
-    if (!aggregates.length) {
-      return `<section class="card project-area-card"><div class="section-copy"><p class="section-kicker">PROJECT AREA</p><h2>プロジェクトの収支推移</h2><p>プロジェクト期間を横軸に、収支の計画と実績を面グラフで表示します。</p></div><div class="empty-state">計画または実績がまだありません。</div></section>`;
+  function projectStackedAreaRows(direction, metric, months) {
+    const isExpense = direction === "expense";
+    const categories = state.categories.filter((category) => {
+      if (isExpense && isIncomeCategory(category)) return false;
+      if (!isExpense && !isIncomeCategory(category)) return false;
+      if (metric === "plan") {
+        return category.active !== false
+          && !(isExpense ? isUnexpectedExpenseCategory(category) : isUnexpectedIncomeCategory(category));
+      }
+      return category.active !== false || months.some((month) => actualAmount(category.id, month) !== 0);
+    });
+    const rows = categories.map((category) => {
+      const values = months.map((month) => {
+        if (metric === "actual") return actualAmount(category.id, month);
+        return isExpense ? activeExpensePlanAmount(category, month) : activeIncomePlanAmount(category, month);
+      });
+      return { category, label: category.name, color: category.color, values, total: values.reduce((sum, value) => sum + Math.abs(value), 0) };
+    }).filter((row) => row.total > 0).sort((left, right) => right.total - left.total);
+    const leading = rows.slice(0, 10);
+    const rest = rows.slice(10);
+    if (rest.length) {
+      leading.push({
+        category: null,
+        label: "その他",
+        color: "#87949d",
+        values: months.map((month, index) => rest.reduce((sum, row) => sum + row.values[index], 0)),
+        total: rest.reduce((sum, row) => sum + row.total, 0)
+      });
     }
+    return leading;
+  }
 
-    const series = [
-      { field: "expensePlan", label: "支出計画", tone: "expense-plan", color: "#e8b59b" },
-      { field: "expenseActual", label: "支出実績", tone: "expense-actual", color: "#d66735" },
-      { field: "incomePlan", label: "収入計画", tone: "income-plan", color: "#a8ceba" },
-      { field: "incomeActual", label: "収入実績", tone: "income-actual", color: "#2f8057" }
-    ];
-    const scale = chartValueScale(aggregates.flatMap((item) => series.map((itemSeries) => item[itemSeries.field] || 0)));
-    const graphWidth = Math.max(260, aggregates.length * 92);
+  function projectStackedAreaGeometry(rows, monthCount) {
+    const series = rows.map((row) => ({ ...row, lower: [], upper: [] }));
+    const values = [0];
+    for (let index = 0; index < monthCount; index += 1) {
+      let positiveBase = 0;
+      let negativeBase = 0;
+      series.forEach((row) => {
+        const value = toInteger(row.values[index]);
+        if (value >= 0) {
+          row.lower[index] = positiveBase;
+          positiveBase += value;
+          row.upper[index] = positiveBase;
+        } else {
+          row.lower[index] = negativeBase;
+          negativeBase += value;
+          row.upper[index] = negativeBase;
+        }
+        values.push(row.lower[index], row.upper[index]);
+      });
+    }
+    return { series, scale: chartValueScale(values) };
+  }
+
+  function stackedAreaPath(row, monthCount, xFor, yFor, leftPadding, rightEdge) {
+    if (monthCount === 1) {
+      return `M ${leftPadding.toFixed(2)} ${yFor(row.upper[0]).toFixed(2)} L ${rightEdge.toFixed(2)} ${yFor(row.upper[0]).toFixed(2)} L ${rightEdge.toFixed(2)} ${yFor(row.lower[0]).toFixed(2)} L ${leftPadding.toFixed(2)} ${yFor(row.lower[0]).toFixed(2)} Z`;
+    }
+    const upper = row.upper.map((value, index) => `${xFor(index).toFixed(2)} ${yFor(value).toFixed(2)}`);
+    const lower = row.lower.map((value, index) => `${xFor(index).toFixed(2)} ${yFor(value).toFixed(2)}`).reverse();
+    return `M ${upper.join(" L ")} L ${lower.join(" L ")} Z`;
+  }
+
+  function renderProjectStackedAreaChart({ direction, metric, months, title, description }) {
+    const isProjectOverview = overviewProjectOverviewEnabled;
+    const rows = projectStackedAreaRows(direction, metric, months);
+    const graphId = `${direction}-${metric}-stacked-area`;
+    if (!rows.length) {
+      return `<section class="card project-area-card project-stacked-area-card"><div class="section-copy"><p class="section-kicker">${metric === "plan" ? "PLAN" : "ACTUAL"} STACKED AREA</p><h2>${title}</h2><p>${description}</p></div><div class="empty-state">${metric === "plan" ? "計画がまだありません。" : "実績がまだありません。"}</div></section>`;
+    }
+    const { series, scale } = projectStackedAreaGeometry(rows, months.length);
+    const graphWidth = Math.max(260, months.length * 92);
     const leftPadding = 13;
     const rightPadding = 13;
-    const xFor = (index) => aggregates.length === 1
+    const rightEdge = graphWidth - rightPadding;
+    const xFor = (index) => months.length === 1
       ? graphWidth / 2
-      : leftPadding + (index / (aggregates.length - 1)) * (graphWidth - leftPadding - rightPadding);
+      : leftPadding + (index / (months.length - 1)) * (graphWidth - leftPadding - rightPadding);
     const yFor = (value) => 94 - ((value - scale.minimum) / scale.range) * 88;
-    const zeroY = yFor(0);
-    const seriesPaths = series.map((itemSeries) => {
-      const values = aggregates.map((item) => item[itemSeries.field] || 0);
-      const points = values.map((value, index) => [xFor(index), yFor(value)]);
-      const areaPath = aggregates.length === 1
-        ? `M ${leftPadding} ${zeroY.toFixed(2)} L ${(graphWidth - rightPadding).toFixed(2)} ${zeroY.toFixed(2)} L ${(graphWidth - rightPadding).toFixed(2)} ${points[0][1].toFixed(2)} L ${leftPadding} ${points[0][1].toFixed(2)} Z`
-        : `M ${xFor(0).toFixed(2)} ${zeroY.toFixed(2)} L ${points.map((point) => `${point[0].toFixed(2)} ${point[1].toFixed(2)}`).join(" L ")} L ${xFor(aggregates.length - 1).toFixed(2)} ${zeroY.toFixed(2)} Z`;
-      const singlePoint = aggregates.length === 1 ? `<circle class="project-area-point ${itemSeries.tone}" cx="${points[0][0].toFixed(2)}" cy="${points[0][1].toFixed(2)}" r="2.6"></circle>` : "";
-      return `<path class="project-area-fill ${itemSeries.tone}" d="${areaPath}"></path><polyline class="project-area-line ${itemSeries.tone}" points="${points.map((point) => `${point[0].toFixed(2)},${point[1].toFixed(2)}`).join(" ")}"></polyline>${singlePoint}`;
-    }).join("");
     const gridValues = chartAxisValues(scale);
-    return `<section class="card project-area-card${isProjectOverview ? " is-project-overview" : ""}">
-      <div class="project-area-heading"><div class="section-copy"><p class="section-kicker">PROJECT AREA</p><h2>プロジェクトの収支推移</h2><p>横軸はプロジェクト期間です。支出計画・支出実績・収入計画・収入実績を、ゼロ線を基準に面で比較できます。</p></div>${overviewProjectViewButton()}</div>
-      <div class="chart-legend">${series.map((itemSeries) => legend(itemSeries.color, itemSeries.label)).join("")}</div>
-      <div class="project-area-scroll" data-chart-scroll-key="project-finance-area">
-        <div class="project-area-canvas" style="--month-count:${aggregates.length};--area-width:${graphWidth}">
-          <svg class="project-area-svg" viewBox="0 0 ${graphWidth} 100" preserveAspectRatio="none" role="img" aria-label="プロジェクトの収支推移。支出計画・支出実績・収入計画・収入実績を表示">
+    const paths = series.map((row) => {
+      const edgeValues = row.upper.map((value, index) => `${xFor(index).toFixed(2)},${yFor(value).toFixed(2)}`).join(" ");
+      return `<path class="project-stacked-area-fill" style="--series-color:${escapeHtml(row.color)}" d="${stackedAreaPath(row, months.length, xFor, yFor, leftPadding, rightEdge)}"></path><polyline class="project-stacked-area-edge" style="--series-color:${escapeHtml(row.color)}" points="${edgeValues}"></polyline>`;
+    }).join("");
+    const legendItems = series.map((row) => legend(row.color, row.label)).join("");
+    const hasNegative = series.some((row) => row.values.some((value) => value < 0));
+    return `<section class="card project-area-card project-stacked-area-card${isProjectOverview ? " is-project-overview" : ""}" aria-labelledby="${graphId}-title">
+      <div class="project-area-heading"><div class="section-copy"><p class="section-kicker">${metric === "plan" ? "PLAN" : "ACTUAL"} STACKED AREA</p><h2 id="${graphId}-title">${title}</h2><p>${description}</p></div>${overviewProjectViewButton()}</div>
+      <div class="chart-legend project-stacked-area-legend">${legendItems}</div>
+      <div class="project-area-scroll" data-chart-scroll-key="${graphId}">
+        <div class="project-area-canvas" style="--month-count:${months.length}">
+          <svg class="project-area-svg project-stacked-area-svg" viewBox="0 0 ${graphWidth} 100" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(title)}。プロジェクト期間の各月を項目ごとに積み上げて表示">
             ${gridValues.map((value) => `<line class="project-area-gridline${value === 0 ? " is-zero" : ""}" x1="0" y1="${yFor(value).toFixed(2)}" x2="${graphWidth}" y2="${yFor(value).toFixed(2)}"></line>`).join("")}
-            ${seriesPaths}
+            ${paths}
           </svg>
           <div class="project-area-scale" aria-hidden="true">${gridValues.map((value) => `<span style="top:${((yFor(value) - 6) / 88 * 100).toFixed(2)}%">${formatChartAxisValue(value)}</span>`).join("")}</div>
-          <div class="project-area-months" aria-hidden="true">${aggregates.map((item, index) => `<span>${overviewMonthAxisLabel(item.month, index)}</span>`).join("")}</div>
+          <div class="project-area-months" aria-hidden="true">${months.map((month, index) => `<span>${overviewMonthAxisLabel(month, index)}</span>`).join("")}</div>
         </div>
       </div>
-      <p class="chart-note">${isProjectOverview ? "全体俯瞰を表示中です。" : "横にスライドして全期間を確認できます。"}</p>
+      <p class="chart-note">${hasNegative ? "マイナスの収入項目は0円線より下側に積み上げます。" : "金額の大きい上位10項目までを表示し、残りはその他にまとめます。"} ${isProjectOverview ? "全体俯瞰を表示中です。" : "横にスライドして全期間を確認できます。"}</p>
     </section>`;
   }
 
@@ -2397,7 +2458,10 @@
       ${renderRatioPieCard("INCOME PLAN MIX", "プロジェクトの収入計画配分", "計画収入の大きい上位5項目と、その他の構成比です。マイナスを含む収入は金額の大きさで比率を算出します。", projectIncomeRatioSegments(incomeRows, "plan"), "プロジェクト全体の収入計画がまだありません。")}
       ${renderRatioPieCard("INCOME ACTUAL MIX", "プロジェクトの収入実績配分", "実績収入の大きい上位5項目と、その他の構成比です。想定外収入も含みます。マイナスを含む収入は金額の大きさで比率を算出します。", projectIncomeRatioSegments(incomeRows, "actual"), "プロジェクト全体の収入実績がまだありません。")}
       ${renderProjectCategoryProgressChart(expenseRows)}
-      ${renderProjectFinanceAreaChart(aggregates)}
+      ${renderProjectStackedAreaChart({ direction: "expense", metric: "plan", months: periodMonths(), title: "支出項目ごとの計画", description: "プロジェクト期間を横軸に、各支出項目の計画を積み上げ面で表示します。" })}
+      ${renderProjectStackedAreaChart({ direction: "expense", metric: "actual", months: periodMonths(), title: "支出項目ごとの実績", description: "プロジェクト期間を横軸に、各支出項目の実績を積み上げ面で表示します。想定外支出も含みます。" })}
+      ${renderProjectStackedAreaChart({ direction: "income", metric: "plan", months: periodMonths(), title: "収入項目ごとの計画", description: "プロジェクト期間を横軸に、各収入項目の計画を積み上げ面で表示します。" })}
+      ${renderProjectStackedAreaChart({ direction: "income", metric: "actual", months: periodMonths(), title: "収入項目ごとの実績", description: "プロジェクト期間を横軸に、各収入項目の実績を積み上げ面で表示します。想定外収入も含みます。" })}
       <section class="card project-analysis-note"><div class="section-copy"><p class="section-kicker">READING THE RESULT</p><h2>見方</h2><p>計画配分は「どこに予算を置いているか」、実績配分と進捗は「実際にどこで使っているか」を示します。終了時見込みは、これまでの実績と今後の計画を組み合わせた値です。</p></div></section>
     </section>`;
   }
@@ -2465,7 +2529,7 @@
         <button type="button" class="segment-button ${incomeMode ? "" : "active"}" data-analysis-mode="expense">支出</button>
         <button type="button" class="segment-button ${incomeMode ? "active" : ""}" data-analysis-mode="income">収入</button>
       </div>
-      <div class="month-switcher"><label class="field-label" for="analysis-period">分析する月</label><select id="analysis-period">${monthOptions(analysisPeriod)}</select></div>
+      <div class="month-switcher"><select id="analysis-period" aria-label="分析する月">${monthOptions(analysisPeriod)}</select></div>
       <div class="analysis-page-tabs" aria-label="月次状況のページ切り替え">
         <button type="button" class="analysis-page-tab${analysisDetailPage === 0 ? " active" : ""}" data-analysis-page="0" aria-current="${analysisDetailPage === 0 ? "page" : "false"}">計画差</button>
         <button type="button" class="analysis-page-tab${analysisDetailPage === 1 ? " active" : ""}" data-analysis-page="1" aria-current="${analysisDetailPage === 1 ? "page" : "false"}">日別記録</button>
@@ -3417,7 +3481,6 @@
     }
     document.querySelector("#calculator-category").textContent = category.name;
     document.querySelector("#calculator-kind").textContent = calculatorContext.isUnexpectedExpense ? "想定外支出を入力" : calculatorContext.isUnexpectedIncome ? "想定外収入を入力" : calculatorContext.allowsNegative ? "収入（マイナス込み）を入力" : calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
-    document.querySelector('[data-calc="subtract"]').hidden = !calculatorContext.allowsNegative;
     resetCalculatorShiftPanel(category);
     updateCalculatorDisplay();
     openDialog(calculatorDialog);
@@ -3463,8 +3526,14 @@
     if (operation === "add") return left + right;
     if (operation === "subtract") return left - right;
     if (operation === "multiply") return left * right;
-    if (operation === "divide") return right === 0 ? left : left / right;
+    if (operation === "divide") return right === 0 ? null : left / right;
     return right;
+  }
+
+  function normalizeCalculatorResult(value) {
+    if (!Number.isFinite(value)) return null;
+    const rounded = Math.round(value);
+    return calculatorContext && calculatorContext.allowsNegative ? rounded : Math.max(0, rounded);
   }
 
   function calculatorOperation(nextOperation) {
@@ -3478,7 +3547,12 @@
     const symbols = { add: "+", subtract: "−", multiply: "×", divide: "÷" };
     if (calculator.operation && !calculator.waitingForOperand) {
       const result = performCalculation(calculator.accumulator, inputValue, calculator.operation);
-      const normalizedResult = calculatorContext && calculatorContext.allowsNegative ? Math.round(result) : Math.max(0, Math.round(result));
+      const normalizedResult = normalizeCalculatorResult(result);
+      if (normalizedResult === null) {
+        calculator = createCalculatorState();
+        showToast("0で割ることはできません");
+        return;
+      }
       calculator.current = String(normalizedResult);
       calculator.accumulator = normalizedResult;
     } else if (calculator.accumulator === null) {
@@ -3492,31 +3566,23 @@
   function calculatorEquals() {
     if (!calculator.operation || calculator.waitingForOperand) return;
     const result = performCalculation(calculator.accumulator, Number(calculator.current), calculator.operation);
-    calculator.current = String(calculatorContext && calculatorContext.allowsNegative ? Math.round(result) : Math.max(0, Math.round(result)));
+    const normalizedResult = normalizeCalculatorResult(result);
+    if (normalizedResult === null) {
+      calculator = createCalculatorState();
+      showToast("0で割ることはできません");
+      return;
+    }
+    calculator.current = String(normalizedResult);
     calculator.expression = "";
     calculator.accumulator = null;
     calculator.operation = null;
     calculator.waitingForOperand = true;
   }
 
-  function toggleCalculatorNegative() {
-    if (!calculatorContext || !calculatorContext.allowsNegative) return;
-    if (calculator.waitingForOperand) {
-      calculator.current = "-0";
-      calculator.waitingForOperand = false;
-    } else if (calculator.current.startsWith("-")) {
-      calculator.current = calculator.current.slice(1) || "0";
-    } else {
-      calculator.current = `-${calculator.current}`;
-    }
-    calculator.accumulator = null;
-    calculator.operation = null;
-    calculator.expression = "";
-  }
-
   function handleCalculatorKey(key) {
     if (/^\d+$/.test(key)) calculatorInputDigit(key);
-    else if (key === "subtract") toggleCalculatorNegative();
+    else if (["add", "subtract", "multiply", "divide"].includes(key)) calculatorOperation(key);
+    else if (key === "equals") calculatorEquals();
     else if (key === "clear") calculator = createCalculatorState();
     else if (key === "backspace") {
       if (!calculator.waitingForOperand) {
