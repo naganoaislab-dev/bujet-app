@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.76";
+  const APP_VERSION = "0.5.77";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -2907,6 +2907,48 @@
     return `資金残高への影響　変化なし\n${sourceText}を${monthLabel(targetMonth)}の使途へ振り替えます。\n\n計画どおり使った場合の終了時見込み\n${forecast}`;
   }
 
+  function calculatorBudgetVisualWidth(value, maximum) {
+    const safeValue = Math.max(0, toInteger(value));
+    if (!safeValue) return 0;
+    return Math.max(5, Math.min(100, (safeValue / Math.max(1, maximum)) * 100));
+  }
+
+  function renderCalculatorBudgetVisual(elementId, { description, rows = [], forecastBefore, forecastAfter, invalid = false, invalidText = "" }) {
+    const root = document.querySelector(`#${elementId}`);
+    if (!root) return;
+    const normalizedRows = rows.map((row) => ({
+      ...row,
+      before: Math.max(0, toInteger(row.before)),
+      after: Math.max(0, toInteger(row.after))
+    }));
+    const maximum = Math.max(1, ...normalizedRows.flatMap((row) => [row.before, row.after]));
+    const hasForecast = Number.isFinite(forecastBefore) && Number.isFinite(forecastAfter);
+    const forecastDelta = hasForecast ? forecastAfter - forecastBefore : 0;
+    root.classList.toggle("is-invalid", invalid);
+    root.innerHTML = `<div class="calculator-budget-visual-heading"><strong>予算の動き</strong><span>${escapeHtml(description || "入力額に合わせて変化を確認できます")}</span></div>
+      <div class="calculator-budget-visual-legend"><span><i class="is-before"></i>操作前</span><span><i class="is-after"></i>操作後</span></div>
+      <div class="calculator-budget-visual-rows">${normalizedRows.map((row) => `<article class="calculator-budget-visual-row">
+        <div class="calculator-budget-visual-row-copy"><strong>${escapeHtml(row.label)}</strong><span>${formatCurrency(row.before)} <b>→</b> ${formatCurrency(row.after)}</span></div>
+        <div class="calculator-budget-visual-bars" aria-hidden="true"><i class="is-before" style="--budget-visual-width:${calculatorBudgetVisualWidth(row.before, maximum)}%"></i><i class="is-after" style="--budget-visual-width:${calculatorBudgetVisualWidth(row.after, maximum)}%"></i></div>
+      </article>`).join("")}</div>
+      ${hasForecast ? `<div class="calculator-budget-visual-forecast ${forecastDelta > 0 ? "is-positive" : forecastDelta < 0 ? "is-negative" : "is-neutral"}"><span>見込み収支</span><strong>${formatSignedCurrency(forecastBefore)} <b>→</b> ${formatSignedCurrency(forecastAfter)}</strong><em>${forecastDelta === 0 ? "変化なし" : `${forecastDelta > 0 ? "+" : "−"}${formatCurrency(Math.abs(forecastDelta))}`}</em></div>` : ""}
+      ${invalid ? `<p class="calculator-budget-visual-warning">${escapeHtml(invalidText || "入力額を確認してください")}</p>` : ""}`;
+  }
+
+  function renderCalculatorAddBudgetVisual({ description, currentBudget, addedAmount, sourceRows = [], forecastBefore, forecastAfter, invalid = false, invalidText = "" }) {
+    renderCalculatorBudgetVisual("calculator-add-budget-visual", {
+      description,
+      rows: [
+        { label: "対象項目の今月の予算", before: currentBudget, after: currentBudget + Math.max(0, toInteger(addedAmount)) },
+        ...sourceRows
+      ],
+      forecastBefore,
+      forecastAfter,
+      invalid,
+      invalidText
+    });
+  }
+
   function updateCalculatorShiftTargetSummary() {
     if (!calculatorContext || !calculatorContext.canShiftBudget) return;
     const category = categoryById(calculatorContext.categoryId);
@@ -2929,6 +2971,21 @@
     confirm.disabled = !validAmount;
     confirm.textContent = targetMonth && requestedAmount > 0 ? `${monthLabel(targetMonth)}へ${formatCurrency(requestedAmount)}をシフト` : "予算をシフトする";
     amountInput.max = String(sources.total);
+    const forecastBefore = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+    const shiftPlanChanges = validAmount ? budgetPlanChangesForAllocation(sourceMonth, allocation, targetMonth) : new Map();
+    const forecastAfter = validAmount ? projectEndForecastAfterBudgetPlanChanges(shiftPlanChanges) : forecastBefore;
+    renderCalculatorBudgetVisual("calculator-shift-visual", {
+      description: targetMonth ? `${monthLabel(sourceMonth)}から${monthLabel(targetMonth)}へ移す内訳` : "移動先を選ぶと、予算の動きを表示します",
+      rows: [
+        { label: "今月の予算", before: sources.monthly, after: sources.monthly - allocation.monthly },
+        { label: "持ち越し予算", before: sources.carry, after: sources.carry - allocation.carry },
+        { label: targetMonth ? `${monthLabel(targetMonth)}の予算` : "移動先の予算", before: targetBudget, after: targetBudget + allocation.amount }
+      ],
+      forecastBefore,
+      forecastAfter,
+      invalid: requestedAmount > sources.total,
+      invalidText: `移せる予算は${formatCurrency(sources.total)}までです`
+    });
     if (requestedAmount > sources.total) {
       budgetSummary.classList.add("is-invalid");
       budgetSummary.textContent = `シフトできる予算は${formatCurrency(sources.total)}までです。`;
@@ -2961,6 +3018,21 @@
     document.querySelector("#calculator-return-source").textContent = calculatorBudgetSourceText(sourceMonth, sources);
     amountInput.max = String(sources.total);
     confirm.disabled = requestedAmount <= 0;
+    const forecastBefore = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+    const isValidReturn = requestedAmount > 0 && requestedAmount <= sources.total;
+    const returnPlanChanges = isValidReturn ? budgetPlanChangesForAllocation(sourceMonth, allocation) : new Map();
+    const forecastAfter = isValidReturn ? projectEndForecastAfterBudgetPlanChanges(returnPlanChanges) : forecastBefore;
+    renderCalculatorBudgetVisual("calculator-return-visual", {
+      description: "返納額が今月の予算と持ち越し予算から順に差し引かれます",
+      rows: [
+        { label: "今月の予算", before: sources.monthly, after: sources.monthly - allocation.monthly },
+        { label: "持ち越し予算", before: sources.carry, after: sources.carry - allocation.carry }
+      ],
+      forecastBefore,
+      forecastAfter,
+      invalid: requestedAmount > sources.total,
+      invalidText: `返納できる予算は${formatCurrency(sources.total)}までです`
+    });
     if (requestedAmount > sources.total) {
       budgetSummary.classList.add("is-invalid");
       budgetSummary.textContent = `返納できる予算は${formatCurrency(sources.total)}までです。`;
@@ -3277,6 +3349,28 @@
     const invalidSourceAmount = selections.some((selection) => selection.amount > selection.available);
     const noSourceMessage = isBorrow ? "前借りできる未来の予算はありません。" : "組み換えに使える同月の予算はありません。";
     const targetText = `${category ? category.name : "対象項目"}の${monthLabel(sourceMonth)}の予算`;
+    const sourceById = new Map(sources.map((source) => [isBorrow ? source.month : source.category.id, source]));
+    const isValidFunding = amount > 0 && sources.length > 0 && !invalidSourceAmount && funded === amount;
+    const forecastBefore = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+    const fundingPlanChanges = isValidFunding ? calculatorExternalFundingPlanChanges(mode, sourceMonth, selections) : new Map();
+    const forecastAfter = isValidFunding ? projectEndForecastAfterBudgetPlanChanges(fundingPlanChanges) : forecastBefore;
+    renderCalculatorAddBudgetVisual({
+      description: isBorrow ? "未来の月の予算を今月へ前借りします" : "同じ月の他の項目の予算を組み換えます",
+      currentBudget,
+      addedAmount: amount,
+      sourceRows: selections.filter((selection) => selection.selected && selection.amount > 0).map((selection) => {
+        const source = sourceById.get(selection.id);
+        const label = isBorrow ? `${monthLabel(selection.id)}の予算` : `${source ? source.category.name : "充当元"}の今月の予算`;
+        const before = source
+          ? (isBorrow ? planAmount(category.id, selection.id) : planAmount(source.category.id, sourceMonth))
+          : selection.available;
+        return { label, before, after: Math.max(0, before - selection.amount) };
+      }),
+      forecastBefore,
+      forecastAfter,
+      invalid: amount > 0 && (!sources.length || invalidSourceAmount || funded !== amount),
+      invalidText: !sources.length ? "充当できる予算がありません" : `充当額を${formatCurrency(amount)}と同じ金額にしてください`
+    });
     confirm.disabled = amount <= 0 || !sources.length || invalidSourceAmount || funded !== amount;
     if (!sources.length) {
       summary.classList.add("is-invalid");
@@ -3335,6 +3429,15 @@
 
     if (!carryMode && !externalFundingMode) {
       confirm.disabled = amount <= 0;
+      const forecastBefore = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+      const forecastAfter = amount > 0 ? projectEndForecastAfterBudgetAddition(sourceMonth, amount) : forecastBefore;
+      renderCalculatorAddBudgetVisual({
+        description: "新しい予算を追加します。追加額の分だけ見込み収支は減ります",
+        currentBudget,
+        addedAmount: amount,
+        forecastBefore,
+        forecastAfter
+      });
       if (amount <= 0) {
         forecast.textContent = "追加する金額を入力すると、見込み収支への影響を表示します。";
         return;
@@ -3360,6 +3463,25 @@
     const sourceRowsAreCurrent = document.querySelector("#calculator-add-budget-carry-sources").dataset.targetCategoryId === (category ? category.id : "")
       && document.querySelector("#calculator-add-budget-carry-sources").dataset.sourceMonth === sourceMonth;
     if (!sourceRowsAreCurrent) renderCalculatorAddBudgetCarrySources();
+    const carrySourceById = new Map(sources.map((source) => [source.category.id, source]));
+    const isValidCarryFunding = amount > 0 && sources.length > 0 && !invalidSourceAmount && funded === amount;
+    const forecastBefore = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+    const carryPreviewForVisual = isValidCarryFunding ? calculatorCarryFundingPreview(sourceMonth, selections) : null;
+    const forecastAfter = carryPreviewForVisual ? projectEndForecastAfterBudgetPlanChanges(carryPreviewForVisual.planChanges) : forecastBefore;
+    renderCalculatorAddBudgetVisual({
+      description: "持ち越し予算を、対象項目の今月の予算に組み込みます",
+      currentBudget,
+      addedAmount: amount,
+      sourceRows: selections.filter((selection) => selection.selected && selection.amount > 0).map((selection) => {
+        const source = carrySourceById.get(selection.categoryId);
+        const before = source ? source.carry : selection.available;
+        return { label: `${source ? source.category.name : "充当元"}の持ち越し予算`, before, after: Math.max(0, before - selection.amount) };
+      }),
+      forecastBefore,
+      forecastAfter,
+      invalid: amount > 0 && (!sources.length || invalidSourceAmount || funded !== amount),
+      invalidText: !sources.length ? "充当できる持ち越し予算がありません" : `充当額を${formatCurrency(amount)}と同じ金額にしてください`
+    });
     confirm.disabled = amount <= 0 || !sources.length || invalidSourceAmount || funded !== amount;
     if (!sources.length) {
       carrySummary.classList.add("is-invalid");
@@ -3438,20 +3560,20 @@
     const entry = document.querySelector("#calculator-budget-entry");
     const actions = document.querySelector("#calculator-budget-actions");
     const back = document.querySelector("#calculator-budget-back");
-    const isAdjusting = Boolean(operation);
     const isMenu = operation === "menu";
     const isDetail = ["return", "add", "shift"].includes(operation);
+    const isInput = !isMenu && !isDetail;
     calculatorBudgetOperation = operation;
     returnPanel.hidden = operation !== "return";
     addPanel.hidden = operation !== "add";
     shiftPanel.hidden = operation !== "shift";
-    entry.hidden = !calculatorContext || !calculatorContext.canShiftBudget || isAdjusting;
+    entry.hidden = !calculatorContext || !calculatorContext.canShiftBudget || !isInput;
     actions.hidden = !isMenu;
-    document.querySelector("#calculator-expression").hidden = isAdjusting;
-    document.querySelector("#calculator-display").hidden = isAdjusting;
-    document.querySelector("#calculator-keys").hidden = isAdjusting;
-    back.hidden = !isAdjusting;
-    back.textContent = isMenu ? "‹ 金額の入力に戻る" : "‹ 予算操作を選び直す";
+    document.querySelector("#calculator-expression").hidden = !isInput;
+    document.querySelector("#calculator-display").hidden = !isInput;
+    document.querySelector("#calculator-keys").hidden = !isInput;
+    back.hidden = isInput;
+    back.textContent = isDetail ? "‹ 予算操作を選び直す" : "‹ 金額の入力に戻る";
     actions.classList.toggle("is-adjusting", isDetail);
     document.querySelectorAll("[data-budget-operation]").forEach((button) => {
       const isActive = button.dataset.budgetOperation === operation;
@@ -3481,6 +3603,8 @@
     }
     document.querySelector("#calculator-category").textContent = category.name;
     document.querySelector("#calculator-kind").textContent = calculatorContext.isUnexpectedExpense ? "想定外支出を入力" : calculatorContext.isUnexpectedIncome ? "想定外収入を入力" : calculatorContext.allowsNegative ? "収入（マイナス込み）を入力" : calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
+    calculatorBudgetOperation = "";
+    document.querySelector("#calculator-budget-back").hidden = true;
     resetCalculatorShiftPanel(category);
     updateCalculatorDisplay();
     openDialog(calculatorDialog);
