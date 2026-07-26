@@ -2,13 +2,14 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.79";
+  const APP_VERSION = "0.5.80";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
   const UNEXPECTED_INCOME_CATEGORY_ID = "income-unplanned";
   const ANALYSIS_PAGE_COUNT = 3;
   const OVERVIEW_PAGE_COUNT = 2;
+  const ENTRY_ANIMATION_DURATION = 3000;
   const EXPENSE_CATEGORY_GROUPS = Object.freeze(["variable", "fixed"]);
   const INCOME_CATEGORY_GROUPS = Object.freeze(["income", SIGNED_INCOME_GROUP]);
   const CATEGORY_GROUP_LABELS = Object.freeze({
@@ -102,6 +103,7 @@
   let unexpectedEntriesExpanded = false;
   let allTransactionsShown = false;
   let pendingTransaction = null;
+  let pendingTransactionEntryAnimation = null;
   let editingPlanCategoryId = null;
   let planDraft = null;
   let planRuleDraft = null;
@@ -1252,7 +1254,7 @@
     if (reduceMotion) return;
     element.classList.remove("is-entry-value-increase", "is-entry-value-decrease");
     element.classList.add(direction || (after >= before ? "is-entry-value-increase" : "is-entry-value-decrease"));
-    const duration = 560;
+    const duration = ENTRY_ANIMATION_DURATION;
     const startedAt = performance.now();
     const tick = (now) => {
       const progress = Math.min(1, (now - startedAt) / duration);
@@ -1261,7 +1263,7 @@
       if (progress < 1) window.requestAnimationFrame(tick);
       else {
         element.textContent = finalText;
-        window.setTimeout(() => element.classList.remove("is-entry-value-increase", "is-entry-value-decrease"), 220);
+        window.setTimeout(() => element.classList.remove("is-entry-value-increase", "is-entry-value-decrease"), 80);
       }
     };
     window.requestAnimationFrame(tick);
@@ -1293,13 +1295,14 @@
       particle.style.left = `${startX}px`;
       particle.style.top = `${startY}px`;
       layer.append(particle);
+      const particleDelay = reduceMotion ? 0 : delay + index * 52;
       const animation = particle.animate([
         { transform: "translate(-50%, -50%) scale(.45)", opacity: 0 },
         { transform: `translate(${(endX - startX) * 0.22}px, ${(endY - startY) * 0.08 - 16}px) scale(1)`, opacity: 1, offset: 0.24 },
         { transform: `translate(${endX - startX}px, ${endY - startY}px) scale(.55)`, opacity: 0 }
       ], {
-        duration: reduceMotion ? 1 : 520 + index * 75,
-        delay: reduceMotion ? 0 : delay + index * 38,
+        duration: reduceMotion ? 1 : Math.max(420, ENTRY_ANIMATION_DURATION - particleDelay),
+        delay: particleDelay,
         easing: "cubic-bezier(.22,.75,.25,1)",
         fill: "forwards"
       });
@@ -1319,8 +1322,8 @@
     flyout.style.right = `${Math.max(12, 18 + index * 10)}px`;
     layer.append(flyout);
     window.requestAnimationFrame(() => flyout.classList.add("is-active"));
-    window.setTimeout(() => flyout.classList.add("is-leaving"), 1450 + index * 100);
-    window.setTimeout(() => flyout.remove(), 1800 + index * 100);
+    window.setTimeout(() => flyout.classList.add("is-leaving"), ENTRY_ANIMATION_DURATION - 260 + index * 24);
+    window.setTimeout(() => flyout.remove(), ENTRY_ANIMATION_DURATION + 80 + index * 24);
     return entryAnimationRect(flyout.querySelector(".entry-month-plan-bar"));
   }
 
@@ -1371,7 +1374,7 @@
       });
       return;
     }
-    if (animation.type === "transaction-income") {
+    if (animation.type === "transaction-income" || animation.type === "transaction-unexpected-income") {
       flyEntryMoney(targetRect, forecastRect, "success");
     }
     if (animation.type === "transaction-unexpected-expense") {
@@ -1456,10 +1459,9 @@
           <p>${shortDate(range.start)}〜${shortDate(range.end)}・${state.settings.closingDay}日締め</p>
           <strong>${monthLabel(currentPeriod)}</strong>
         </div>
-        <div class="period-total entry-project-forecast" aria-label="プロジェクト終了時の見込み収支">
+        <div class="period-total entry-project-forecast">
           <p>${projectForecastHorizonLabel()}の収支見込み</p>
           <strong data-entry-project-forecast-value data-entry-amount="${projectForecast}" class="${projectForecast < 0 ? "negative" : ""}">${formatSignedCurrency(projectForecast)}</strong>
-          <span class="period-carry">プロジェクト終了時の見込み収支</span>
         </div>
       </section>
 
@@ -4058,7 +4060,9 @@
     const category = categoryById(calculatorContext.categoryId);
     const entryAnimationBefore = category ? entryAnimationSnapshot([category.id]) : null;
     const entryAnimationType = calculatorContext.direction === "income"
-      ? "transaction-income"
+      ? isUnexpectedIncomeCategory(category)
+        ? "transaction-unexpected-income"
+        : "transaction-income"
       : isUnexpectedExpenseCategory(category)
         ? "transaction-unexpected-expense"
         : "transaction-expense";
@@ -4086,13 +4090,19 @@
       showToast(error instanceof Error ? error.message : "記録を保存できませんでした");
       return;
     }
-    if (category) queueEntryAnimation(entryAnimationType, category.id, [], {}, entryAnimationBefore);
+    if (category) {
+      pendingTransactionEntryAnimation = {
+        type: entryAnimationType,
+        targetCategoryId: category.id,
+        sourceCategoryIds: [],
+        details: {},
+        before: entryAnimationBefore
+      };
+    }
     render();
-    window.setTimeout(() => {
-      document.querySelector("#memo-summary").textContent = `${category.name}・${calculatorContext.allowsNegative ? formatSignedCurrency(amount) : formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
-      document.querySelector("#memo-input").value = "";
-      openDialog(memoDialog);
-    }, 620);
+    document.querySelector("#memo-summary").textContent = `${category.name}・${calculatorContext.allowsNegative ? formatSignedCurrency(amount) : formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
+    document.querySelector("#memo-input").value = "";
+    openDialog(memoDialog);
   }
 
   async function shiftCalculatorBudget() {
@@ -4374,9 +4384,12 @@
     }
     const category = categoryById(pendingTransaction.categoryId);
     const amount = pendingTransaction.amount;
+    const entryAnimation = pendingTransactionEntryAnimation;
     pendingTransaction = null;
+    pendingTransactionEntryAnimation = null;
     closeDialog(memoDialog);
     await persist(`${category ? category.name : "記録"} ${category && isSignedIncomeCategory(category) ? formatSignedCurrency(amount) : formatCurrency(amount)}を保存しました`);
+    if (entryAnimation) pendingEntryAnimation = entryAnimation;
     render();
   }
 
@@ -5080,7 +5093,13 @@
   document.querySelector("#app-update-check").addEventListener("click", () => checkForAppUpdate());
 
   document.querySelectorAll("[data-close]").forEach((button) => {
-    button.addEventListener("click", () => closeDialog(document.querySelector(`#${button.dataset.close}`)));
+    button.addEventListener("click", () => {
+      if (button.dataset.close === "memo-dialog" && pendingTransaction) {
+        savePendingTransaction("").catch((error) => showToast(error.message));
+        return;
+      }
+      closeDialog(document.querySelector(`#${button.dataset.close}`));
+    });
   });
   planDialog.addEventListener("cancel", cancelPlanPointerTracking);
   planDialog.addEventListener("close", cancelPlanPointerTracking);
