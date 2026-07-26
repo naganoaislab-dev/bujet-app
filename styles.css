@@ -597,20 +597,26 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .calculator-project-forecast { margin: -0.45rem 0 0.85rem; padding: 0.68rem 0.75rem; border-radius: 0.72rem; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); font-size: 0.78rem; font-weight: 850; line-height: 1.5; text-align: right; }
 .calculator-project-forecast.positive { color: var(--success); background: color-mix(in srgb, var(--success) 12%, var(--surface)); }
 .calculator-project-forecast[hidden] { display: none; }
-.calculator-budget-actions { display: grid; gap: 0.5rem; margin: -0.15rem 0 0.7rem; padding: 0.72rem; border: 1px solid var(--line); border-radius: 0.9rem; background: linear-gradient(145deg, color-mix(in srgb, var(--primary) 8%, var(--surface-2)), var(--surface-2)); }
+.calculator-budget-actions { display: grid; gap: 0.62rem; margin: -0.15rem 0 0.7rem; padding: 0.82rem; border: 1px solid var(--line); border-radius: 1rem; background: linear-gradient(145deg, color-mix(in srgb, var(--primary) 10%, var(--surface-2)), var(--surface-2)); }
 .calculator-budget-actions[hidden] { display: none; }
 .calculator-budget-actions-heading { display: flex; align-items: center; min-width: 0; }
 .calculator-budget-actions-heading .eyebrow { margin: 0 0 0.1rem; }
 .calculator-budget-actions-heading strong, .calculator-budget-actions-heading span { display: block; }
-.calculator-budget-actions-heading strong { font-size: 0.9rem; }
-.calculator-budget-actions-heading span { margin-top: 0.14rem; color: var(--muted); font-size: 0.68rem; font-weight: 700; line-height: 1.35; }
-.calculator-budget-action-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.4rem; }
-.calculator-budget-action { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; min-width: 0; min-height: 4.15rem; padding: 0.55rem 0.38rem; border-color: color-mix(in srgb, var(--line) 82%, var(--surface)); text-align: left; }
-.calculator-budget-action > b { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; margin-right: 0.32rem; border-radius: 0.5rem; color: var(--primary-strong); background: var(--primary-soft); font-size: 1rem; line-height: 1; }
+.calculator-budget-actions-heading strong { font-size: 0.96rem; }
+.calculator-budget-actions-heading span { margin-top: 0.14rem; color: var(--muted); font-size: 0.7rem; font-weight: 700; line-height: 1.38; }
+.calculator-budget-action-summary { margin: 0; padding: 0.58rem 0.65rem; border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line)); border-radius: 0.66rem; color: var(--muted); background: color-mix(in srgb, var(--primary) 6%, var(--surface)); font-size: 0.7rem; font-weight: 750; line-height: 1.45; }
+.calculator-budget-action-list { display: grid; gap: 0.46rem; }
+.calculator-budget-action { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; min-width: 0; min-height: 4.2rem; padding: 0.58rem 0.7rem; border-color: color-mix(in srgb, var(--line) 82%, var(--surface)); text-align: left; }
+.calculator-budget-action > b { display: grid; place-items: center; width: 2rem; height: 2rem; margin-right: 0.58rem; border-radius: 0.65rem; color: var(--primary-strong); background: var(--primary-soft); font-size: 1.15rem; line-height: 1; }
 .calculator-budget-action > span { display: grid; min-width: 0; gap: 0.14rem; }
-.calculator-budget-action strong { overflow: hidden; font-size: 0.71rem; text-overflow: ellipsis; white-space: nowrap; }
-.calculator-budget-action small { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 0.58rem; font-weight: 700; line-height: 1.25; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.calculator-budget-action strong { overflow: hidden; font-size: 0.82rem; text-overflow: ellipsis; white-space: nowrap; }
+.calculator-budget-action small { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 0.65rem; font-weight: 700; line-height: 1.3; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.calculator-budget-action > i { padding-left: 0.4rem; color: var(--muted); font-size: 1.45rem; font-style: normal; font-weight: 400; line-height: 1; }
 .calculator-budget-action.is-active { border-color: color-mix(in srgb, var(--primary) 68%, var(--line)); color: var(--primary-strong); background: var(--primary-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent); }
+.calculator-budget-action.is-active > b { color: #fff; background: var(--primary); }
+.calculator-budget-action:nth-child(1) > b { color: #287155; background: color-mix(in srgb, #4f9974 18%, var(--surface)); }
+.calculator-budget-action:nth-child(2) > b { color: #2574ad; background: color-mix(in srgb, #3a82b5 18%, var(--surface)); }
+.calculator-budget-action:nth-child(3) > b { color: #7256aa; background: color-mix(in srgb, #8871b7 18%, var(--surface)); }
 .calculator-budget-action.is-active > b { color: #fff; background: var(--primary); }
 .calculator-budget-action:disabled { opacity: 0.48; }
 .calculator-budget-back { width: 100%; margin: -0.18rem 0 0.62rem; color: var(--primary-strong); }
@@ -640,8 +646,15 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .calculator-return-forecast.is-invalid { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface)); }
 .calculator-add-budget-forecast { padding: 0.68rem; border: 1px solid color-mix(in srgb, var(--budget-operation-color) 28%, var(--line)); border-radius: 0.65rem; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); font-size: 0.74rem; font-weight: 850; line-height: 1.5; }
 .calculator-add-budget-forecast.positive { color: var(--success); background: color-mix(in srgb, var(--success) 12%, var(--surface)); }
+.calculator-add-budget-forecast.neutral { color: var(--primary-strong); background: var(--primary-soft); }
+.calculator-budget-operation-note { margin: -0.1rem 0 0 !important; color: var(--muted); font-size: 0.72rem; font-weight: 700; line-height: 1.45; }
 .calculator-add-budget-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
-.calculator-add-budget-mode .button.active { color: var(--primary-strong); border-color: color-mix(in srgb, var(--primary) 60%, var(--line)); background: var(--primary-soft); }
+.calculator-add-budget-mode .button { display: grid; min-height: 3.6rem; padding: 0.45rem 0.52rem; text-align: left; }
+.calculator-add-budget-mode .button strong, .calculator-add-budget-mode .button small { display: block; }
+.calculator-add-budget-mode .button strong { font-size: 0.71rem; line-height: 1.35; }
+.calculator-add-budget-mode .button small { margin-top: 0.14rem; color: var(--muted); font-size: 0.6rem; font-weight: 700; line-height: 1.3; }
+.calculator-add-budget-mode .button.active { color: var(--primary-strong); border-color: color-mix(in srgb, var(--primary) 60%, var(--line)); background: var(--primary-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 16%, transparent); }
+.calculator-add-budget-mode .button.active small { color: color-mix(in srgb, var(--primary-strong) 72%, var(--muted)); }
 .calculator-add-budget-carry-panel { display: grid; gap: 0.65rem; padding: 0.72rem; border: 1px solid var(--line); border-radius: 0.78rem; background: var(--surface); }
 .calculator-add-budget-carry-panel[hidden] { display: none; }
 .calculator-add-budget-carry-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 0.6rem; }
