@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.77";
+  const APP_VERSION = "0.5.78";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -2913,7 +2913,57 @@
     return Math.max(5, Math.min(100, (safeValue / Math.max(1, maximum)) * 100));
   }
 
-  function renderCalculatorBudgetVisual(elementId, { description, rows = [], forecastBefore, forecastAfter, invalid = false, invalidText = "" }) {
+  function calculatorBudgetFlowNodeMarkup(node, maximum) {
+    if (node.kind === "forecast") {
+      const before = toInteger(node.before);
+      const after = toInteger(node.after);
+      return `<article class="calculator-budget-flow-node is-forecast ${after < before ? "is-decrease" : "is-increase"}"><span>${escapeHtml(node.label)}</span><strong>${formatSignedCurrency(before)} <b>→</b> ${formatSignedCurrency(after)}</strong><small>${after === before ? "変化なし" : `${after > before ? "+" : "−"}${formatCurrency(Math.abs(after - before))}`}</small></article>`;
+    }
+    const monthlyBefore = Math.max(0, toInteger(node.monthlyBefore ?? node.before));
+    const carryBefore = Math.max(0, toInteger(node.carryBefore));
+    const monthlyAfter = Math.max(0, toInteger(node.monthlyAfter ?? node.after));
+    const carryAfter = Math.max(0, toInteger(node.carryAfter));
+    const before = monthlyBefore + carryBefore;
+    const after = monthlyAfter + carryAfter;
+    const height = (value) => calculatorBudgetVisualWidth(value, maximum);
+    return `<article class="calculator-budget-flow-node ${node.target ? "is-target" : ""}">
+      <span>${escapeHtml(node.label)}</span>
+      <div class="calculator-budget-flow-columns" aria-hidden="true">
+        <div class="calculator-budget-flow-column is-before"><i class="calculator-budget-flow-monthly" style="--flow-height:${height(monthlyBefore)}%"></i>${carryBefore ? `<i class="calculator-budget-flow-carry" style="--flow-height:${height(carryBefore)}%; --flow-base:${height(monthlyBefore)}%"></i>` : ""}</div>
+        <div class="calculator-budget-flow-column is-after"><i class="calculator-budget-flow-monthly" style="--flow-height:${height(monthlyAfter)}%"></i>${carryAfter ? `<i class="calculator-budget-flow-carry" style="--flow-height:${height(carryAfter)}%; --flow-base:${height(monthlyAfter)}%"></i>` : ""}</div>
+      </div>
+      <small>${formatCurrency(before)} <b>→</b> ${formatCurrency(after)}</small>
+    </article>`;
+  }
+
+  function calculatorProjectPeriodFlowMarkup(timeline) {
+    if (!timeline || !timeline.category || !timeline.targetMonth) return "";
+    const months = periodMonths();
+    const values = months.map((month) => {
+      const isSource = month === timeline.sourceMonth;
+      const isTarget = month === timeline.targetMonth;
+      const base = isSource ? timeline.monthlyBefore : planAmount(timeline.category.id, month);
+      const carry = isSource ? timeline.carryBefore : 0;
+      const addition = isTarget ? timeline.amount : 0;
+      return { month, isSource, isTarget, base, carry, addition };
+    });
+    const maximum = Math.max(1, ...values.map((item) => item.base + item.carry + item.addition));
+    const height = (value) => calculatorBudgetVisualWidth(value, maximum);
+    return `<section class="calculator-budget-flow-timeline"><div class="calculator-budget-flow-timeline-heading"><strong>プロジェクト期間の予算推移</strong><span>黄色は持ち越し、青は移動後に増える予算です</span></div><div class="calculator-budget-flow-months">${values.map((item) => `<article class="calculator-budget-flow-month ${item.isSource ? "is-source" : ""} ${item.isTarget ? "is-target" : ""}"><div class="calculator-budget-flow-month-bar" aria-hidden="true"><i class="is-base" style="--flow-height:${height(item.base)}%"></i>${item.carry ? `<i class="is-carry" style="--flow-height:${height(item.carry)}%; --flow-base:${height(item.base)}%"></i>` : ""}${item.addition ? `<i class="is-added" style="--flow-height:${height(item.addition)}%; --flow-base:${height(item.base)}%"></i>` : ""}</div><span>${escapeHtml(monthLabel(item.month))}</span></article>`).join("")}</div></section>`;
+  }
+
+  function calculatorBudgetFlowMarkup(flow) {
+    if (!flow) return "";
+    const sources = Array.isArray(flow.sources) ? flow.sources : [];
+    const sourceTotals = sources.map((node) => Math.max(0, toInteger(node.monthlyBefore ?? node.before)) + Math.max(0, toInteger(node.carryBefore)));
+    const targetTotal = flow.target && flow.target.kind !== "forecast"
+      ? Math.max(0, toInteger(flow.target.monthlyBefore ?? flow.target.before)) + Math.max(0, toInteger(flow.target.carryBefore))
+      : 0;
+    const maximum = Math.max(1, ...sourceTotals, targetTotal);
+    return `<section class="calculator-budget-flow" aria-label="予算の流れ"><div class="calculator-budget-flow-heading"><strong>${escapeHtml(flow.title || "予算の流れ")}</strong><span>${escapeHtml(flow.description || "入力内容に合わせて予算の動きが変わります")}</span></div><div class="calculator-budget-flow-route"><div class="calculator-budget-flow-sources">${sources.map((node) => calculatorBudgetFlowNodeMarkup(node, maximum)).join("") || "<p>移動元を選択してください</p>"}</div><div class="calculator-budget-flow-arrow" aria-hidden="true"><i></i><span>${escapeHtml(flow.transferLabel || "予算を移動")}</span></div><div class="calculator-budget-flow-target">${flow.target ? calculatorBudgetFlowNodeMarkup(flow.target, maximum) : ""}</div></div>${calculatorProjectPeriodFlowMarkup(flow.timeline)}</section>`;
+  }
+
+  function renderCalculatorBudgetVisual(elementId, { description, rows = [], forecastBefore, forecastAfter, invalid = false, invalidText = "", flow = null }) {
     const root = document.querySelector(`#${elementId}`);
     if (!root) return;
     const normalizedRows = rows.map((row) => ({
@@ -2926,6 +2976,7 @@
     const forecastDelta = hasForecast ? forecastAfter - forecastBefore : 0;
     root.classList.toggle("is-invalid", invalid);
     root.innerHTML = `<div class="calculator-budget-visual-heading"><strong>予算の動き</strong><span>${escapeHtml(description || "入力額に合わせて変化を確認できます")}</span></div>
+      ${calculatorBudgetFlowMarkup(flow)}
       <div class="calculator-budget-visual-legend"><span><i class="is-before"></i>操作前</span><span><i class="is-after"></i>操作後</span></div>
       <div class="calculator-budget-visual-rows">${normalizedRows.map((row) => `<article class="calculator-budget-visual-row">
         <div class="calculator-budget-visual-row-copy"><strong>${escapeHtml(row.label)}</strong><span>${formatCurrency(row.before)} <b>→</b> ${formatCurrency(row.after)}</span></div>
@@ -2935,7 +2986,7 @@
       ${invalid ? `<p class="calculator-budget-visual-warning">${escapeHtml(invalidText || "入力額を確認してください")}</p>` : ""}`;
   }
 
-  function renderCalculatorAddBudgetVisual({ description, currentBudget, addedAmount, sourceRows = [], forecastBefore, forecastAfter, invalid = false, invalidText = "" }) {
+  function renderCalculatorAddBudgetVisual({ description, currentBudget, addedAmount, sourceRows = [], forecastBefore, forecastAfter, invalid = false, invalidText = "", flow = null }) {
     renderCalculatorBudgetVisual("calculator-add-budget-visual", {
       description,
       rows: [
@@ -2945,7 +2996,8 @@
       forecastBefore,
       forecastAfter,
       invalid,
-      invalidText
+      invalidText,
+      flow
     });
   }
 
@@ -2984,7 +3036,33 @@
       forecastBefore,
       forecastAfter,
       invalid: requestedAmount > sources.total,
-      invalidText: `移せる予算は${formatCurrency(sources.total)}までです`
+      invalidText: `移せる予算は${formatCurrency(sources.total)}までです`,
+      flow: {
+        title: "予算を別の月へ移す流れ",
+        description: "今月に残る予算と持ち越しを、移動先の月の計画へ振り替えます",
+        sources: [{
+          label: `${monthLabel(sourceMonth)}の予算`,
+          monthlyBefore: sources.monthly,
+          carryBefore: sources.carry,
+          monthlyAfter: sources.monthly - allocation.monthly,
+          carryAfter: sources.carry - allocation.carry
+        }],
+        target: {
+          label: targetMonth ? `${monthLabel(targetMonth)}の予算` : "移動先の予算",
+          monthlyBefore: targetBudget,
+          monthlyAfter: targetBudget + allocation.amount,
+          target: true
+        },
+        transferLabel: allocation.amount > 0 ? `${formatCurrency(allocation.amount)}を移動` : "移す金額を入力",
+        timeline: targetMonth ? {
+          category,
+          sourceMonth,
+          targetMonth,
+          amount: allocation.amount,
+          monthlyBefore: sources.monthly,
+          carryBefore: sources.carry
+        } : null
+      }
     });
     if (requestedAmount > sources.total) {
       budgetSummary.classList.add("is-invalid");
@@ -3031,7 +3109,20 @@
       forecastBefore,
       forecastAfter,
       invalid: requestedAmount > sources.total,
-      invalidText: `返納できる予算は${formatCurrency(sources.total)}までです`
+      invalidText: `返納できる予算は${formatCurrency(sources.total)}までです`,
+      flow: {
+        title: "使わない予算を見込み収支へ戻す流れ",
+        description: "今月に残る予算・持ち越しのどちらから返納するかを反映します",
+        sources: [{
+          label: `${monthLabel(sourceMonth)}の使える予算`,
+          monthlyBefore: sources.monthly,
+          carryBefore: sources.carry,
+          monthlyAfter: sources.monthly - allocation.monthly,
+          carryAfter: sources.carry - allocation.carry
+        }],
+        target: { kind: "forecast", label: "プロジェクト終了時の見込み収支", before: forecastBefore, after: forecastAfter },
+        transferLabel: allocation.amount > 0 ? `${formatCurrency(allocation.amount)}を返納` : "返納額を入力"
+      }
     });
     if (requestedAmount > sources.total) {
       budgetSummary.classList.add("is-invalid");
@@ -3369,7 +3460,24 @@
       forecastBefore,
       forecastAfter,
       invalid: amount > 0 && (!sources.length || invalidSourceAmount || funded !== amount),
-      invalidText: !sources.length ? "充当できる予算がありません" : `充当額を${formatCurrency(amount)}と同じ金額にしてください`
+      invalidText: !sources.length ? "充当できる予算がありません" : `充当額を${formatCurrency(amount)}と同じ金額にしてください`,
+      flow: {
+        title: isBorrow ? "未来の月の予算を前借りする流れ" : "同じ月の予算を組み換える流れ",
+        description: isBorrow ? "未来の月の計画予算を減らし、対象項目の今月の予算へ移します" : "他の項目の今月の予算を減らし、対象項目の予算へ移します",
+        sources: selections.filter((selection) => selection.selected && selection.amount > 0).map((selection) => {
+          const source = sourceById.get(selection.id);
+          const before = source
+            ? (isBorrow ? planAmount(category.id, selection.id) : planAmount(source.category.id, sourceMonth))
+            : selection.available;
+          return {
+            label: isBorrow ? `${monthLabel(selection.id)}の予算` : `${source ? source.category.name : "充当元"}の今月の予算`,
+            monthlyBefore: before,
+            monthlyAfter: Math.max(0, before - selection.amount)
+          };
+        }),
+        target: { label: `${category ? category.name : "対象項目"}の${monthLabel(sourceMonth)}の予算`, monthlyBefore: currentBudget, monthlyAfter: currentBudget + amount, target: true },
+        transferLabel: amount > 0 ? `${formatCurrency(funded)}を移動` : "充当額を入力"
+      }
     });
     confirm.disabled = amount <= 0 || !sources.length || invalidSourceAmount || funded !== amount;
     if (!sources.length) {
@@ -3436,7 +3544,14 @@
         currentBudget,
         addedAmount: amount,
         forecastBefore,
-        forecastAfter
+        forecastAfter,
+        flow: {
+          title: "見込み収支から予算を追加する流れ",
+          description: "新しい予算を増やすため、同額だけプロジェクトの見込み収支が減ります",
+          sources: [{ kind: "forecast", label: "プロジェクト終了時の見込み収支", before: forecastBefore, after: forecastAfter }],
+          target: { label: `${category ? category.name : "対象項目"}の${monthLabel(sourceMonth)}の予算`, monthlyBefore: currentBudget, monthlyAfter: currentBudget + amount, target: true },
+          transferLabel: amount > 0 ? `${formatCurrency(amount)}を追加` : "追加額を入力"
+        }
       });
       if (amount <= 0) {
         forecast.textContent = "追加する金額を入力すると、見込み収支への影響を表示します。";
@@ -3480,7 +3595,18 @@
       forecastBefore,
       forecastAfter,
       invalid: amount > 0 && (!sources.length || invalidSourceAmount || funded !== amount),
-      invalidText: !sources.length ? "充当できる持ち越し予算がありません" : `充当額を${formatCurrency(amount)}と同じ金額にしてください`
+      invalidText: !sources.length ? "充当できる持ち越し予算がありません" : `充当額を${formatCurrency(amount)}と同じ金額にしてください`,
+      flow: {
+        title: "各項目の持ち越しプールから充当する流れ",
+        description: "選択した項目の黄色い持ち越し部分を、対象項目の今月の予算へ組み込みます",
+        sources: selections.filter((selection) => selection.selected && selection.amount > 0).map((selection) => {
+          const source = carrySourceById.get(selection.categoryId);
+          const before = source ? source.carry : selection.available;
+          return { label: `${source ? source.category.name : "充当元"}の持ち越し`, carryBefore: before, carryAfter: Math.max(0, before - selection.amount) };
+        }),
+        target: { label: `${category ? category.name : "対象項目"}の${monthLabel(sourceMonth)}の予算`, monthlyBefore: currentBudget, monthlyAfter: currentBudget + amount, target: true },
+        transferLabel: amount > 0 ? `${formatCurrency(funded)}を充当` : "充当額を入力"
+      }
     });
     confirm.disabled = amount <= 0 || !sources.length || invalidSourceAmount || funded !== amount;
     if (!sources.length) {
