@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.78";
+  const APP_VERSION = "0.5.79";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -119,6 +119,7 @@
   let nextDayRenderTimer = null;
   let serviceWorkerRegistration = null;
   let serviceWorkerUpdateRequested = false;
+  let pendingEntryAnimation = null;
 
   const currencyFormatter = new Intl.NumberFormat("ja-JP", {
     style: "currency",
@@ -1164,6 +1165,218 @@
     }
     if (currentView === "overview") configureOverviewChartInteractions();
     scheduleNextDateRefresh();
+    if (currentView === "entry" && pendingEntryAnimation) {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(playPendingEntryAnimation);
+      });
+    }
+  }
+
+  function projectForecastHorizonLabel() {
+    const today = appDateForNow();
+    const projectEnd = parseLocalDate(state.settings.endDate);
+    let months = (projectEnd.getFullYear() - today.getFullYear()) * 12 + projectEnd.getMonth() - today.getMonth();
+    if (projectEnd.getDate() < today.getDate()) months -= 1;
+    months = Math.max(0, months);
+    return `${Math.floor(months / 12)}年${months % 12}ヶ月後`;
+  }
+
+  function entryBudgetValueElement(categoryId) {
+    return Array.from(viewHost.querySelectorAll("[data-entry-budget-value]"))
+      .find((element) => element.dataset.entryBudgetValue === categoryId) || null;
+  }
+
+  function entryForecastValueElement() {
+    return viewHost.querySelector("[data-entry-project-forecast-value]");
+  }
+
+  function entryAnimationRect(element) {
+    if (!element) return null;
+    const bounds = element.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return null;
+    return { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height };
+  }
+
+  function entryAnimationSnapshot(categoryIds = []) {
+    const values = {};
+    Array.from(new Set(categoryIds.filter(Boolean))).forEach((categoryId) => {
+      const element = entryBudgetValueElement(categoryId);
+      if (!element) return;
+      values[categoryId] = {
+        value: toInteger(element.dataset.entryAmount),
+        rect: entryAnimationRect(element)
+      };
+    });
+    const forecast = entryForecastValueElement();
+    return {
+      values,
+      forecast: forecast ? {
+        value: toInteger(forecast.dataset.entryAmount),
+        rect: entryAnimationRect(forecast)
+      } : null
+    };
+  }
+
+  function queueEntryAnimation(type, targetCategoryId, sourceCategoryIds = [], details = {}, before = null) {
+    pendingEntryAnimation = {
+      type,
+      targetCategoryId,
+      sourceCategoryIds: Array.from(new Set(sourceCategoryIds.filter(Boolean))),
+      details,
+      before: before || entryAnimationSnapshot([targetCategoryId, ...sourceCategoryIds])
+    };
+  }
+
+  function entryMoneyLayer() {
+    let layer = document.querySelector("#entry-money-animation-layer");
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.id = "entry-money-animation-layer";
+      layer.className = "entry-money-animation-layer";
+      layer.setAttribute("aria-hidden", "true");
+      document.body.append(layer);
+    }
+    return layer;
+  }
+
+  function entryNumberText(value, originalText) {
+    if (String(originalText).includes("超過")) return `${formatCurrency(Math.abs(value))} 超過`;
+    if (String(originalText).trim().startsWith("+")) return formatSignedCurrency(value);
+    return value < 0 ? formatSignedCurrency(value) : formatCurrency(value);
+  }
+
+  function animateEntryNumber(element, before, after, direction = "") {
+    if (!element || before === after) return;
+    const finalText = element.textContent;
+    const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) return;
+    element.classList.remove("is-entry-value-increase", "is-entry-value-decrease");
+    element.classList.add(direction || (after >= before ? "is-entry-value-increase" : "is-entry-value-decrease"));
+    const duration = 560;
+    const startedAt = performance.now();
+    const tick = (now) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      element.textContent = entryNumberText(Math.round(before + (after - before) * eased), finalText);
+      if (progress < 1) window.requestAnimationFrame(tick);
+      else {
+        element.textContent = finalText;
+        window.setTimeout(() => element.classList.remove("is-entry-value-increase", "is-entry-value-decrease"), 220);
+      }
+    };
+    window.requestAnimationFrame(tick);
+  }
+
+  function entryPoint(rect) {
+    return rect ? {
+      x: rect.left + rect.width / 2,
+      y: rect.top + Math.min(rect.height * 0.54, Math.max(18, rect.height - 18))
+    } : null;
+  }
+
+  function flyEntryMoney(fromRect, toRect, tone = "primary", delay = 0) {
+    const from = entryPoint(fromRect);
+    const to = entryPoint(toRect);
+    if (!from || !to) return;
+    const layer = entryMoneyLayer();
+    const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const distance = Math.hypot(to.x - from.x, to.y - from.y);
+    const particleCount = reduceMotion ? 1 : clamp(Math.round(distance / 90), 3, 6);
+    for (let index = 0; index < particleCount; index += 1) {
+      const particle = document.createElement("i");
+      const startX = from.x + (Math.random() - 0.5) * 18;
+      const startY = from.y + (Math.random() - 0.5) * 12;
+      const endX = to.x + (Math.random() - 0.5) * 16;
+      const endY = to.y + (Math.random() - 0.5) * 14;
+      particle.className = `entry-money-particle is-${tone}`;
+      particle.textContent = "¥";
+      particle.style.left = `${startX}px`;
+      particle.style.top = `${startY}px`;
+      layer.append(particle);
+      const animation = particle.animate([
+        { transform: "translate(-50%, -50%) scale(.45)", opacity: 0 },
+        { transform: `translate(${(endX - startX) * 0.22}px, ${(endY - startY) * 0.08 - 16}px) scale(1)`, opacity: 1, offset: 0.24 },
+        { transform: `translate(${endX - startX}px, ${endY - startY}px) scale(.55)`, opacity: 0 }
+      ], {
+        duration: reduceMotion ? 1 : 520 + index * 75,
+        delay: reduceMotion ? 0 : delay + index * 38,
+        easing: "cubic-bezier(.22,.75,.25,1)",
+        fill: "forwards"
+      });
+      animation.onfinish = () => particle.remove();
+    }
+  }
+
+  function showEntryMonthPlanFlight({ month, categoryName, before, after, direction = "in" }, index = 0) {
+    const layer = entryMoneyLayer();
+    const maximum = Math.max(1, before, after);
+    const beforeHeight = Math.max(4, (Math.max(0, before) / maximum) * 100);
+    const afterHeight = Math.max(4, (Math.max(0, after) / maximum) * 100);
+    const flyout = document.createElement("section");
+    flyout.className = `entry-month-plan-flight is-${direction}`;
+    flyout.innerHTML = `<span class="entry-month-plan-kicker">別の月度の計画予算</span><strong>${escapeHtml(monthLabel(month))}</strong><span>${escapeHtml(categoryName)}</span><div class="entry-month-plan-bar"><i style="--entry-plan-before:${beforeHeight}%; --entry-plan-after:${afterHeight}%"></i></div><small>${formatCurrency(before)} <b>→</b> ${formatCurrency(after)}</small>`;
+    flyout.style.top = `${Math.max(88, Math.min(window.innerHeight - 214, 116 + index * 22))}px`;
+    flyout.style.right = `${Math.max(12, 18 + index * 10)}px`;
+    layer.append(flyout);
+    window.requestAnimationFrame(() => flyout.classList.add("is-active"));
+    window.setTimeout(() => flyout.classList.add("is-leaving"), 1450 + index * 100);
+    window.setTimeout(() => flyout.remove(), 1800 + index * 100);
+    return entryAnimationRect(flyout.querySelector(".entry-month-plan-bar"));
+  }
+
+  function playPendingEntryAnimation() {
+    const animation = pendingEntryAnimation;
+    pendingEntryAnimation = null;
+    if (!animation || currentView !== "entry") return;
+    const target = entryBudgetValueElement(animation.targetCategoryId);
+    const forecast = entryForecastValueElement();
+    const before = animation.before || { values: {}, forecast: null };
+    const targetSnapshot = before.values[animation.targetCategoryId];
+    const targetRect = entryAnimationRect(target);
+    const forecastRect = entryAnimationRect(forecast);
+
+    Object.entries(before.values).forEach(([categoryId, snapshot]) => {
+      const element = entryBudgetValueElement(categoryId);
+      if (!element) return;
+      animateEntryNumber(element, snapshot.value, toInteger(element.dataset.entryAmount));
+    });
+    if (before.forecast && forecast) {
+      animateEntryNumber(forecast, before.forecast.value, toInteger(forecast.dataset.entryAmount));
+    }
+
+    if (animation.type === "return") {
+      flyEntryMoney(targetSnapshot && targetSnapshot.rect, forecastRect, "success");
+      return;
+    }
+    if (animation.type === "new") {
+      flyEntryMoney(before.forecast && before.forecast.rect, targetRect, "danger");
+      return;
+    }
+    if (animation.type === "shift") {
+      const destination = showEntryMonthPlanFlight(animation.details.targetPlan, 0);
+      flyEntryMoney(targetSnapshot && targetSnapshot.rect, destination, "primary");
+      return;
+    }
+    if (animation.type === "borrow") {
+      (animation.details.monthPlans || []).forEach((plan, index) => {
+        const source = showEntryMonthPlanFlight({ ...plan, direction: "out" }, index);
+        flyEntryMoney(source, targetRect, "primary", index * 80);
+      });
+      return;
+    }
+    if (animation.type === "carry" || animation.type === "reallocate") {
+      animation.sourceCategoryIds.forEach((categoryId, index) => {
+        if (categoryId === animation.targetCategoryId) return;
+        flyEntryMoney(before.values[categoryId] && before.values[categoryId].rect, targetRect, "primary", index * 60);
+      });
+      return;
+    }
+    if (animation.type === "transaction-income") {
+      flyEntryMoney(targetRect, forecastRect, "success");
+    }
+    if (animation.type === "transaction-unexpected-expense") {
+      flyEntryMoney(forecastRect, targetRect, "danger");
+    }
   }
 
   function visibleCumulativeChartWindow() {
@@ -1230,15 +1443,10 @@
   function renderEntry() {
     const range = periodRange(currentPeriod);
     const monthStats = aggregateMonth(currentPeriod);
-    const expenseCategories = [
-      ...categoriesForGroup("variable"),
-      ...categoriesForGroup("fixed")
-    ];
     const incomeReminderDue = incomeCategories().some((category) => needsEntryReminder(category, currentPeriod));
     const unexpectedCategory = unexpectedExpenseCategory();
     const unexpectedIncome = unexpectedIncomeCategory();
-    const available = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).monthlyRemaining, 0);
-    const availableCarry = expenseCategories.reduce((sum, category) => sum + categoryBudgetStats(category.id, currentPeriod).carryRemaining, 0);
+    const projectForecast = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
     const allTransactions = transactionsForMonth(currentPeriod).sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
     const recent = allTransactionsShown ? allTransactions : allTransactions.slice(0, 5);
 
@@ -1248,10 +1456,10 @@
           <p>${shortDate(range.start)}〜${shortDate(range.end)}・${state.settings.closingDay}日締め</p>
           <strong>${monthLabel(currentPeriod)}</strong>
         </div>
-        <div class="period-total">
-          <p>今月の残予算合計</p>
-          <strong class="${available < 0 ? "negative" : ""}">${formatCurrency(available)}</strong>
-          ${availableCarry > 0 ? `<span class="period-carry">＋持ち越し合計 ${formatCurrency(availableCarry)}</span>` : availableCarry < 0 ? `<span class="period-carry negative">−超過持ち越し ${formatCurrency(Math.abs(availableCarry))}</span>` : ""}
+        <div class="period-total entry-project-forecast" aria-label="プロジェクト終了時の見込み収支">
+          <p>${projectForecastHorizonLabel()}の収支見込み</p>
+          <strong data-entry-project-forecast-value data-entry-amount="${projectForecast}" class="${projectForecast < 0 ? "negative" : ""}">${formatSignedCurrency(projectForecast)}</strong>
+          <span class="period-carry">プロジェクト終了時の見込み収支</span>
         </div>
       </section>
 
@@ -1342,7 +1550,7 @@
         : "";
       const budgetSummary = hasNoPlan
         ? '<span class="budget-card-unplanned">計画なし</span>'
-        : `<span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong class="budget-card-amount ${budgetCardAmountSizeClass(remainingBudget)} ${remainingBudget < 0 ? "negative" : carryBudgetAvailable ? "carry-budget" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>`;
+        : `<span class="budget-card-main"><span class="budget-card-label">${remainingBudgetLabel}</span><strong data-entry-budget-value="${escapeHtml(category.id)}" data-entry-amount="${remainingBudget}" class="budget-card-amount ${budgetCardAmountSizeClass(remainingBudget)} ${remainingBudget < 0 ? "negative" : carryBudgetAvailable ? "carry-budget" : ""}">${remainingAmountLabel(remainingBudget)}</strong></span>`;
       const cardFooter = carryLabel || progressBar
         ? `<span class="budget-card-footer">${carryLabel}${progressBar}</span>`
         : "";
@@ -1350,7 +1558,7 @@
         return `<button type="button" class="budget-card daily-budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
           <span class="budget-card-name">${escapeHtml(category.name)}</span>
           <span class="daily-budget-main">
-            <span class="daily-budget-value"><span>${dailyStats.dailyLabel}</span><strong class="daily-budget-amount ${budgetCardAmountSizeClass(dailyStats.dailyRemaining)} ${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
+            <span class="daily-budget-value"><span>${dailyStats.dailyLabel}</span><strong data-entry-budget-value="${escapeHtml(category.id)}" data-entry-amount="${dailyStats.dailyRemaining}" class="daily-budget-amount ${budgetCardAmountSizeClass(dailyStats.dailyRemaining)} ${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
           </span>
           <span class="daily-budget-days">${dailyStats.daysLabel}</span>
           <span class="daily-budget-sub">
@@ -1378,7 +1586,7 @@
       return `<button type="button" class="budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
         <span class="budget-card-name">${escapeHtml(category.name)}</span>
         <span class="budget-card-label">今月の収入実績</span>
-        <strong class="budget-card-amount ${actual < 0 ? "negative" : "positive"}">${formatSignedCurrency(actual)}</strong>
+        <strong data-entry-budget-value="${escapeHtml(category.id)}" data-entry-amount="${actual}" class="budget-card-amount ${actual < 0 ? "negative" : "positive"}">${formatSignedCurrency(actual)}</strong>
         <span class="budget-card-carry"><span>予定</span><strong class="${planned < 0 ? "negative" : ""}">${formatSignedCurrency(planned)}</strong></span>
       </button>`;
     }).join("");
@@ -1477,7 +1685,7 @@
     return `<button type="button" class="budget-card unexpected-expense-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
       <span class="budget-card-name">${escapeHtml(category.name)}</span>
       <span class="unexpected-expense-copy">予算外の支出として、プロジェクト終了時の見込み収支から直接差し引きます。</span>
-      <span class="unexpected-expense-total"><span>今月の入力額</span><strong class="${actual > 0 ? "negative" : ""}">${formatCurrency(actual)}</strong></span>
+      <span class="unexpected-expense-total"><span>今月の入力額</span><strong data-entry-budget-value="${escapeHtml(category.id)}" data-entry-amount="${actual}" class="${actual > 0 ? "negative" : ""}">${formatCurrency(actual)}</strong></span>
     </button>`;
   }
 
@@ -1486,7 +1694,7 @@
     return `<button type="button" class="budget-card unexpected-income-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
       <span class="budget-card-name">${escapeHtml(category.name)}</span>
       <span class="unexpected-expense-copy">計画外の収入として、プロジェクト終了時の見込み収支へ直接加算します。</span>
-      <span class="unexpected-expense-total"><span>今月の入力額</span><strong class="${actual < 0 ? "negative" : "positive"}">${formatSignedCurrency(actual)}</strong></span>
+      <span class="unexpected-expense-total"><span>今月の入力額</span><strong data-entry-budget-value="${escapeHtml(category.id)}" data-entry-amount="${actual}" class="${actual < 0 ? "negative" : "positive"}">${formatSignedCurrency(actual)}</strong></span>
     </button>`;
   }
 
@@ -3848,6 +4056,12 @@
     const amount = calculatorContext && calculatorContext.allowsNegative ? toInteger(calculator.current) : Math.max(0, toInteger(calculator.current));
     if (!calculatorContext || (calculatorContext.allowsNegative ? amount === 0 : amount <= 0)) return;
     const category = categoryById(calculatorContext.categoryId);
+    const entryAnimationBefore = category ? entryAnimationSnapshot([category.id]) : null;
+    const entryAnimationType = calculatorContext.direction === "income"
+      ? "transaction-income"
+      : isUnexpectedExpenseCategory(category)
+        ? "transaction-unexpected-expense"
+        : "transaction-expense";
     const createdAt = appTimestamp();
     const transaction = {
       id: makeId("tx"),
@@ -3872,10 +4086,13 @@
       showToast(error instanceof Error ? error.message : "記録を保存できませんでした");
       return;
     }
+    if (category) queueEntryAnimation(entryAnimationType, category.id, [], {}, entryAnimationBefore);
     render();
-    document.querySelector("#memo-summary").textContent = `${category.name}・${calculatorContext.allowsNegative ? formatSignedCurrency(amount) : formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
-    document.querySelector("#memo-input").value = "";
-    openDialog(memoDialog);
+    window.setTimeout(() => {
+      document.querySelector("#memo-summary").textContent = `${category.name}・${calculatorContext.allowsNegative ? formatSignedCurrency(amount) : formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
+      document.querySelector("#memo-input").value = "";
+      openDialog(memoDialog);
+    }, 620);
   }
 
   async function shiftCalculatorBudget() {
@@ -3890,6 +4107,8 @@
     if (sources.total <= 0) throw new Error("シフトする予算がありません");
     if (amount <= 0 || amount > sources.total) throw new Error(`移せる金額は${formatCurrency(sources.total)}までです`);
     const allocation = calculatorBudgetAllocation(category, sourceMonth, amount, calculatorBudgetPriority("shift", sources));
+    const entryAnimationBefore = entryAnimationSnapshot([category.id]);
+    const targetPlanBefore = planAmount(category.id, targetMonth);
     if (allocation.carryOrigins.reduce((sum, origin) => sum + origin.amount, 0) !== allocation.carry) throw new Error("持ち越し予算の移動元を確認できませんでした");
     const planChanges = budgetPlanChangesForAllocation(sourceMonth, allocation, targetMonth);
     const previousPlans = { ...(state.plans[category.id] || {}) };
@@ -3910,6 +4129,15 @@
       updateCalculatorShiftTargetSummary();
       throw error;
     }
+    queueEntryAnimation("shift", category.id, [], {
+      targetPlan: {
+        month: targetMonth,
+        categoryName: category.name,
+        before: targetPlanBefore,
+        after: targetPlanBefore + allocation.amount,
+        direction: "in"
+      }
+    }, entryAnimationBefore);
     closeDialog(calculatorDialog);
     render();
   }
@@ -3930,6 +4158,7 @@
     }
     if (amount <= 0) throw new Error("返納額を入力してください");
     const allocation = calculatorBudgetAllocation(category, sourceMonth, amount, calculatorBudgetPriority("return", sources));
+    const entryAnimationBefore = entryAnimationSnapshot([category.id]);
     if (allocation.carryOrigins.reduce((sum, origin) => sum + origin.amount, 0) !== allocation.carry) throw new Error("持ち越し予算の返納元を確認できませんでした");
     const planChanges = budgetPlanChangesForAllocation(sourceMonth, allocation);
     const previousPlans = { ...(state.plans[category.id] || {}) };
@@ -3950,6 +4179,7 @@
       updateCalculatorReturnSummary();
       throw error;
     }
+    queueEntryAnimation("return", category.id, [], {}, entryAnimationBefore);
     closeDialog(calculatorDialog);
     render();
   }
@@ -3967,6 +4197,19 @@
         throw new Error("充当元の残り予算を超える金額は指定できません");
       }
     });
+
+    const entrySourceCategoryIds = mode === "reallocate"
+      ? selections.map((selection) => sourcesById.get(selection.id).category.id)
+      : [];
+    const entryAnimationBefore = entryAnimationSnapshot([category.id, ...entrySourceCategoryIds]);
+    const borrowedMonthPlans = mode === "borrow"
+      ? selections.map((selection) => ({
+        month: selection.id,
+        categoryName: category.name,
+        before: planAmount(category.id, selection.id),
+        after: planAmount(category.id, selection.id) - selection.amount
+      }))
+      : [];
 
     const sourceBudget = planAmount(category.id, sourceMonth);
     const targetCarryUsageFloor = categoryBudgetStats(category.id, sourceMonth).carryUsage;
@@ -4018,6 +4261,7 @@
       updateCalculatorAddBudgetSummary();
       throw error;
     }
+    queueEntryAnimation(mode, category.id, entrySourceCategoryIds, { monthPlans: borrowedMonthPlans }, entryAnimationBefore);
     closeDialog(calculatorDialog);
     render();
   }
@@ -4048,6 +4292,8 @@
         }
         return { category: sourceCategory, amount: selection.amount, origins };
       });
+      const entrySourceCategoryIds = funding.map((source) => source.category.id);
+      const entryAnimationBefore = entryAnimationSnapshot([category.id, ...entrySourceCategoryIds]);
       const sourceBudget = planAmount(category.id, sourceMonth);
       const affectedCategories = [category, ...funding.map((source) => source.category).filter((sourceCategory, index, list) => list.findIndex((item) => item.id === sourceCategory.id) === index)];
       const previousPlans = new Map(affectedCategories.map((affectedCategory) => [
@@ -4083,6 +4329,7 @@
         updateCalculatorAddBudgetSummary();
         throw error;
       }
+      queueEntryAnimation("carry", category.id, entrySourceCategoryIds, {}, entryAnimationBefore);
       closeDialog(calculatorDialog);
       render();
       return;
@@ -4093,6 +4340,7 @@
       return;
     }
 
+    const entryAnimationBefore = entryAnimationSnapshot([category.id]);
     const sourceBudget = planAmount(category.id, sourceMonth);
     const targetCarryUsageFloor = categoryBudgetStats(category.id, sourceMonth).carryUsage;
     const previousDefaultAmount = category.defaultAmount;
@@ -4113,6 +4361,7 @@
       updateCalculatorAddBudgetSummary();
       throw error;
     }
+    queueEntryAnimation("new", category.id, [], {}, entryAnimationBefore);
     closeDialog(calculatorDialog);
     render();
   }
