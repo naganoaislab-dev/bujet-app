@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.82";
+  const APP_VERSION = "0.5.83";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -104,6 +104,7 @@
   let allTransactionsShown = false;
   let pendingTransaction = null;
   let pendingTransactionEntryAnimation = null;
+  let pendingTransactionSaving = false;
   let editingPlanCategoryId = null;
   let planDraft = null;
   let planRuleDraft = null;
@@ -1428,7 +1429,7 @@
     const afterHeight = Math.max(4, (Math.max(0, after) / maximum) * 100);
     const flyout = document.createElement("section");
     flyout.className = `entry-month-plan-flight is-${direction}`;
-    flyout.innerHTML = `<span class="entry-month-plan-kicker">別の月度の計画予算</span><strong>${escapeHtml(monthLabel(month))}</strong><span>${escapeHtml(categoryName)}</span><div class="entry-month-plan-bar"><i style="--entry-plan-before:${beforeHeight}%; --entry-plan-after:${afterHeight}%"></i></div><small>${formatCurrency(before)} <b>→</b> ${formatCurrency(after)}</small>`;
+    flyout.innerHTML = `<span class="entry-month-plan-kicker">移動元の計画予算</span><strong>${escapeHtml(`${monthLabel(month)}の予算`)}</strong><span>${escapeHtml(categoryName)}</span><div class="entry-month-plan-bar"><i style="--entry-plan-before:${beforeHeight}%; --entry-plan-after:${afterHeight}%"></i></div><small>${formatCurrency(before)} <b>→</b> ${formatCurrency(after)}</small>`;
     flyout.style.top = `${Math.max(88, Math.min(window.innerHeight - 214, 116 + index * 22))}px`;
     flyout.style.right = `${Math.max(12, 18 + index * 10)}px`;
     layer.append(flyout);
@@ -4261,18 +4262,10 @@
       createdAt,
       updatedAt: createdAt
     };
+    // メモ画面を閉じるまでは取引をstateへ反映しません。ここで先に保存すると、
+    // シート遷移が中断したときに画面だけが入力前の数値へ残ってしまいます。
     pendingTransaction = transaction;
-    state.transactions.push(transaction);
     closeDialog(calculatorDialog);
-    try {
-      state = await window.BudgetDB.saveState(state, currentProject && currentProject.id);
-      syncCurrentProjectPeriod();
-    } catch (error) {
-      state.transactions = state.transactions.filter((item) => item.id !== transaction.id);
-      pendingTransaction = null;
-      showToast(error instanceof Error ? error.message : "記録を保存できませんでした");
-      return;
-    }
     if (category) {
       pendingTransactionEntryAnimation = {
         type: entryAnimationType,
@@ -4287,7 +4280,11 @@
     }
     document.querySelector("#memo-summary").textContent = `${category.name}・${calculatorContext.allowsNegative ? formatSignedCurrency(amount) : formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
     document.querySelector("#memo-input").value = "";
-    openDialog(memoDialog);
+    // calculator-dialogのclose処理が完了した次フレームに開くことで、iOS Safariでも
+    // モーダル同士の切り替えが失敗しないようにします。
+    window.requestAnimationFrame(() => {
+      if (pendingTransaction && pendingTransaction.id === transaction.id) openDialog(memoDialog);
+    });
   }
 
   async function shiftCalculatorBudget() {
@@ -4562,18 +4559,30 @@
   }
 
   async function savePendingTransaction(memo) {
-    if (!pendingTransaction) return;
-    const stored = state.transactions.find((transaction) => transaction.id === pendingTransaction.id);
-    if (stored) {
-      stored.memo = String(memo || "").trim();
-    }
-    const category = categoryById(pendingTransaction.categoryId);
-    const amount = pendingTransaction.amount;
+    if (!pendingTransaction || pendingTransactionSaving) return;
+    pendingTransactionSaving = true;
+    const transaction = pendingTransaction;
+    const category = categoryById(transaction.categoryId);
+    const amount = transaction.amount;
     const entryAnimation = pendingTransactionEntryAnimation;
+    const storedTransaction = {
+      ...transaction,
+      memo: String(memo || "").trim(),
+      updatedAt: appTimestamp()
+    };
+    state.transactions.push(storedTransaction);
+    try {
+      await persist(`${category ? category.name : "記録"} ${category && isSignedIncomeCategory(category) ? formatSignedCurrency(amount) : formatCurrency(amount)}を保存しました`);
+    } catch (error) {
+      state.transactions = state.transactions.filter((item) => item.id !== transaction.id);
+      pendingTransactionSaving = false;
+      showToast(error instanceof Error ? error.message : "記録を保存できませんでした");
+      return;
+    }
     pendingTransaction = null;
     pendingTransactionEntryAnimation = null;
+    pendingTransactionSaving = false;
     closeDialog(memoDialog);
-    await persist(`${category ? category.name : "記録"} ${category && isSignedIncomeCategory(category) ? formatSignedCurrency(amount) : formatCurrency(amount)}を保存しました`);
     if (entryAnimation) pendingEntryAnimation = entryAnimation;
     render();
   }
