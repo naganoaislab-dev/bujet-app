@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.87";
+  const APP_VERSION = "0.5.88";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -121,11 +121,36 @@
   let calculator = createCalculatorState();
   let calculatorAddBudgetMode = "new";
   let calculatorBudgetOperation = "";
+  let calculatorShiftMode = "single";
   let lastRenderedDate = "";
   let nextDayRenderTimer = null;
   let serviceWorkerRegistration = null;
   let serviceWorkerUpdateRequested = false;
   let pendingEntryAnimation = null;
+  let derivedDataCache = null;
+
+  // The entry screen and calculator both ask for the same month/category
+  // aggregates many times.  With a long transaction history, recomputing
+  // every scenario for each card made opening the calculator noticeably slow.
+  // Keep the derived values for one immutable state snapshot and invalidate
+  // them at every state write/load boundary.
+  function resetDerivedDataCache() {
+    derivedDataCache = {
+      months: null,
+      categoriesById: null,
+      transactionsByMonth: new Map(),
+      actualAmounts: new Map(),
+      latestEntryDates: new Map(),
+      expensePlanScenarios: new Map(),
+      aggregateMonths: new Map(),
+      budgetedOverages: null
+    };
+  }
+
+  function derivedCache() {
+    if (!derivedDataCache) resetDerivedDataCache();
+    return derivedDataCache;
+  }
 
   const currencyFormatter = new Intl.NumberFormat("ja-JP", {
     style: "currency",
@@ -376,6 +401,8 @@
   }
 
   function periodMonths() {
+    const cache = derivedCache();
+    if (cache.months) return [...cache.months];
     const firstMonth = periodForDate(state.settings.startDate);
     const lastMonth = periodForDate(state.settings.endDate);
     const months = [];
@@ -384,7 +411,8 @@
       months.push(cursor);
       cursor = addMonthsToKey(cursor, 1);
     }
-    return months;
+    cache.months = months;
+    return [...months];
   }
 
   function closingDateForMonth(month) {
@@ -431,7 +459,9 @@
   }
 
   function categoryById(id) {
-    return state.categories.find((category) => category.id === id);
+    const cache = derivedCache();
+    if (!cache.categoriesById) cache.categoriesById = new Map(state.categories.map((category) => [category.id, category]));
+    return cache.categoriesById.get(id);
   }
 
   function categoriesForGroup(group, includeArchived = false) {
@@ -515,6 +545,9 @@
   // deletions automatically restore the original plan without reverse-writing
   // historical adjustments into state.plans.
   function expensePlanScenario(categoryId, extraExpense = null) {
+    const cache = derivedCache();
+    const canUseCache = extraExpense === null;
+    if (canUseCache && cache.expensePlanScenarios.has(categoryId)) return cache.expensePlanScenarios.get(categoryId);
     const category = categoryById(categoryId);
     const months = periodMonths();
     const zeroByMonth = () => Object.fromEntries(months.map((month) => [month, 0]));
@@ -524,7 +557,10 @@
       carryBefore: zeroByMonth(),
       deficits: zeroByMonth()
     };
-    if (!isBudgetedExpenseCategory(category)) return fallback;
+    if (!isBudgetedExpenseCategory(category)) {
+      if (canUseCache) cache.expensePlanScenarios.set(categoryId, fallback);
+      return fallback;
+    }
 
     const handling = overagePlanHandling();
     const deductions = zeroByMonth();
@@ -597,7 +633,9 @@
       if (handling !== OVERAGE_PLAN_HANDLING_FORECAST) allocateFromFuturePlans(deficit, index + 1);
     });
 
-    return { effectivePlans, deductions, carryBefore, deficits };
+    const scenario = { effectivePlans, deductions, carryBefore, deficits };
+    if (canUseCache) cache.expensePlanScenarios.set(categoryId, scenario);
+    return scenario;
   }
 
   // The editor presents effective plans, after automatic overage deductions.
@@ -755,17 +793,27 @@
   }
 
   function transactionsForMonth(month, direction = null) {
-    return state.transactions.filter((transaction) => {
+    const cache = derivedCache();
+    const key = `${month}:${direction || "all"}`;
+    if (cache.transactionsByMonth.has(key)) return [...cache.transactionsByMonth.get(key)];
+    const transactions = state.transactions.filter((transaction) => {
       if (direction && transaction.direction !== direction) return false;
       if (transaction.date < state.settings.startDate || transaction.date > state.settings.endDate) return false;
       return periodForDate(transaction.date) === month;
     });
+    cache.transactionsByMonth.set(key, transactions);
+    return [...transactions];
   }
 
   function actualAmount(categoryId, month) {
-    return transactionsForMonth(month)
+    const cache = derivedCache();
+    const key = `${categoryId}:${month}`;
+    if (cache.actualAmounts.has(key)) return cache.actualAmounts.get(key);
+    const amount = transactionsForMonth(month)
       .filter((transaction) => transaction.categoryId === categoryId)
       .reduce((sum, transaction) => sum + toInteger(transaction.amount), 0);
+    cache.actualAmounts.set(key, amount);
+    return amount;
   }
 
   function normalizeReminderConfig(value) {
@@ -780,12 +828,17 @@
   }
 
   function latestCategoryEntryDate(categoryId, month) {
-    return transactionsForMonth(month)
+    const cache = derivedCache();
+    const key = `${categoryId}:${month}`;
+    if (cache.latestEntryDates.has(key)) return cache.latestEntryDates.get(key);
+    const latest = transactionsForMonth(month)
       .filter((transaction) => transaction.categoryId === categoryId)
       .reduce((latest, transaction) => {
         const enteredOn = isValidDateKey(transaction.enteredOn) ? transaction.enteredOn : transaction.date;
         return enteredOn > latest ? enteredOn : latest;
       }, "");
+    cache.latestEntryDates.set(key, latest);
+    return latest;
   }
 
   function clampReminderDateToPeriod(date, range) {
@@ -913,6 +966,8 @@
   }
 
   function aggregateMonth(month) {
+    const cache = derivedCache();
+    if (cache.aggregateMonths.has(month)) return { ...cache.aggregateMonths.get(month) };
     const expenseCategories = expenseCategoriesForReporting(month);
     const incomeCategories = incomeCategoriesForReporting(month);
     const expensePlan = expenseCategories.reduce((sum, category) => sum + activeExpensePlanAmount(category, month), 0);
@@ -936,7 +991,7 @@
     const unexpectedIncomeActual = incomeTransactions.reduce((sum, item) => {
       return sum + (isUnexpectedIncomeCategory(categoryById(item.categoryId)) ? toInteger(item.amount) : 0);
     }, 0);
-    return {
+    const aggregate = {
       month,
       expensePlan,
       incomePlan,
@@ -949,9 +1004,13 @@
       plannedNet: incomePlan - expensePlan,
       actualNet: incomeActual - expenseActual
     };
+    cache.aggregateMonths.set(month, aggregate);
+    return { ...aggregate };
   }
 
   function budgetedExpenseOveragesByMonth(extraExpense = null) {
+    const cache = derivedCache();
+    if (extraExpense === null && cache.budgetedOverages) return new Map(cache.budgetedOverages);
     const months = periodMonths();
     const overages = new Map(months.map((month) => [month, 0]));
     state.categories
@@ -967,6 +1026,7 @@
           overages.set(month, toInteger(overages.get(month)) + settledDeficit);
         });
       });
+    if (extraExpense === null) cache.budgetedOverages = new Map(overages);
     return overages;
   }
 
@@ -1314,8 +1374,9 @@
     projects = loaded.projects;
     defaultProjectId = loaded.workspace.defaultProjectId;
     state = loaded.state;
+    resetDerivedDataCache();
     // 旧データに残った追加予算の消費履歴も、現存する実績に合わせて安全に補正します。
-    reconcileBudgetAdditionCarryUsageFloors();
+    if (reconcileBudgetAdditionCarryUsageFloors()) resetDerivedDataCache();
     applyTheme();
     currentPeriod = currentPeriodForToday();
     analysisPeriod = currentPeriod;
@@ -1388,8 +1449,10 @@
   }
 
   async function persist(message = "保存しました") {
+    resetDerivedDataCache();
     reconcileBudgetAdditionCarryUsageFloors();
     state = await window.BudgetDB.saveState(state, currentProject && currentProject.id);
+    resetDerivedDataCache();
     syncCurrentProjectPeriod();
     showToast(message);
   }
@@ -1397,6 +1460,7 @@
   async function resetCurrentProject() {
     closeDialog(resetDialog);
     state = await window.BudgetDB.resetProject(currentProject && currentProject.id);
+    resetDerivedDataCache();
     syncCurrentProjectPeriod();
     currentPeriod = currentPeriodForToday();
     analysisPeriod = currentPeriod;
@@ -1798,8 +1862,13 @@
       return;
     }
     if (animation.type === "shift") {
-      const destination = showEntryMonthPlanFlight(animation.details.targetPlan, 0);
-      flyEntryMoney(targetSnapshot && targetSnapshot.rect, destination, "primary");
+      const targetPlans = Array.isArray(animation.details.targetPlans) && animation.details.targetPlans.length
+        ? animation.details.targetPlans
+        : [animation.details.targetPlan].filter(Boolean);
+      targetPlans.forEach((targetPlan, index) => {
+        const destination = showEntryMonthPlanFlight(targetPlan, index * 110);
+        flyEntryMoney(targetSnapshot && targetSnapshot.rect, destination, "primary", index * 110);
+      });
       return;
     }
     if (animation.type === "borrow") {
@@ -3476,6 +3545,13 @@
     return sourceIndex < 0 ? [] : periodMonths().slice(sourceIndex + 1);
   }
 
+  function calculatorShiftDistributionTargetMonths(category, sourceMonth) {
+    if (!category) return [];
+    return calculatorShiftTargetMonths(sourceMonth).filter((month) => (
+      Math.max(0, configuredPlanAmount(category.id, month)) > 0 || Math.max(0, planAmount(category.id, month)) > 0
+    ));
+  }
+
   function calculatorBudgetSources(category, sourceMonth) {
     if (!category || !["variable", "fixed"].includes(category.group)) return { monthly: 0, carry: 0, total: 0 };
     const stats = categoryBudgetStats(category.id, sourceMonth);
@@ -3607,18 +3683,6 @@
     return `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}${difference ? `（${difference > 0 ? "＋" : "−"}${formatCurrency(Math.abs(difference))}）` : "（変化なし）"}`;
   }
 
-  function calculatorShiftForecastText(sourceMonth, targetMonth, allocation, planChanges) {
-    const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
-    const after = projectEndForecastAfterBudgetPlanChanges(planChanges);
-    const difference = after - before;
-    const budgetSources = [];
-    if (allocation.monthly > 0) budgetSources.push(`今月の残予算 ${formatCurrency(allocation.monthly)}`);
-    if (allocation.carry > 0) budgetSources.push(`持ち越し予算 ${formatCurrency(allocation.carry)}`);
-    const sourceText = budgetSources.join("、") || `${monthLabel(sourceMonth)}の予算`;
-    const forecast = `${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}${difference ? `（${difference > 0 ? "＋" : "−"}${formatCurrency(Math.abs(difference))}）` : "（変化なし）"}`;
-    return `資金残高への影響　変化なし\n${sourceText}を${monthLabel(targetMonth)}の使途へ振り替えます。\n\n計画どおり使った場合の終了時見込み\n${forecast}`;
-  }
-
   function calculatorBudgetVisualWidth(value, maximum) {
     const safeValue = Math.max(0, toInteger(value));
     if (!safeValue) return 0;
@@ -3644,19 +3708,24 @@
         <div class="calculator-budget-flow-column is-before"><i class="calculator-budget-flow-monthly" style="--flow-height:${height(monthlyBefore)}%"></i>${carryBefore ? `<i class="calculator-budget-flow-carry" style="--flow-height:${height(carryBefore)}%; --flow-base:${height(monthlyBefore)}%"></i>` : ""}</div>
         <div class="calculator-budget-flow-column is-after"><i class="calculator-budget-flow-monthly" style="--flow-height:${height(monthlyAfter)}%"></i>${carryAfter ? `<i class="calculator-budget-flow-carry" style="--flow-height:${height(carryAfter)}%; --flow-base:${height(monthlyAfter)}%"></i>` : ""}</div>
       </div>
+      <div class="calculator-budget-flow-node-transfer ${after > before ? "is-increase" : after < before ? "is-decrease" : "is-stable"}" aria-label="予算の変化"><i aria-hidden="true">→</i><em>${after === before ? "変化なし" : `${after > before ? "+" : "−"}${formatCurrency(Math.abs(after - before))}`}</em></div>
       <small>${formatCurrency(before)} <b>→</b> ${formatCurrency(after)}</small>
     </article>`;
   }
 
   function calculatorProjectPeriodFlowMarkup(timeline) {
-    if (!timeline || !timeline.category || !timeline.targetMonth) return "";
+    if (!timeline || !timeline.category || !timeline.sourceMonth) return "";
     const months = periodMonths();
+    const targetAllocations = Array.isArray(timeline.targetAllocations) && timeline.targetAllocations.length
+      ? timeline.targetAllocations
+      : timeline.targetMonth ? [{ month: timeline.targetMonth, amount: timeline.amount }] : [];
+    const targetAmounts = new Map(targetAllocations.map((target) => [target.month, Math.max(0, toInteger(target.amount))]));
     const values = months.map((month) => {
       const isSource = month === timeline.sourceMonth;
-      const isTarget = month === timeline.targetMonth;
+      const addition = Math.max(0, toInteger(targetAmounts.get(month)));
+      const isTarget = addition > 0;
       const base = isSource ? timeline.monthlyBefore : planAmount(timeline.category.id, month);
       const carry = isSource ? timeline.carryBefore : 0;
-      const addition = isTarget ? timeline.amount : 0;
       return { month, isSource, isTarget, base, carry, addition };
     });
     const maximum = Math.max(1, ...values.map((item) => item.base + item.carry + item.addition));
@@ -3667,12 +3736,13 @@
   function calculatorBudgetFlowMarkup(flow) {
     if (!flow) return "";
     const sources = Array.isArray(flow.sources) ? flow.sources : [];
+    const targets = Array.isArray(flow.targets) && flow.targets.length ? flow.targets : flow.target ? [flow.target] : [];
     const sourceTotals = sources.map((node) => Math.max(0, toInteger(node.monthlyBefore ?? node.before)) + Math.max(0, toInteger(node.carryBefore)));
-    const targetTotal = flow.target && flow.target.kind !== "forecast"
-      ? Math.max(0, toInteger(flow.target.monthlyBefore ?? flow.target.before)) + Math.max(0, toInteger(flow.target.carryBefore))
-      : 0;
-    const maximum = Math.max(1, ...sourceTotals, targetTotal);
-    return `<section class="calculator-budget-flow" aria-label="予算の流れ"><div class="calculator-budget-flow-heading"><strong>${escapeHtml(flow.title || "予算の流れ")}</strong><span>${escapeHtml(flow.description || "入力内容に合わせて予算の動きが変わります")}</span></div><div class="calculator-budget-flow-route"><div class="calculator-budget-flow-sources">${sources.map((node) => calculatorBudgetFlowNodeMarkup(node, maximum)).join("") || "<p>移動元を選択してください</p>"}</div><div class="calculator-budget-flow-arrow" aria-hidden="true"><i></i><span>${escapeHtml(flow.transferLabel || "予算を移動")}</span></div><div class="calculator-budget-flow-target">${flow.target ? calculatorBudgetFlowNodeMarkup(flow.target, maximum) : ""}</div></div>${calculatorProjectPeriodFlowMarkup(flow.timeline)}</section>`;
+    const targetTotals = targets.map((node) => node.kind !== "forecast"
+      ? Math.max(0, toInteger(node.monthlyBefore ?? node.before)) + Math.max(0, toInteger(node.carryBefore))
+      : Math.max(Math.abs(toInteger(node.before)), Math.abs(toInteger(node.after))));
+    const maximum = Math.max(1, ...sourceTotals, ...targetTotals);
+    return `<section class="calculator-budget-flow" aria-label="予算の流れ"><div class="calculator-budget-flow-heading"><strong>${escapeHtml(flow.title || "予算の流れ")}</strong><span>${escapeHtml(flow.description || "入力内容に合わせて予算の動きが変わります")}</span></div><div class="calculator-budget-flow-route"><div class="calculator-budget-flow-sources">${sources.map((node) => calculatorBudgetFlowNodeMarkup(node, maximum)).join("") || "<p>移動元を選択してください</p>"}</div><div class="calculator-budget-flow-arrow" aria-hidden="true"><i></i><span>${escapeHtml(flow.transferLabel || "予算を移動")}</span></div><div class="calculator-budget-flow-target ${targets.length > 1 ? "is-multiple" : ""}">${targets.map((node) => calculatorBudgetFlowNodeMarkup(node, maximum)).join("")}</div></div>${calculatorProjectPeriodFlowMarkup(flow.timeline)}</section>`;
   }
 
   function renderCalculatorBudgetVisual(elementId, { description, rows = [], forecastBefore, forecastAfter, invalid = false, invalidText = "", flow = null }) {
@@ -3723,35 +3793,64 @@
     const requestedAmount = Math.max(0, toInteger(amountInput.value));
     const priority = calculatorBudgetPriority("shift", sources);
     const allocation = calculatorBudgetAllocation(category, sourceMonth, requestedAmount, priority);
-    const targetBudget = category && targetMonth ? planAmount(category.id, targetMonth) : 0;
-    const validAmount = requestedAmount > 0 && requestedAmount <= sources.total && Boolean(targetMonth);
+    const targetAllocations = calculatorShiftTargetAllocations(category, sourceMonth, requestedAmount);
+    const distributedAmount = targetAllocations.reduce((sum, target) => sum + target.amount, 0);
+    const singleTargets = calculatorShiftTargetMonths(sourceMonth);
+    const distributionTargets = calculatorShiftDistributionTargetMonths(category, sourceMonth);
+    const hasValidTarget = calculatorShiftMode === "distribute"
+      ? targetAllocations.length > 0 && targetAllocations.every((target) => distributionTargets.includes(target.month))
+      : singleTargets.includes(targetMonth);
+    const distributionMatches = calculatorShiftMode !== "distribute" || distributedAmount === requestedAmount;
+    const validAmount = requestedAmount > 0 && requestedAmount <= sources.total;
+    const isValidShift = validAmount && hasValidTarget && distributionMatches;
     const budgetSummary = document.querySelector("#calculator-shift-budget-summary");
     const forecast = document.querySelector("#calculator-shift-forecast");
-    document.querySelector("#calculator-shift-source").textContent = calculatorBudgetSourceText(sourceMonth, sources);
-    document.querySelector("#calculator-shift-target-summary").textContent = targetMonth
-      ? `${monthLabel(targetMonth)}の現在の予定：${formatCurrency(targetBudget)} → シフト後：${formatCurrency(targetBudget + allocation.amount)}`
-      : "移動先の月を選択してください。";
     const confirm = document.querySelector("#calculator-shift-confirm");
-    confirm.disabled = !validAmount;
-    confirm.textContent = targetMonth && requestedAmount > 0 ? `${monthLabel(targetMonth)}へ${formatCurrency(requestedAmount)}をシフト` : "予算をシフトする";
+    const targetBudget = category && targetMonth ? planAmount(category.id, targetMonth) : 0;
+    const targetSummary = document.querySelector("#calculator-shift-target-summary");
+    const distributionSummary = document.querySelector("#calculator-shift-distribution-summary");
+    const distributionPanel = document.querySelector("#calculator-shift-distribution-panel");
+    document.querySelector("#calculator-shift-source").textContent = calculatorBudgetSourceText(sourceMonth, sources);
     amountInput.max = String(sources.total);
+    targetSummary.textContent = targetMonth
+      ? `${monthLabel(targetMonth)}の現在の計画予算 ${formatCurrency(targetBudget)} → シフト後 ${formatCurrency(targetBudget + allocation.amount)}`
+      : "移動先の月を選択してください。";
+    if (calculatorShiftMode === "distribute") {
+      distributionPanel.hidden = false;
+      distributionSummary.classList.toggle("is-invalid", !distributionMatches && requestedAmount > 0);
+      distributionSummary.textContent = targetAllocations.length
+        ? `分配合計 ${formatCurrency(distributedAmount)} ／ 移す金額 ${formatCurrency(requestedAmount)}${distributionMatches ? "。この配分で移します。" : `。あと ${formatCurrency(Math.abs(requestedAmount - distributedAmount))} を調整してください。`}`
+        : "分配する月を選び、各月の金額を入力してください。";
+    }
+    confirm.disabled = !isValidShift;
+    confirm.textContent = isValidShift
+      ? calculatorShiftMode === "distribute" ? `${targetAllocations.length}か月へ${formatCurrency(requestedAmount)}を分配シフト` : `${monthLabel(targetMonth)}へ${formatCurrency(requestedAmount)}をシフト`
+      : calculatorShiftMode === "distribute" ? "分配額を移す金額と合わせる" : "予算をシフトする";
     const forecastBefore = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
-    const shiftPlanChanges = validAmount ? budgetPlanChangesForAllocation(sourceMonth, allocation, targetMonth) : new Map();
-    const forecastAfter = validAmount ? projectEndForecastAfterBudgetPlanChanges(shiftPlanChanges) : forecastBefore;
+    const planChanges = isValidShift ? calculatorShiftPlanChanges(sourceMonth, allocation, targetAllocations) : new Map();
+    const forecastAfter = isValidShift ? projectEndForecastAfterBudgetPlanChanges(planChanges) : forecastBefore;
+    const targetRows = (calculatorShiftMode === "distribute" ? targetAllocations : [{ month: targetMonth, amount: allocation.amount }])
+      .filter((target) => target.month)
+      .map((target) => {
+        const before = Math.max(0, planAmount(category.id, target.month));
+        return { label: `${monthLabel(target.month)}の計画予算`, before, after: before + Math.max(0, target.amount) };
+      });
     renderCalculatorBudgetVisual("calculator-shift-visual", {
-      description: targetMonth ? `${monthLabel(sourceMonth)}から${monthLabel(targetMonth)}へ移す内訳` : "移動先を選ぶと、予算の動きを表示します",
+      description: calculatorShiftMode === "distribute" ? `${monthLabel(sourceMonth)}の予算を、選んだ月へ分配する流れ` : targetMonth ? `${monthLabel(sourceMonth)}から${monthLabel(targetMonth)}へ移す内訳` : "移動先を選ぶと、予算の動きを表示します。",
       rows: [
         { label: "今月の予算", before: sources.monthly, after: sources.monthly - allocation.monthly },
         { label: "持ち越し予算", before: sources.carry, after: sources.carry - allocation.carry },
-        { label: targetMonth ? `${monthLabel(targetMonth)}の予算` : "移動先の予算", before: targetBudget, after: targetBudget + allocation.amount }
+        ...targetRows
       ],
       forecastBefore,
       forecastAfter,
-      invalid: requestedAmount > sources.total,
-      invalidText: `移せる予算は${formatCurrency(sources.total)}までです`,
+      invalid: requestedAmount > sources.total || (calculatorShiftMode === "distribute" && requestedAmount > 0 && !distributionMatches),
+      invalidText: requestedAmount > sources.total
+        ? `シフトできる予算は ${formatCurrency(sources.total)} までです。`
+        : "分配額の合計を移す金額と一致させてください。",
       flow: {
-        title: "予算を別の月へ移す流れ",
-        description: "今月に残る予算と持ち越しを、移動先の月の計画へ振り替えます",
+        title: calculatorShiftMode === "distribute" ? "予算を複数月へ分配する流れ" : "予算を別の月へ移す流れ",
+        description: "移動元の棒が減り、矢印の先にある各月の計画予算が増えます。",
         sources: [{
           label: `${monthLabel(sourceMonth)}の予算`,
           monthlyBefore: sources.monthly,
@@ -3759,18 +3858,18 @@
           monthlyAfter: sources.monthly - allocation.monthly,
           carryAfter: sources.carry - allocation.carry
         }],
-        target: {
-          label: targetMonth ? `${monthLabel(targetMonth)}の予算` : "移動先の予算",
-          monthlyBefore: targetBudget,
-          monthlyAfter: targetBudget + allocation.amount,
-          target: true
-        },
-        transferLabel: allocation.amount > 0 ? `${formatCurrency(allocation.amount)}を移動` : "移す金額を入力",
-        timeline: targetMonth ? {
+        targets: targetRows.map((row, index) => ({
+          label: row.label,
+          monthlyBefore: row.before,
+          monthlyAfter: row.after,
+          target: true,
+          amount: (calculatorShiftMode === "distribute" ? targetAllocations : [{ amount: allocation.amount }])[index].amount
+        })),
+        transferLabel: requestedAmount > 0 ? `${formatCurrency(requestedAmount)}を移動` : "移す金額を入力",
+        timeline: targetRows.length ? {
           category,
           sourceMonth,
-          targetMonth,
-          amount: allocation.amount,
+          targetAllocations: (calculatorShiftMode === "distribute" ? targetAllocations : [{ month: targetMonth, amount: allocation.amount }]),
           monthlyBefore: sources.monthly,
           carryBefore: sources.carry
         } : null
@@ -3778,19 +3877,40 @@
     });
     if (requestedAmount > sources.total) {
       budgetSummary.classList.add("is-invalid");
-      budgetSummary.textContent = `シフトできる予算は${formatCurrency(sources.total)}までです。`;
+      budgetSummary.textContent = `シフトできる予算は ${formatCurrency(sources.total)} までです。`;
       forecast.textContent = "シフト額を予算内にすると、見込み収支への影響を表示します。";
+      return;
+    }
+    if (calculatorShiftMode === "distribute" && requestedAmount > 0 && !distributionMatches) {
+      budgetSummary.classList.add("is-invalid");
+      budgetSummary.textContent = "分配額の合計を移す金額と一致させてください。";
+      forecast.textContent = "配分が確定すると、見込み収支への影響を表示します。";
       return;
     }
     budgetSummary.classList.remove("is-invalid");
     budgetSummary.textContent = calculatorBudgetAfterText(allocation);
-    forecast.textContent = requestedAmount > 0 && targetMonth
-      ? calculatorShiftForecastText(sourceMonth, targetMonth, allocation, budgetPlanChangesForAllocation(sourceMonth, allocation, targetMonth))
-      : "シフト額と移動先を選ぶと、資金残高と終了時見込みを表示します。";
+    forecast.textContent = isValidShift
+      ? calculatorShiftForecastText(sourceMonth, calculatorShiftMode === "distribute" ? "分配先" : targetMonth, allocation, planChanges)
+      : "シフト額と移動先を選ぶと、見込み収支への影響を表示します。";
   }
 
   function calculatorMovableBudget(category, sourceMonth) {
     return calculatorBudgetSources(category, sourceMonth).total;
+  }
+
+  function calculatorShiftForecastText(sourceMonth, targetMonth, allocation, planChanges) {
+    const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
+    const after = projectEndForecastAfterBudgetPlanChanges(planChanges);
+    const difference = after - before;
+    const sourceParts = [];
+    if (allocation.monthly > 0) sourceParts.push(`今月の予算 ${formatCurrency(allocation.monthly)}`);
+    if (allocation.carry > 0) sourceParts.push(`持ち越し予算 ${formatCurrency(allocation.carry)}`);
+    const sourceText = sourceParts.join("・") || `${monthLabel(sourceMonth)}の予算`;
+    const destination = isValidMonthKey(targetMonth)
+      ? `${monthLabel(targetMonth)}の計画予算`
+      : "選択した月の計画予算";
+    const delta = difference === 0 ? "変わりません" : `${difference > 0 ? "+" : "−"}${formatCurrency(Math.abs(difference))}`;
+    return `資金の移動：${sourceText}を${destination}へ移します。\n\nこの操作によるプロジェクト終了時の見込み収支\n${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}（${delta}）`;
   }
 
   function updateCalculatorReturnSummary() {
@@ -3887,6 +4007,89 @@
     if (!selected) amountInput.value = "0";
     row.classList.toggle("is-selected", selected);
     return true;
+  }
+
+  function renderCalculatorShiftDistributionTargets() {
+    const container = document.querySelector("#calculator-shift-distribution-targets");
+    const category = calculatorContext && categoryById(calculatorContext.categoryId);
+    const sourceMonth = calculatorContext && calculatorContext.sourceMonth;
+    const targets = calculatorShiftDistributionTargetMonths(category, sourceMonth);
+    container.innerHTML = targets.length
+      ? targets.map((month) => {
+        const budget = Math.max(0, planAmount(category.id, month));
+        return `<article class="calculator-budget-funding-source calculator-shift-distribution-target" data-shift-distribution-month="${escapeHtml(month)}" data-shift-distribution-budget="${budget}"><div class="calculator-budget-funding-source-head"><span class="calculator-budget-funding-source-copy"><strong>${escapeHtml(monthLabel(month))}</strong><span>現在の計画予算 ${formatCurrency(budget)}</span></span><button type="button" class="button small secondary calculator-budget-funding-toggle" data-shift-distribution-select aria-pressed="false">選ぶ</button></div><label class="calculator-budget-funding-amount"><span>この月へ移す金額</span><span><input type="number" min="0" step="1" inputmode="numeric" value="0" data-shift-distribution-amount aria-label="${escapeHtml(monthLabel(month))}へ移す金額" disabled><i>円</i></span></label></article>`;
+      }).join("")
+      : '<p class="calculator-add-budget-carry-empty">未来の月のうち、予算が設定されている月がありません。</p>';
+  }
+
+  function calculatorShiftDistributionSelections() {
+    return Array.from(document.querySelectorAll("#calculator-shift-distribution-targets [data-shift-distribution-month]")).map((row) => {
+      const toggle = row.querySelector("[data-shift-distribution-select]");
+      const amountInput = row.querySelector("[data-shift-distribution-amount]");
+      return {
+        month: row.dataset.shiftDistributionMonth,
+        selected: Boolean(toggle && toggle.getAttribute("aria-pressed") === "true"),
+        amount: toggle && toggle.getAttribute("aria-pressed") === "true" ? Math.max(0, toInteger(amountInput.value)) : 0
+      };
+    });
+  }
+
+  function calculatorShiftTargetAllocations(category, sourceMonth, requestedAmount) {
+    if (calculatorShiftMode !== "distribute") {
+      const month = document.querySelector("#calculator-shift-target-month").value;
+      return month ? [{ month, amount: Math.max(0, toInteger(requestedAmount)) }] : [];
+    }
+    return calculatorShiftDistributionSelections()
+      .filter((selection) => selection.selected && selection.amount > 0 && calculatorShiftDistributionTargetMonths(category, sourceMonth).includes(selection.month))
+      .map((selection) => ({ month: selection.month, amount: selection.amount }));
+  }
+
+  function calculatorShiftPlanChanges(sourceMonth, allocation, targetAllocations) {
+    const changes = budgetPlanChangesForAllocation(sourceMonth, allocation);
+    targetAllocations.forEach((target) => {
+      changes.set(target.month, toInteger(changes.get(target.month)) + Math.max(0, toInteger(target.amount)));
+    });
+    return changes;
+  }
+
+  function distributeCalculatorShiftEvenly() {
+    const requestedAmount = Math.max(0, toInteger(document.querySelector("#calculator-shift-amount").value));
+    const selectedRows = Array.from(document.querySelectorAll("#calculator-shift-distribution-targets [data-shift-distribution-month]")).filter((row) => {
+      const toggle = row.querySelector("[data-shift-distribution-select]");
+      return toggle && toggle.getAttribute("aria-pressed") === "true";
+    });
+    if (!selectedRows.length) {
+      showToast("分配する月を選んでください");
+      return;
+    }
+    const base = Math.floor(requestedAmount / selectedRows.length);
+    let remainder = requestedAmount % selectedRows.length;
+    selectedRows.forEach((row) => {
+      const amountInput = row.querySelector("[data-shift-distribution-amount]");
+      amountInput.value = String(base + (remainder-- > 0 ? 1 : 0));
+    });
+    updateCalculatorShiftTargetSummary();
+  }
+
+  function setCalculatorShiftMode(mode = "single") {
+    calculatorShiftMode = mode === "distribute" ? "distribute" : "single";
+    const panel = document.querySelector("#calculator-shift-panel");
+    const distributionPanel = document.querySelector("#calculator-shift-distribution-panel");
+    const targetSelect = document.querySelector("#calculator-shift-target-month");
+    const targetField = targetSelect && targetSelect.closest("label");
+    const targetSummary = document.querySelector("#calculator-shift-target-summary");
+    const isDistributing = calculatorShiftMode === "distribute";
+    panel.classList.toggle("is-distributing", isDistributing);
+    distributionPanel.hidden = !isDistributing;
+    if (targetField) targetField.hidden = isDistributing;
+    targetSummary.hidden = isDistributing;
+    document.querySelectorAll("[data-shift-mode]").forEach((button) => {
+      const isActive = button.dataset.shiftMode === calculatorShiftMode;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+    if (isDistributing) renderCalculatorShiftDistributionTargets();
+    updateCalculatorShiftTargetSummary();
   }
 
   function calculatorCarryFundingSelections() {
@@ -4383,6 +4586,7 @@
     addToggle.disabled = false;
     addToggle.title = `${monthLabel(sourceMonth)}の計画予算を追加します`;
     calculatorAddBudgetMode = "new";
+    setCalculatorShiftMode("single");
     renderCalculatorAddBudgetCarrySources();
     renderCalculatorAddBudgetExternalSources("borrow");
     renderCalculatorAddBudgetExternalSources("reallocate");
@@ -4636,18 +4840,41 @@
     if (!calculatorContext || !calculatorContext.canShiftBudget) return;
     const category = categoryById(calculatorContext.categoryId);
     const sourceMonth = calculatorContext.sourceMonth;
-    const targetMonth = document.querySelector("#calculator-shift-target-month").value;
     const amount = Math.max(0, toInteger(document.querySelector("#calculator-shift-amount").value));
-    const targets = calculatorShiftTargetMonths(sourceMonth);
-    if (!category || !["variable", "fixed"].includes(category.group) || !targets.includes(targetMonth)) throw new Error("移動先の月を選択してください");
+    if (!category || !["variable", "fixed"].includes(category.group)) throw new Error("シフトする支出項目を選択してください");
+
     const sources = calculatorBudgetSources(category, sourceMonth);
     if (sources.total <= 0) throw new Error("シフトする予算がありません");
-    if (amount <= 0 || amount > sources.total) throw new Error(`移せる金額は${formatCurrency(sources.total)}までです`);
+    if (amount <= 0 || amount > sources.total) throw new Error(`移せる金額は ${formatCurrency(sources.total)} までです`);
+
+    const targetAllocations = calculatorShiftTargetAllocations(category, sourceMonth, amount);
+    const allowedTargets = calculatorShiftMode === "distribute"
+      ? calculatorShiftDistributionTargetMonths(category, sourceMonth)
+      : calculatorShiftTargetMonths(sourceMonth);
+    const allocatedAmount = targetAllocations.reduce((sum, target) => sum + Math.max(0, toInteger(target.amount)), 0);
+    if (!targetAllocations.length || allocatedAmount !== amount || targetAllocations.some((target) => !allowedTargets.includes(target.month))) {
+      throw new Error(calculatorShiftMode === "distribute"
+        ? "分配する月と金額の合計を、移す金額と一致させてください"
+        : "移動先の月を選択してください");
+    }
+
     const allocation = calculatorBudgetAllocation(category, sourceMonth, amount, calculatorBudgetPriority("shift", sources));
+    if (allocation.carryOrigins.reduce((sum, origin) => sum + origin.amount, 0) !== allocation.carry) {
+      throw new Error("持ち越し予算の移動元を確認できませんでした");
+    }
+
     const entryAnimationBefore = entryAnimationSnapshot([category.id]);
-    const targetPlanBefore = planAmount(category.id, targetMonth);
-    if (allocation.carryOrigins.reduce((sum, origin) => sum + origin.amount, 0) !== allocation.carry) throw new Error("持ち越し予算の移動元を確認できませんでした");
-    const planChanges = budgetPlanChangesForAllocation(sourceMonth, allocation, targetMonth);
+    const targetPlans = targetAllocations.map((target) => {
+      const before = planAmount(category.id, target.month);
+      return {
+        month: target.month,
+        categoryName: category.name,
+        before,
+        after: before + target.amount,
+        direction: "in"
+      };
+    });
+    const planChanges = calculatorShiftPlanChanges(sourceMonth, allocation, targetAllocations);
     const previousPlans = { ...(state.plans[category.id] || {}) };
     const previousDefaultAmount = category.defaultAmount;
     const previousPlanRule = category.planRule ? { ...category.planRule } : null;
@@ -4657,24 +4884,22 @@
     });
     category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
     category.planRule = null;
+
     try {
-      await persist(`${category.name}の予算を${monthLabel(sourceMonth)}から${monthLabel(targetMonth)}へ${formatCurrency(amount)}シフトしました（今月 ${formatCurrency(allocation.monthly)}・持ち越し ${formatCurrency(allocation.carry)}）`);
+      const destination = calculatorShiftMode === "distribute"
+        ? `${targetAllocations.length}か月へ分配`
+        : `${monthLabel(targetAllocations[0].month)}へ移動`;
+      await persist(`${category.name}の予算 ${formatCurrency(amount)} を${destination}しました`);
     } catch (error) {
       state.plans[category.id] = previousPlans;
       category.defaultAmount = previousDefaultAmount;
       category.planRule = previousPlanRule;
+      resetDerivedDataCache();
       updateCalculatorShiftTargetSummary();
       throw error;
     }
-    queueEntryAnimation("shift", category.id, [], {
-      targetPlan: {
-        month: targetMonth,
-        categoryName: category.name,
-        before: targetPlanBefore,
-        after: targetPlanBefore + allocation.amount,
-        direction: "in"
-      }
-    }, entryAnimationBefore);
+
+    queueEntryAnimation("shift", category.id, [], { targetPlans }, entryAnimationBefore);
     closeDialog(calculatorDialog);
     render();
   }
@@ -5360,6 +5585,7 @@
     const description = `${imported.categories.length}種別、${imported.transactions.length}件の実績を読み込みます。現在のデータは置き換わります。`;
     if (!window.confirm(description)) return;
     state = await window.BudgetDB.saveState(imported, currentProject && currentProject.id);
+    resetDerivedDataCache();
     syncCurrentProjectPeriod();
     currentPeriod = currentPeriodForToday();
     analysisPeriod = currentPeriod;
@@ -5572,6 +5798,28 @@
   document.querySelector("#calculator-shift-target-month").addEventListener("change", updateCalculatorShiftTargetSummary);
   document.querySelector("#calculator-shift-priority").addEventListener("change", updateCalculatorShiftTargetSummary);
   document.querySelector("#calculator-shift-amount").addEventListener("input", updateCalculatorShiftTargetSummary);
+  document.querySelector("#calculator-shift-mode").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-shift-mode]");
+    if (!button) return;
+    setCalculatorShiftMode(button.dataset.shiftMode);
+  });
+  document.querySelector("#calculator-shift-even-split").addEventListener("click", distributeCalculatorShiftEvenly);
+  document.querySelector("#calculator-shift-distribution-targets").addEventListener("click", (event) => {
+    const toggle = event.target.closest("[data-shift-distribution-select]");
+    if (!toggle) return;
+    const row = toggle.closest("[data-shift-distribution-month]");
+    setCalculatorFundingSourceRowState(
+      row,
+      "[data-shift-distribution-select]",
+      "[data-shift-distribution-amount]",
+      toggle.getAttribute("aria-pressed") !== "true"
+    );
+    updateCalculatorShiftTargetSummary();
+  });
+  document.querySelector("#calculator-shift-distribution-targets").addEventListener("input", (event) => {
+    if (!event.target.closest("[data-shift-distribution-amount]")) return;
+    updateCalculatorShiftTargetSummary();
+  });
   document.querySelector("#calculator-shift-confirm").addEventListener("click", () => shiftCalculatorBudget().catch((error) => showToast(error.message)));
   document.querySelector("#calculator-return-priority").addEventListener("change", updateCalculatorReturnSummary);
   document.querySelector("#calculator-return-amount").addEventListener("input", updateCalculatorReturnSummary);

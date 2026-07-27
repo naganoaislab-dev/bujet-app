@@ -748,9 +748,16 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .calculator-budget-flow-sources { display: grid; gap: 0.38rem; align-content: center; }
 .calculator-budget-flow-sources > p { margin: 0; padding: 0.6rem; border-radius: 0.56rem; color: var(--muted); background: var(--surface-2); font-size: 0.66rem; font-weight: 750; line-height: 1.35; }
 .calculator-budget-flow-target { display: grid; align-items: center; }
+.calculator-budget-flow-target.is-multiple { grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: center; gap: 0.38rem; }
 .calculator-budget-flow-node { display: grid; gap: 0.25rem; min-width: 0; padding: 0.48rem; border: 1px solid var(--line); border-radius: 0.58rem; background: var(--surface); }
 .calculator-budget-flow-node > span { overflow: hidden; color: var(--ink); font-size: 0.65rem; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
 .calculator-budget-flow-node > small { overflow: hidden; color: var(--muted); font-size: 0.59rem; font-weight: 750; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.calculator-budget-flow-node-transfer { display: flex; align-items: center; justify-content: center; gap: 0.18rem; min-height: 1.05rem; border-radius: 999px; font-size: 0.59rem; font-weight: 850; }
+.calculator-budget-flow-node-transfer i { font-size: 0.82rem; font-style: normal; line-height: 1; }
+.calculator-budget-flow-node-transfer em { font-style: normal; white-space: nowrap; }
+.calculator-budget-flow-node-transfer.is-increase { color: #2f7fb5; background: color-mix(in srgb, #438ec3 12%, var(--surface)); }
+.calculator-budget-flow-node-transfer.is-decrease { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); }
+.calculator-budget-flow-node-transfer.is-stable { color: var(--muted); background: var(--surface-2); }
 .calculator-budget-flow-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 0.2rem; height: 4.25rem; padding: 0.2rem 0.2rem 0; border-bottom: 1px solid var(--line); }
 .calculator-budget-flow-column { position: relative; height: 100%; min-width: 0; overflow: hidden; border-radius: 0.28rem 0.28rem 0 0; background: color-mix(in srgb, var(--surface-2) 84%, var(--line)); }
 .calculator-budget-flow-column::after { position: absolute; right: 0; bottom: 0.14rem; left: 0; color: var(--muted); font-size: 0.48rem; font-weight: 850; line-height: 1; text-align: center; content: "前"; }
@@ -776,7 +783,9 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .calculator-budget-flow-timeline-heading strong { font-size: 0.65rem; }
 .calculator-budget-flow-timeline-heading span { color: var(--muted); font-size: 0.58rem; font-weight: 700; line-height: 1.35; }
 .calculator-budget-flow-months { display: flex; gap: 0.27rem; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; padding: 0.15rem 0.15rem 0.3rem; scrollbar-color: color-mix(in srgb, var(--budget-operation-color) 45%, var(--line)) transparent; }
-.calculator-budget-flow-month { display: grid; flex: 0 0 2.1rem; gap: 0.2rem; align-items: end; }
+.calculator-budget-flow-month { position: relative; display: grid; flex: 0 0 2.1rem; gap: 0.2rem; align-items: end; }
+.calculator-budget-flow-month.is-source::after { position: absolute; z-index: 2; top: 1.6rem; left: calc(100% - 0.14rem); color: var(--budget-operation-color); font-size: 0.8rem; font-weight: 900; content: "→"; text-shadow: 0 0 0.35rem var(--surface); animation: calculator-budget-source-arrow 1.15s ease-in-out infinite; }
+.calculator-budget-flow-month.is-target::before { position: absolute; z-index: 2; top: 0.1rem; right: 0.02rem; color: #438ec3; font-size: 0.78rem; font-weight: 900; content: "↓"; text-shadow: 0 0 0.35rem var(--surface); animation: calculator-budget-target-arrow 1.15s ease-in-out infinite; }
 .calculator-budget-flow-month-bar { position: relative; height: 5.2rem; overflow: hidden; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface-2) 84%, var(--line)); }
 .calculator-budget-flow-month-bar i { position: absolute; right: 0.27rem; left: 0.27rem; display: block; border-radius: 0.22rem 0.22rem 0 0; }
 .calculator-budget-flow-month-bar .is-base { bottom: 0; height: var(--flow-height); background: color-mix(in srgb, var(--budget-operation-color) 36%, var(--surface)); }
@@ -788,6 +797,8 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .calculator-budget-flow-month.is-target > span { color: #438ec3; }
 @keyframes calculator-budget-carry-pulse { 0%, 100% { filter: brightness(1); transform: translateY(0); } 50% { filter: brightness(1.25); transform: translateY(-0.08rem); } }
 @keyframes calculator-budget-added-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.28); } }
+@keyframes calculator-budget-source-arrow { 0%, 100% { opacity: 0.55; transform: translateX(-0.08rem); } 50% { opacity: 1; transform: translateX(0.13rem); } }
+@keyframes calculator-budget-target-arrow { 0%, 100% { opacity: 0.52; transform: translateY(-0.1rem); } 50% { opacity: 1; transform: translateY(0.08rem); } }
 .calculator-budget-visual-legend { display: flex; gap: 0.7rem; color: var(--muted); font-size: 0.62rem; font-weight: 800; }
 .calculator-budget-visual-legend span { display: inline-flex; align-items: center; gap: 0.22rem; }
 .calculator-budget-visual-legend i { width: 0.52rem; height: 0.52rem; border-radius: 999px; background: color-mix(in srgb, var(--budget-operation-color) 34%, var(--surface)); }
@@ -809,6 +820,11 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .calculator-budget-visual-forecast.is-negative { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); }
 .calculator-budget-visual-warning { margin: 0 !important; color: var(--danger); font-size: 0.66rem; font-weight: 800; line-height: 1.4; }
 .calculator-add-budget-mode-select { display: grid; gap: 0.32rem; padding: 0.62rem; border: 1px solid color-mix(in srgb, var(--budget-operation-color) 24%, var(--line)); border-radius: 0.72rem; background: var(--surface); }
+.calculator-shift-mode { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem; padding: 0.42rem; border: 1px solid color-mix(in srgb, var(--budget-operation-color) 24%, var(--line)); border-radius: 0.72rem; background: var(--surface-2); }
+.calculator-shift-mode button { min-height: 2.35rem; padding: 0.38rem; border: 1px solid transparent; border-radius: 0.55rem; color: var(--muted); background: transparent; font-size: 0.72rem; font-weight: 850; line-height: 1.25; cursor: pointer; }
+.calculator-shift-mode button.is-active { border-color: color-mix(in srgb, var(--budget-operation-color) 48%, var(--line)); color: var(--budget-operation-color); background: color-mix(in srgb, var(--budget-operation-color) 12%, var(--surface)); box-shadow: 0 0.18rem 0.42rem color-mix(in srgb, var(--budget-operation-color) 12%, transparent); }
+.calculator-shift-distribution-panel { display: grid; gap: 0.65rem; padding: 0.72rem; border: 1px solid color-mix(in srgb, var(--budget-operation-color) 30%, var(--line)); border-radius: 0.78rem; background: var(--surface); }
+.calculator-shift-distribution-panel[hidden] { display: none; }
 .calculator-add-budget-mode-select select { height: 2.62rem; margin: 0; font-size: 0.78rem; font-weight: 800; }
 .calculator-budget-operation-note { margin: -0.12rem 0 0 !important; padding: 0.54rem 0.62rem; border-radius: 0.62rem; color: var(--muted); background: color-mix(in srgb, var(--budget-operation-color) 7%, var(--surface)); font-size: 0.7rem; font-weight: 700; line-height: 1.45; }
 .calculator-add-budget-carry-panel { display: grid; gap: 0.65rem; padding: 0.72rem; border: 1px solid var(--line); border-radius: 0.78rem; background: var(--surface); }
