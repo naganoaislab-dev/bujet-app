@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.84";
+  const APP_VERSION = "0.5.85";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -512,10 +512,42 @@
       && toInteger(entry.amount) > 0);
   }
 
-  function budgetAdditionCarryUsageFloor(categoryId, month) {
+  function recordedBudgetAdditionCarryUsageFloor(categoryId, month) {
     return budgetAdditionsFor(categoryId, month).reduce((floor, entry) => (
       Math.max(floor, Math.max(0, toInteger(entry.carryUsageFloor)))
     ), 0);
+  }
+
+  function carryUsageFloorLimit(categoryId, month) {
+    const configuredPlan = planAmount(categoryId, month);
+    const priorCarry = carryAmount(categoryId, month);
+    const debtAppliedToPlan = Math.min(configuredPlan, Math.max(0, -priorCarry));
+    const availableCarry = Math.max(0, priorCarry + debtAppliedToPlan);
+    const actual = Math.max(0, actualAmount(categoryId, month));
+    // 追加時に記録した持ち越し消費額は、現在も残る実績の範囲でのみ有効です。
+    // 明細を削除・減額した後に古い消費額だけを残すと、予算が二重に増えてしまいます。
+    return Math.min(actual, availableCarry);
+  }
+
+  function budgetAdditionCarryUsageFloor(categoryId, month) {
+    return Math.min(
+      recordedBudgetAdditionCarryUsageFloor(categoryId, month),
+      carryUsageFloorLimit(categoryId, month)
+    );
+  }
+
+  function reconcileBudgetAdditionCarryUsageFloors() {
+    if (!Array.isArray(state && state.budgetAdditions)) return false;
+    let changed = false;
+    state.budgetAdditions = state.budgetAdditions.map((entry) => {
+      if (!entry) return entry;
+      const previousFloor = Math.max(0, toInteger(entry.carryUsageFloor));
+      const nextFloor = Math.min(previousFloor, carryUsageFloorLimit(entry.categoryId, entry.month));
+      if (nextFloor === previousFloor) return entry;
+      changed = true;
+      return { ...entry, carryUsageFloor: nextFloor };
+    });
+    return changed;
   }
 
   function recordBudgetAddition(categoryId, month, amount, carryUsageFloor, kind) {
@@ -1085,6 +1117,8 @@
     projects = loaded.projects;
     defaultProjectId = loaded.workspace.defaultProjectId;
     state = loaded.state;
+    // 旧データに残った追加予算の消費履歴も、現存する実績に合わせて安全に補正します。
+    reconcileBudgetAdditionCarryUsageFloors();
     applyTheme();
     currentPeriod = currentPeriodForToday();
     analysisPeriod = currentPeriod;
@@ -1157,6 +1191,7 @@
   }
 
   async function persist(message = "保存しました") {
+    reconcileBudgetAdditionCarryUsageFloors();
     state = await window.BudgetDB.saveState(state, currentProject && currentProject.id);
     syncCurrentProjectPeriod();
     showToast(message);
