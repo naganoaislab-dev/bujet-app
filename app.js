@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.85";
+  const APP_VERSION = "0.5.86";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -20,6 +20,9 @@
   });
   const REMINDER_SCHEDULE_DAY = "day";
   const REMINDER_SCHEDULE_WEEKDAY = "weekday";
+  const OVERAGE_PLAN_HANDLING_FORECAST = "forecast";
+  const OVERAGE_PLAN_HANDLING_NEAREST = "nearest";
+  const OVERAGE_PLAN_HANDLING_EVEN = "even";
   const REMINDER_WEEKDAY_LABELS = Object.freeze(["日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"]);
   const PLAN_AMOUNT_STEP = 100;
   const MIN_PLAN_SCALE_MAX = 100;
@@ -107,6 +110,7 @@
   let pendingTransactionSaving = false;
   let editingPlanCategoryId = null;
   let planDraft = null;
+  let planAdjustmentDraft = null;
   let planRuleDraft = null;
   let planScaleDraft = DEFAULT_PLAN_SCALE_MAX;
   let planPointerGesture = null;
@@ -496,8 +500,117 @@
     return isIncomeCategory(category) ? "income" : "expense";
   }
 
-  function planAmount(categoryId, month) {
+  function configuredPlanAmount(categoryId, month) {
     return toInteger(state.plans[categoryId] && state.plans[categoryId][month], 0);
+  }
+
+  function overagePlanHandling() {
+    const handling = state && state.settings && state.settings.overagePlanHandling;
+    return [OVERAGE_PLAN_HANDLING_FORECAST, OVERAGE_PLAN_HANDLING_NEAREST, OVERAGE_PLAN_HANDLING_EVEN].includes(handling)
+      ? handling
+      : OVERAGE_PLAN_HANDLING_NEAREST;
+  }
+
+  // Keep configured plans immutable when an entry exceeds its budget.  The
+  // scenario supplies a single effective plan for every view, while edits and
+  // deletions automatically restore the original plan without reverse-writing
+  // historical adjustments into state.plans.
+  function expensePlanScenario(categoryId, extraExpense = null) {
+    const category = categoryById(categoryId);
+    const months = periodMonths();
+    const zeroByMonth = () => Object.fromEntries(months.map((month) => [month, 0]));
+    const fallback = {
+      effectivePlans: Object.fromEntries(months.map((month) => [month, configuredPlanAmount(categoryId, month)])),
+      deductions: zeroByMonth(),
+      carryBefore: zeroByMonth(),
+      deficits: zeroByMonth()
+    };
+    if (!isBudgetedExpenseCategory(category)) return fallback;
+
+    const handling = overagePlanHandling();
+    const deductions = zeroByMonth();
+    const effectivePlans = zeroByMonth();
+    const carryBefore = zeroByMonth();
+    const deficits = zeroByMonth();
+    let carry = 0;
+
+    const allocateFromFuturePlans = (amount, startIndex) => {
+      let remaining = amount;
+      const candidates = () => months.slice(startIndex).filter((month) => (
+        Math.max(0, configuredPlanAmount(categoryId, month) - deductions[month]) > 0
+      ));
+      if (handling === OVERAGE_PLAN_HANDLING_NEAREST) {
+        candidates().forEach((month) => {
+          if (remaining <= 0) return;
+          const available = Math.max(0, configuredPlanAmount(categoryId, month) - deductions[month]);
+          const moved = Math.min(available, remaining);
+          deductions[month] += moved;
+          remaining -= moved;
+        });
+        return remaining;
+      }
+
+      // Split the deficit as evenly as possible across the remaining plans.
+      // Amounts are integers, so the first candidates receive the remainder.
+      while (remaining > 0) {
+        const availableMonths = candidates();
+        if (!availableMonths.length) break;
+        const share = Math.floor(remaining / availableMonths.length);
+        let remainder = remaining % availableMonths.length;
+        let movedThisRound = 0;
+        availableMonths.forEach((month) => {
+          const desired = share + (remainder > 0 ? 1 : 0);
+          if (remainder > 0) remainder -= 1;
+          if (desired <= 0) return;
+          const available = Math.max(0, configuredPlanAmount(categoryId, month) - deductions[month]);
+          const moved = Math.min(available, desired);
+          deductions[month] += moved;
+          remaining -= moved;
+          movedThisRound += moved;
+        });
+        if (movedThisRound <= 0) break;
+      }
+      return remaining;
+    };
+
+    months.forEach((month, index) => {
+      const rawPlan = Math.max(0, configuredPlanAmount(categoryId, month));
+      const plan = Math.max(0, rawPlan - deductions[month]);
+      const pendingAmount = extraExpense
+        && extraExpense.categoryId === categoryId
+        && extraExpense.month === month
+        ? Math.max(0, toInteger(extraExpense.amount))
+        : 0;
+      const actual = Math.max(0, actualAmount(categoryId, month)) + pendingAmount;
+      carryBefore[month] = carry;
+      effectivePlans[month] = plan;
+      const balance = carry + plan - actual;
+      if (balance >= 0) {
+        carry = balance;
+        return;
+      }
+
+      const deficit = -balance;
+      deficits[month] = deficit;
+      // A deficit is settled immediately by either the project forecast or a
+      // future plan.  It must not become a second carryover debt as well.
+      carry = 0;
+      if (handling !== OVERAGE_PLAN_HANDLING_FORECAST) allocateFromFuturePlans(deficit, index + 1);
+    });
+
+    return { effectivePlans, deductions, carryBefore, deficits };
+  }
+
+  function planAmount(categoryId, month) {
+    const category = categoryById(categoryId);
+    if (!isBudgetedExpenseCategory(category)) return configuredPlanAmount(categoryId, month);
+    return toInteger(expensePlanScenario(categoryId).effectivePlans[month], 0);
+  }
+
+  function planDeductionAmount(categoryId, month) {
+    const category = categoryById(categoryId);
+    if (!isBudgetedExpenseCategory(category)) return 0;
+    return Math.max(0, toInteger(expensePlanScenario(categoryId).deductions[month]));
   }
 
   // A budget added after spending has begun must be available from that point
@@ -670,6 +783,9 @@
   function carryAmount(categoryId, month) {
     const category = categoryById(categoryId);
     if (!category || isIncomeCategory(category)) return 0;
+    if (isBudgetedExpenseCategory(category)) {
+      return toInteger(expensePlanScenario(categoryId).carryBefore[month], 0);
+    }
     const months = periodMonths();
     const endIndex = months.indexOf(month);
     if (endIndex <= 0) return 0;
@@ -683,6 +799,7 @@
 
   function categoryBudgetStats(categoryId, month) {
     const configuredPlan = planAmount(categoryId, month);
+    const originalPlan = configuredPlanAmount(categoryId, month);
     const priorCarry = carryAmount(categoryId, month);
     const actual = actualAmount(categoryId, month);
     const debtAppliedToPlan = Math.min(configuredPlan, Math.max(0, -priorCarry));
@@ -694,7 +811,19 @@
     const carryRemaining = carry > 0
       ? Math.max(0, carry - carryUsage)
       : carry;
-    return { configuredPlan, priorCarry, plan, carry, actual, monthlyRemaining, carryRemaining, carryUsage, carryUsageFloor };
+    return {
+      configuredPlan,
+      originalPlan,
+      automaticPlanDeduction: Math.max(0, originalPlan - configuredPlan),
+      priorCarry,
+      plan,
+      carry,
+      actual,
+      monthlyRemaining,
+      carryRemaining,
+      carryUsage,
+      carryUsageFloor
+    };
   }
 
   function dailyBudgetStats(category, month) {
@@ -761,19 +890,14 @@
     state.categories
       .filter(isBudgetedExpenseCategory)
       .forEach((category) => {
-        const projectPlanTotal = months.reduce((sum, month) => sum + Math.max(0, planAmount(category.id, month)), 0);
-        let actualThroughMonth = 0;
+        const scenario = expensePlanScenario(category.id, extraExpense);
+        let settledDeficit = 0;
         months.forEach((month) => {
-          const pendingAmount = extraExpense
-            && extraExpense.categoryId === category.id
-            && extraExpense.month === month
-            ? Math.max(0, toInteger(extraExpense.amount))
-            : 0;
-          actualThroughMonth += Math.max(0, actualAmount(category.id, month)) + pendingAmount;
-          // 予算超過は、まず同じ項目の後続月予算で吸収します。プロジェクト全体の
-          // 計画額まで使い切った分だけを、見込み収支に影響する未充当超過として扱います。
-          const unfundedOverage = Math.max(0, actualThroughMonth - projectPlanTotal);
-          overages.set(month, toInteger(overages.get(month)) + unfundedOverage);
+          settledDeficit += Math.max(0, toInteger(scenario.deficits[month]));
+          // A deficit is always settled once.  Under a future-plan strategy
+          // it offsets the lower effective plan; under forecast mode it is the
+          // direct reduction to the project-end forecast.
+          overages.set(month, toInteger(overages.get(month)) + settledDeficit);
         });
       });
     return overages;
@@ -819,12 +943,19 @@
 
   function projectEndForecastAfterBudgetedExpense(categoryId, month, amount) {
     const months = periodMonths();
-    const lastMonth = months[months.length - 1];
-    if (!lastMonth) return projectEndForecastFromAggregates([]);
+    if (!months.length) return projectEndForecastFromAggregates([]);
     const current = projectEndForecastFromAggregates(months.map(aggregateMonth));
-    const beforeOverage = toInteger(budgetedExpenseOveragesByMonth().get(lastMonth));
-    const afterOverage = toInteger(budgetedExpenseOveragesByMonth({ categoryId, month, amount }).get(lastMonth));
-    return current - Math.max(0, afterOverage - beforeOverage);
+    const category = categoryById(categoryId);
+    if (!isBudgetedExpenseCategory(category)) return current;
+    const beforeScenario = expensePlanScenario(categoryId);
+    const afterScenario = expensePlanScenario(categoryId, { categoryId, month, amount });
+    const planDelta = months.reduce((sum, period) => (
+      sum + toInteger(afterScenario.effectivePlans[period]) - toInteger(beforeScenario.effectivePlans[period])
+    ), 0);
+    const deficitDelta = months.reduce((sum, period) => (
+      sum + toInteger(afterScenario.deficits[period]) - toInteger(beforeScenario.deficits[period])
+    ), 0);
+    return current - planDelta - deficitDelta;
   }
 
   function normalExpenseOverageProjection(category, sourceMonth, amount) {
@@ -843,34 +974,24 @@
       };
     }
     const currentSources = calculatorBudgetSources(category, sourceMonth);
-    const currentOverage = Math.max(0, requested - currentSources.total);
-    let unallocated = currentOverage;
-    const futurePlans = [];
-    calculatorShiftTargetMonths(sourceMonth).forEach((month) => {
-      if (unallocated <= 0) return;
-      const available = Math.max(0, Math.min(
-        planAmount(category.id, month),
-        categoryBudgetStats(category.id, month).monthlyRemaining
-      ));
-      const moved = Math.min(unallocated, available);
-      if (moved > 0) {
-        futurePlans.push({
-          month,
-          categoryName: category.name,
-          before: available,
-          after: available - moved,
-          amount: moved
-        });
-        unallocated -= moved;
-      }
-    });
+    const beforeScenario = expensePlanScenario(category.id);
+    const afterScenario = expensePlanScenario(category.id, { categoryId: category.id, month: sourceMonth, amount: requested });
+    const sourceIndex = periodMonths().indexOf(sourceMonth);
+    const futurePlans = periodMonths().slice(sourceIndex + 1).map((month) => {
+      const before = Math.max(0, toInteger(beforeScenario.effectivePlans[month]));
+      const after = Math.max(0, toInteger(afterScenario.effectivePlans[month]));
+      return { month, categoryName: category.name, before, after, amount: Math.max(0, before - after) };
+    }).filter((plan) => plan.amount > 0);
+    const currentOverage = Math.max(0, toInteger(afterScenario.deficits[sourceMonth]) - toInteger(beforeScenario.deficits[sourceMonth]));
+    const futureCovered = futurePlans.reduce((sum, plan) => sum + plan.amount, 0);
+    const unallocated = Math.max(0, currentOverage - futureCovered);
     const forecastBefore = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
     const forecastAfter = projectEndForecastAfterBudgetedExpense(category.id, sourceMonth, requested);
     return {
       currentAvailable: currentSources.total,
       currentOverage,
       futurePlans,
-      futureCovered: futurePlans.reduce((sum, plan) => sum + plan.amount, 0),
+      futureCovered,
       uncovered: unallocated,
       forecastBefore,
       forecastAfter,
@@ -1380,6 +1501,32 @@
     };
   }
 
+  function expensePlanScenarioSnapshot(categoryIds = []) {
+    const scenarios = new Map();
+    Array.from(new Set(categoryIds.filter(Boolean))).forEach((categoryId) => {
+      const category = categoryById(categoryId);
+      if (isBudgetedExpenseCategory(category)) scenarios.set(categoryId, expensePlanScenario(categoryId));
+    });
+    return scenarios;
+  }
+
+  function expensePlanChangesFromSnapshot(beforeScenarios) {
+    if (!(beforeScenarios instanceof Map)) return [];
+    const changes = [];
+    beforeScenarios.forEach((beforeScenario, categoryId) => {
+      const category = categoryById(categoryId);
+      if (!category) return;
+      const afterScenario = expensePlanScenario(categoryId);
+      periodMonths().forEach((month) => {
+        const before = Math.max(0, toInteger(beforeScenario.effectivePlans[month]));
+        const after = Math.max(0, toInteger(afterScenario.effectivePlans[month]));
+        if (before === after) return;
+        changes.push({ categoryId, categoryName: category.name, month, before, after, direction: after > before ? "in" : "out" });
+      });
+    });
+    return changes;
+  }
+
   function entryMoneyLayer() {
     let layer = document.querySelector("#entry-money-animation-layer");
     if (!layer) {
@@ -1583,7 +1730,40 @@
       });
       if (toInteger(animation.details.forecastImpact) > 0) {
         flyEntryMoney(forecastRect, targetRect, "danger", (animation.details.futurePlans || []).length * 80);
-        showToast("次月度以降の予算がもうないため見込み収支が減ってしまいます。今月度以降の予算を追加してください。");
+        showToast(animation.details.overagePlanHandling === OVERAGE_PLAN_HANDLING_FORECAST
+          ? "設定により、超過分をプロジェクト終了時の見込み収支から差し引きました。"
+          : "次月度以降の予算がもうないため見込み収支が減ってしまいます。今月度以降の予算を追加してください。");
+      }
+      return;
+    }
+    if (animation.type === "transaction-expense-adjust") {
+      const changedPlans = animation.details.monthPlans || [];
+      changedPlans.forEach((plan, index) => {
+        const planRect = showEntryMonthPlanFlight(plan, index);
+        const categorySnapshot = before.values[plan.categoryId];
+        const categoryRect = categorySnapshot && categorySnapshot.rect
+          ? categorySnapshot.rect
+          : entryAnimationRect(entryBudgetValueElement(plan.categoryId));
+        const moneyReturnsToPlan = toInteger(plan.after) > toInteger(plan.before);
+        flyEntryMoney(
+          moneyReturnsToPlan ? categoryRect : planRect,
+          moneyReturnsToPlan ? planRect : categoryRect,
+          moneyReturnsToPlan ? "success" : "primary",
+          index * 80
+        );
+      });
+      if (before.forecast && forecast && before.forecast.value !== toInteger(forecast.dataset.entryAmount)) {
+        const categoryId = animation.targetCategoryId;
+        const categoryRect = before.values[categoryId] && before.values[categoryId].rect
+          ? before.values[categoryId].rect
+          : targetRect;
+        const forecastImproved = toInteger(forecast.dataset.entryAmount) > before.forecast.value;
+        flyEntryMoney(
+          forecastImproved ? categoryRect : forecastRect,
+          forecastImproved ? forecastRect : categoryRect,
+          forecastImproved ? "success" : "danger",
+          changedPlans.length * 80
+        );
       }
       return;
     }
@@ -3050,6 +3230,7 @@
 
   function renderBasicSettings() {
     const selectedTheme = themePresetFor(state.settings.themeId);
+    const selectedOverageHandling = overagePlanHandling();
     return `<form id="basic-settings-form" class="card settings-form">
       <div class="section-copy"><p class="section-kicker">PERIOD</p><h2>家計簿の期間</h2><p>締日を超えた支出は翌月分として集計します。存在しない締日は月末に丸めます。</p></div>
       <label><span class="field-label">締日</span><select id="closing-day">${Array.from({ length: 31 }, (_, index) => index + 1).map((day) => `<option value="${day}"${Number(state.settings.closingDay) === day ? " selected" : ""}>${day === 31 ? "月末（31日）" : `${day}日`}</option>`).join("")}</select></label>
@@ -3060,6 +3241,22 @@
         <label><span class="field-label">終了日</span><input id="end-date" type="date" value="${state.settings.endDate}" required></label>
       </div>
       <p class="help-text">現在は${periodMonths().length}ヶ月分を管理しています。初期設定は開始月から36ヶ月です。</p>
+      <fieldset class="overage-plan-settings">
+        <legend>支出項目が予算を超過したとき</legend>
+        <p class="help-text">超過分をどこで受け止めるかを選びます。「直近」「平均」は、設計/計画・入力・分析を含む全画面で調整後の計画値を表示します。後続の計画で吸収できない分は、プロジェクト収支に反映します。</p>
+        <label class="overage-plan-option${selectedOverageHandling === OVERAGE_PLAN_HANDLING_FORECAST ? " selected" : ""}">
+          <input type="radio" name="overage-plan-handling" value="${OVERAGE_PLAN_HANDLING_FORECAST}"${selectedOverageHandling === OVERAGE_PLAN_HANDLING_FORECAST ? " checked" : ""}>
+          <span><strong>プロジェクト収支から引く</strong><small>以降の計画値は変えず、超過分だけ見込み収支を下げます。</small></span>
+        </label>
+        <label class="overage-plan-option${selectedOverageHandling === OVERAGE_PLAN_HANDLING_NEAREST ? " selected" : ""}">
+          <input type="radio" name="overage-plan-handling" value="${OVERAGE_PLAN_HANDLING_NEAREST}"${selectedOverageHandling === OVERAGE_PLAN_HANDLING_NEAREST ? " checked" : ""}>
+          <span><strong>直近の計画から順に引く</strong><small>次の月度以降の計画から、近い月を優先して差し引きます。</small></span>
+        </label>
+        <label class="overage-plan-option${selectedOverageHandling === OVERAGE_PLAN_HANDLING_EVEN ? " selected" : ""}">
+          <input type="radio" name="overage-plan-handling" value="${OVERAGE_PLAN_HANDLING_EVEN}"${selectedOverageHandling === OVERAGE_PLAN_HANDLING_EVEN ? " checked" : ""}>
+          <span><strong>残りの計画から平均して引く</strong><small>残っている月度の計画へ、できるだけ均等に差し引きを配分します。</small></span>
+        </label>
+      </fieldset>
       <section class="theme-settings" aria-labelledby="theme-settings-title">
         <div class="section-copy"><p class="section-kicker">THEME</p><h3 id="theme-settings-title">テーマカラー</h3><p>アプリ全体のアクセントカラーを選べます。</p></div>
         <div class="theme-preset-grid" role="radiogroup" aria-label="テーマカラー">
@@ -3217,18 +3414,17 @@
     const sourceIndex = periodMonths().indexOf(sourceMonth);
     if (sourceIndex <= 0) return [];
     const queue = [];
-    let debt = 0;
     periodMonths().slice(0, sourceIndex).forEach((month) => {
-      const balance = planAmount(categoryId, month) - actualAmount(categoryId, month);
-      if (balance >= 0) {
-        const debtPayment = Math.min(balance, debt);
-        debt -= debtPayment;
-        const surplus = balance - debtPayment;
+      const plan = Math.max(0, planAmount(categoryId, month));
+      const actual = Math.max(0, actualAmount(categoryId, month));
+      if (actual <= plan) {
+        const surplus = plan - actual;
         if (surplus > 0) queue.push({ month, amount: surplus });
         return;
       }
-      const unmetDeficit = consumeCarryOriginQueue(queue, -balance);
-      debt += unmetDeficit;
+      // Each overage is already settled by the selected strategy.  Do not
+      // carry it forward as an additional debt when locating carry origins.
+      consumeCarryOriginQueue(queue, actual - plan);
     });
     const stats = categoryBudgetStats(categoryId, sourceMonth);
     consumeCarryOriginQueue(queue, Math.max(0, stats.carryUsage));
@@ -4191,13 +4387,16 @@
         forecast.classList.remove("positive");
         forecast.classList.toggle("neutral", projection.forecastImpact === 0);
         forecast.hidden = false;
-        if (projection.forecastImpact > 0) {
+        if (overagePlanHandling() === OVERAGE_PLAN_HANDLING_FORECAST) {
+          forecast.textContent = `設定により、今月の予算を超えた${formatCurrency(projection.currentOverage)}をプロジェクト終了時の見込み収支から差し引きます。 ${formatSignedCurrency(projection.forecastBefore)} → ${formatSignedCurrency(projection.forecastAfter)}`;
+        } else if (projection.forecastImpact > 0) {
           const covered = projection.futureCovered > 0
             ? `次月度以降の予算から${formatCurrency(projection.futureCovered)}を充当しますが、`
             : "";
           forecast.textContent = `${covered}次月度以降の予算がもうないため見込み収支が減ってしまいます。今月度以降の予算を追加してください。 プロジェクト終了時の見込み収支 ${formatSignedCurrency(projection.forecastBefore)} → ${formatSignedCurrency(projection.forecastAfter)}`;
         } else {
-          forecast.textContent = `今月の予算を超えた${formatCurrency(projection.currentOverage)}は、次月度以降の予算から充当します。プロジェクト終了時の見込み収支は変わりません。`;
+          const planSource = overagePlanHandling() === OVERAGE_PLAN_HANDLING_EVEN ? "残りの計画から平均して" : "次月度以降の計画から";
+          forecast.textContent = `今月の予算を超えた${formatCurrency(projection.currentOverage)}は、${planSource}充当します。プロジェクト終了時の見込み収支は変わりません。`;
         }
       } else {
         forecast.classList.remove("positive", "neutral");
@@ -4333,7 +4532,8 @@
         sourceCategoryIds: [],
         details: expenseOverageProjection ? {
           futurePlans: expenseOverageProjection.futurePlans,
-          forecastImpact: expenseOverageProjection.forecastImpact
+          forecastImpact: expenseOverageProjection.forecastImpact,
+          overagePlanHandling: overagePlanHandling()
         } : {},
         before: entryAnimationBefore
       };
@@ -4459,7 +4659,7 @@
       }))
       : [];
 
-    const sourceBudget = planAmount(category.id, sourceMonth);
+    const sourceBudget = configuredPlanAmount(category.id, sourceMonth);
     const targetCarryUsageFloor = categoryBudgetStats(category.id, sourceMonth).carryUsage;
     const affectedCategories = mode === "borrow"
       ? [category]
@@ -4479,13 +4679,13 @@
     recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "carry");
     if (mode === "borrow") {
       selections.forEach((selection) => {
-        const futureBudget = planAmount(category.id, selection.id);
+        const futureBudget = configuredPlanAmount(category.id, selection.id);
         state.plans[category.id][selection.id] = Math.max(0, futureBudget - selection.amount);
       });
     } else {
       selections.forEach((selection) => {
         const sourceCategory = sourcesById.get(selection.id).category;
-        const availableBudget = planAmount(sourceCategory.id, sourceMonth);
+        const availableBudget = configuredPlanAmount(sourceCategory.id, sourceMonth);
         state.plans[sourceCategory.id][sourceMonth] = Math.max(0, availableBudget - selection.amount);
       });
     }
@@ -4542,7 +4742,7 @@
       });
       const entrySourceCategoryIds = funding.map((source) => source.category.id);
       const entryAnimationBefore = entryAnimationSnapshot([category.id, ...entrySourceCategoryIds]);
-      const sourceBudget = planAmount(category.id, sourceMonth);
+      const sourceBudget = configuredPlanAmount(category.id, sourceMonth);
       const affectedCategories = [category, ...funding.map((source) => source.category).filter((sourceCategory, index, list) => list.findIndex((item) => item.id === sourceCategory.id) === index)];
       const previousPlans = new Map(affectedCategories.map((affectedCategory) => [
         affectedCategory.id,
@@ -4558,7 +4758,7 @@
       recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "carry");
       funding.forEach((source) => {
         source.origins.forEach((origin) => {
-          const originBudget = planAmount(source.category.id, origin.month);
+          const originBudget = configuredPlanAmount(source.category.id, origin.month);
           state.plans[source.category.id][origin.month] = Math.max(0, originBudget - origin.amount);
         });
       });
@@ -4589,7 +4789,7 @@
     }
 
     const entryAnimationBefore = entryAnimationSnapshot([category.id]);
-    const sourceBudget = planAmount(category.id, sourceMonth);
+    const sourceBudget = configuredPlanAmount(category.id, sourceMonth);
     const targetCarryUsageFloor = categoryBudgetStats(category.id, sourceMonth).carryUsage;
     const previousDefaultAmount = category.defaultAmount;
     const previousPlanRule = category.planRule ? { ...category.planRule } : null;
@@ -4747,10 +4947,14 @@
     cancelPlanPointerTracking();
     editingPlanCategoryId = categoryId;
     planDraft = {};
+    planAdjustmentDraft = {};
     planRuleDraft = category.planRule ? { ...category.planRule, amount: normalizePlanAmount(category, category.planRule.amount) } : null;
     planScaleDraft = normalizePlanScaleMax(category.planScaleMax);
     selectedPlanMonth = null;
-    periodMonths().forEach((month) => { planDraft[month] = planAmount(categoryId, month); });
+    periodMonths().forEach((month) => {
+      planDraft[month] = planAmount(categoryId, month);
+      planAdjustmentDraft[month] = planDeductionAmount(categoryId, month);
+    });
     document.querySelector("#plan-category-name").textContent = category.name;
     document.querySelector("#plan-category-name-input").value = category.name;
     const groupSelect = document.querySelector("#plan-category-group");
@@ -5152,6 +5356,8 @@
     } else if (event.target.id === "project-start-date") {
       const suggestedEndDate = projectEndDateForStart(event.target.value);
       if (suggestedEndDate) document.querySelector("#project-end-date").value = suggestedEndDate;
+    } else if (event.target.name === "overage-plan-handling") {
+      viewHost.querySelectorAll(".overage-plan-option").forEach((item) => item.classList.toggle("selected", item.contains(event.target)));
     } else if (event.target.name === "theme-id") {
       const selectedPreset = themePresetFor(event.target.value);
       applyThemePreset(selectedPreset);
@@ -5177,13 +5383,24 @@
     const startDate = document.querySelector("#start-date").value;
     const endDate = document.querySelector("#end-date").value;
     const themeId = themePresetFor(document.querySelector('input[name="theme-id"]:checked')?.value).id;
+    const overagePlanHandling = document.querySelector('input[name="overage-plan-handling"]:checked')?.value;
     if (!startDate || !endDate || parseLocalDate(endDate) < parseLocalDate(startDate)) {
       showToast("終了日は開始日以降にしてください");
       return;
     }
     if (closingDay !== Number(state.settings.closingDay) && state.transactions.length && !window.confirm("締日を変えると、入力済み実績が所属する月も再計算されます。変更しますか？")) return;
     const previousSettings = state.settings;
-    state.settings = { ...state.settings, closingDay, dateRolloverTime, startDate, endDate, themeId };
+    state.settings = {
+      ...state.settings,
+      closingDay,
+      dateRolloverTime,
+      startDate,
+      endDate,
+      themeId,
+      overagePlanHandling: [OVERAGE_PLAN_HANDLING_FORECAST, OVERAGE_PLAN_HANDLING_NEAREST, OVERAGE_PLAN_HANDLING_EVEN].includes(overagePlanHandling)
+        ? overagePlanHandling
+        : OVERAGE_PLAN_HANDLING_NEAREST
+    };
     const months = periodMonths();
     if (months.length > 120) {
       state.settings = previousSettings;
@@ -5393,13 +5610,35 @@
       showToast("日付は管理期間内にしてください");
       return;
     }
+    const previousTransaction = { ...transaction };
+    const affectedCategoryIds = [previousTransaction.categoryId, categoryId];
+    const entryAnimationBefore = transaction.direction === "expense"
+      ? entryAnimationSnapshot(affectedCategoryIds)
+      : null;
+    const expenseScenariosBefore = transaction.direction === "expense"
+      ? expensePlanScenarioSnapshot(affectedCategoryIds)
+      : null;
     transaction.categoryId = categoryId;
     transaction.amount = amount;
     transaction.date = date;
     transaction.memo = document.querySelector("#transaction-memo").value.trim();
     transaction.updatedAt = appTimestamp();
     closeDialog(transactionDialog);
-    await persist("明細を更新しました");
+    try {
+      await persist("明細を更新しました");
+    } catch (error) {
+      Object.assign(transaction, previousTransaction);
+      render();
+      throw error;
+    }
+    if (transaction.direction === "expense") {
+      const targetCategory = isBudgetedExpenseCategory(category)
+        ? category
+        : categoryById(previousTransaction.categoryId);
+      queueEntryAnimation("transaction-expense-adjust", targetCategory ? targetCategory.id : categoryId, affectedCategoryIds, {
+        monthPlans: expensePlanChangesFromSnapshot(expenseScenariosBefore)
+      }, entryAnimationBefore);
+    }
     render();
   });
 
@@ -5407,9 +5646,27 @@
     const id = document.querySelector("#transaction-id").value;
     const transaction = state.transactions.find((item) => item.id === id);
     if (!transaction || !window.confirm(`${formatCurrency(transaction.amount)}の記録を削除しますか？`)) return;
+    const transactionIndex = state.transactions.findIndex((item) => item.id === id);
+    const entryAnimationBefore = transaction.direction === "expense"
+      ? entryAnimationSnapshot([transaction.categoryId])
+      : null;
+    const expenseScenariosBefore = transaction.direction === "expense"
+      ? expensePlanScenarioSnapshot([transaction.categoryId])
+      : null;
     state.transactions = state.transactions.filter((item) => item.id !== id);
     closeDialog(transactionDialog);
-    await persist("明細を削除しました");
+    try {
+      await persist("明細を削除しました");
+    } catch (error) {
+      state.transactions.splice(Math.max(0, transactionIndex), 0, transaction);
+      render();
+      throw error;
+    }
+    if (transaction.direction === "expense") {
+      queueEntryAnimation("transaction-expense-adjust", transaction.categoryId, [transaction.categoryId], {
+        monthPlans: expensePlanChangesFromSnapshot(expenseScenariosBefore)
+      }, entryAnimationBefore);
+    }
     render();
   });
 
@@ -5568,7 +5825,12 @@
     const allowsNegative = isSignedIncomeGroup(group);
     const normalizedPlanDraft = {};
     Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = allowsNegative ? toInteger(amount) : Math.max(0, toInteger(amount)); });
-    state.plans[editingPlanCategoryId] = { ...(state.plans[editingPlanCategoryId] || {}), ...normalizedPlanDraft };
+    const configuredPlanDraft = {};
+    Object.entries(normalizedPlanDraft).forEach(([month, amount]) => {
+      const automaticDeduction = allowsNegative ? 0 : Math.max(0, toInteger(planAdjustmentDraft && planAdjustmentDraft[month]));
+      configuredPlanDraft[month] = amount + automaticDeduction;
+    });
+    state.plans[editingPlanCategoryId] = { ...(state.plans[editingPlanCategoryId] || {}), ...configuredPlanDraft };
     state.budgetAdditions = (Array.isArray(state.budgetAdditions) ? state.budgetAdditions : [])
       .filter((entry) => entry && entry.categoryId !== editingPlanCategoryId);
     category.name = name;
@@ -5577,7 +5839,7 @@
     category.active = true;
     category.archivedAt = null;
     if (group !== "variable") category.dailyBudgetEnabled = false;
-    category.defaultAmount = allowsNegative ? toInteger(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]) : Math.max(0, toInteger(normalizedPlanDraft[currentPeriod] ?? Object.values(normalizedPlanDraft)[0]));
+    category.defaultAmount = allowsNegative ? toInteger(configuredPlanDraft[currentPeriod] ?? Object.values(configuredPlanDraft)[0]) : Math.max(0, toInteger(configuredPlanDraft[currentPeriod] ?? Object.values(configuredPlanDraft)[0]));
     category.planRule = planRuleDraft ? { ...planRuleDraft, amount: allowsNegative ? toInteger(planRuleDraft.amount) : Math.max(0, toInteger(planRuleDraft.amount)) } : null;
     category.planScaleMax = planScaleDraft;
     category.reminder = planReminderConfigFromForm();
