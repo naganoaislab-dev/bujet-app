@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.83";
+  const APP_VERSION = "0.5.84";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -928,6 +928,31 @@
   function closeDialog(dialog) {
     if (dialog.open && typeof dialog.close === "function") dialog.close();
     else dialog.removeAttribute("open");
+  }
+
+  function openPendingTransactionMemo(transaction) {
+    const isCurrentPendingTransaction = () => pendingTransaction && pendingTransaction.id === transaction.id;
+    const tryOpen = () => {
+      if (!isCurrentPendingTransaction()) return false;
+      try {
+        // iOS Safariでは、ユーザー操作から外れたrequestAnimationFrame内で
+        // showModal()すると開けないことがあるため、電卓を閉じた直後に開きます。
+        openDialog(memoDialog);
+        return memoDialog.open;
+      } catch (_) {
+        return false;
+      }
+    };
+    if (tryOpen()) return;
+    window.setTimeout(() => {
+      if (tryOpen()) return;
+      if (!isCurrentPendingTransaction()) return;
+      // メモ画面を開けなかった入力は一切確定しません。カードだけが変わる状態を防ぎます。
+      pendingTransaction = null;
+      pendingTransactionEntryAnimation = null;
+      pendingTransactionSaving = false;
+      showToast("メモ画面を開けなかったため、入力は保存していません。もう一度お試しください。");
+    }, 0);
   }
 
   function setAppUpdateStatus(message, available = false) {
@@ -4278,13 +4303,9 @@
         before: entryAnimationBefore
       };
     }
-    document.querySelector("#memo-summary").textContent = `${category.name}・${calculatorContext.allowsNegative ? formatSignedCurrency(amount) : formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
+    document.querySelector("#memo-summary").textContent = `${category ? category.name : "項目"}・${calculatorContext.allowsNegative ? formatSignedCurrency(amount) : formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
     document.querySelector("#memo-input").value = "";
-    // calculator-dialogのclose処理が完了した次フレームに開くことで、iOS Safariでも
-    // モーダル同士の切り替えが失敗しないようにします。
-    window.requestAnimationFrame(() => {
-      if (pendingTransaction && pendingTransaction.id === transaction.id) openDialog(memoDialog);
-    });
+    openPendingTransactionMemo(transaction);
   }
 
   async function shiftCalculatorBudget() {
