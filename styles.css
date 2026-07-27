@@ -587,6 +587,15 @@ input:not([type="hidden"]), select, textarea { font-size: 16px !important; -webk
 textarea { resize: vertical; }
 input[type="color"] { width: 100%; height: 3rem; padding: 0.25rem; border: 1px solid var(--line); border-radius: 0.8rem; background: var(--surface); }
 .help-text { margin-bottom: 0; font-size: 0.72rem; }
+.overage-plan-settings { display: grid; gap: 0.55rem; margin: 0; padding: 0.9rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--surface-2); }
+.overage-plan-settings legend { padding: 0 0.2rem; color: var(--ink); font-size: 0.88rem; font-weight: 850; }
+.overage-plan-settings .help-text { color: var(--muted); }
+.overage-plan-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 0.65rem; padding: 0.7rem; border: 1px solid var(--line); border-radius: 0.8rem; background: var(--surface); cursor: pointer; }
+.overage-plan-option.selected { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-soft); }
+.overage-plan-option input { width: 1.1rem; height: 1.1rem; margin: 0.1rem 0 0; accent-color: var(--primary); }
+.overage-plan-option span { display: grid; gap: 0.16rem; min-width: 0; }
+.overage-plan-option strong { font-size: 0.8rem; }
+.overage-plan-option small { color: var(--muted); font-size: 0.69rem; line-height: 1.35; }
 .theme-settings { display: grid; gap: 0.7rem; padding-top: 0.9rem; border-top: 1px solid var(--line); }
 .theme-settings .section-copy { margin: 0; }
 .theme-settings h3, .theme-settings p { margin-bottom: 0; }

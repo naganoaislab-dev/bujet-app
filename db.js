@@ -17,6 +17,7 @@
   const MAX_PLAN_SCALE_MAX = 1000000000;
   const DEFAULT_THEME_ID = "forest";
   const THEME_IDS = new Set(["forest", "ocean", "sapphire", "violet", "plum", "rose", "coral", "amber", "olive", "slate"]);
+  const OVERAGE_PLAN_HANDLINGS = new Set(["forecast", "nearest", "even"]);
 
   function pad(value) {
     return String(value).padStart(2, "0");
@@ -182,6 +183,7 @@
         currency: "JPY",
         themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID,
         dateRolloverTime: "00:00",
+        overagePlanHandling: "nearest",
         developerModeEnabled: false,
         developerDateTime: ""
       },
@@ -207,6 +209,7 @@
         currency: "JPY",
         themeId: THEME_IDS.has(options.themeId) ? options.themeId : DEFAULT_THEME_ID,
         dateRolloverTime: "00:00",
+        overagePlanHandling: "nearest",
         developerModeEnabled: false,
         developerDateTime: ""
       },
@@ -289,6 +292,9 @@
     state.settings.closingDay = Math.min(31, Math.max(1, Math.round(Number(state.settings.closingDay) || 31)));
     state.settings.themeId = THEME_IDS.has(state.settings.themeId) ? state.settings.themeId : DEFAULT_THEME_ID;
     state.settings.dateRolloverTime = normalizeDateRolloverTime(state.settings.dateRolloverTime);
+    state.settings.overagePlanHandling = OVERAGE_PLAN_HANDLINGS.has(state.settings.overagePlanHandling)
+      ? state.settings.overagePlanHandling
+      : "nearest";
     const configuredDeveloperDateTime = developerDateTime(state.settings.developerDateTime);
     state.settings.developerModeEnabled = state.settings.developerModeEnabled === true && Boolean(configuredDeveloperDateTime);
     state.settings.developerDateTime = configuredDeveloperDateTime ? String(state.settings.developerDateTime) : "";
