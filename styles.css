@@ -157,23 +157,23 @@ p { color: var(--muted); line-height: 1.55; }
 
 [data-entry-budget-value], [data-entry-project-forecast-value] { transform-origin: center right; will-change: transform; }
 [data-entry-project-forecast-value] { transform-origin: right center; }
-.is-entry-value-increase { animation: entry-value-increase 3s cubic-bezier(.2,.82,.24,1); }
-.is-entry-value-decrease { animation: entry-value-decrease 3s cubic-bezier(.2,.82,.24,1); }
+html .is-entry-value-increase { color: #3686c8 !important; animation: entry-value-increase 3s cubic-bezier(.2,.82,.24,1); }
+html .is-entry-value-decrease { color: var(--danger) !important; animation: entry-value-decrease 3s cubic-bezier(.2,.82,.24,1); }
 @keyframes entry-value-increase {
   0% { transform: scale(1); filter: brightness(1); }
-  34% { transform: scale(1.16); filter: brightness(1.3) drop-shadow(0 .25rem .42rem color-mix(in srgb, var(--success) 48%, transparent)); }
+  34% { transform: scale(var(--entry-value-peak-scale, 1.16)); filter: brightness(1.3) drop-shadow(0 .25rem .42rem color-mix(in srgb, #3686c8 48%, transparent)); }
   100% { transform: scale(1); filter: brightness(1); }
 }
 @keyframes entry-value-decrease {
   0% { transform: scale(1); filter: brightness(1); }
-  34% { transform: scale(1.14); filter: brightness(1.18) drop-shadow(0 .22rem .38rem color-mix(in srgb, var(--danger) 42%, transparent)); }
+  34% { transform: scale(var(--entry-value-peak-scale, 1.14)); filter: brightness(1.18) drop-shadow(0 .22rem .38rem color-mix(in srgb, var(--danger) 42%, transparent)); }
   100% { transform: scale(1); filter: brightness(1); }
 }
-.entry-money-animation-layer { position: fixed; z-index: 80; inset: 0; overflow: hidden; pointer-events: none; }
-.entry-money-particle { position: fixed; z-index: 2; display: grid; place-items: center; width: 1.35rem; height: 1.35rem; border: 1px solid color-mix(in srgb, var(--primary) 42%, #fff); border-radius: 50%; color: #fff; background: var(--primary); box-shadow: 0 .22rem .6rem color-mix(in srgb, var(--primary) 42%, transparent); font-size: .68rem; font-style: normal; font-weight: 900; line-height: 1; }
+.entry-money-animation-layer { position: absolute; z-index: 80; top: 0; left: 0; overflow: visible; pointer-events: none; }
+.entry-money-particle { position: absolute; z-index: 2; display: grid; place-items: center; width: 1.35rem; height: 1.35rem; border: 1px solid color-mix(in srgb, var(--primary) 42%, #fff); border-radius: 50%; color: #fff; background: var(--primary); box-shadow: 0 .22rem .6rem color-mix(in srgb, var(--primary) 42%, transparent); font-size: .68rem; font-style: normal; font-weight: 900; line-height: 1; }
 .entry-money-particle.is-success { border-color: color-mix(in srgb, var(--success) 48%, #fff); background: var(--success); box-shadow: 0 .22rem .6rem color-mix(in srgb, var(--success) 44%, transparent); }
 .entry-money-particle.is-danger { border-color: color-mix(in srgb, var(--danger) 48%, #fff); background: var(--danger); box-shadow: 0 .22rem .6rem color-mix(in srgb, var(--danger) 42%, transparent); }
-.entry-month-plan-flight { position: fixed; z-index: 1; display: grid; grid-template-columns: auto auto; align-items: end; gap: .12rem .5rem; width: min(10.8rem, calc(100vw - 2rem)); padding: .62rem .7rem; border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--line)); border-radius: .8rem; color: var(--ink); background: color-mix(in srgb, var(--surface) 90%, #fff); box-shadow: 0 .8rem 2.1rem rgba(var(--primary-rgb), .22); opacity: 0; transform: translateY(-.45rem) scale(.94); transition: opacity 170ms ease, transform 170ms ease; }
+.entry-month-plan-flight { position: absolute; z-index: 1; display: grid; grid-template-columns: auto auto; align-items: end; gap: .12rem .5rem; width: min(10.8rem, calc(100vw - 2rem)); padding: .62rem .7rem; border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--line)); border-radius: .8rem; color: var(--ink); background: color-mix(in srgb, var(--surface) 90%, #fff); box-shadow: 0 .8rem 2.1rem rgba(var(--primary-rgb), .22); opacity: 0; transform: translateY(-.45rem) scale(.94); transition: opacity 170ms ease, transform 170ms ease; }
 .entry-month-plan-flight.is-active { opacity: 1; transform: translateY(0) scale(1); }
 .entry-month-plan-flight.is-leaving { opacity: 0; transform: translateY(-.35rem) scale(.96); transition-duration: 240ms; }
 .entry-month-plan-flight .entry-month-plan-kicker { grid-column: 1 / -1; color: var(--primary); font-size: .55rem; font-weight: 850; letter-spacing: .07em; }
@@ -225,6 +225,7 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .budget-card-status { display: inline-block; margin-left: 0.45rem; font-size: 0.68rem; font-style: normal; font-weight: 850; vertical-align: 0.08rem; }
 .budget-card-status.missing { color: var(--danger); }
 .budget-card-status.complete { color: var(--primary-strong); }
+.budget-card-overage-policy { display: inline-flex; align-items: center; align-self: flex-start; max-width: 100%; min-height: 1.25rem; margin: -.28rem 0 .48rem; padding: .15rem .38rem; border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line)); border-radius: 999px; color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, var(--surface)); font-size: .56rem; font-style: normal; font-weight: 850; line-height: 1.25; overflow-wrap: anywhere; }
 .budget-card-label { display: block; color: var(--muted); font-size: 0.56rem; font-weight: 750; letter-spacing: -0.025em; }
 .budget-card-amount { display: block; margin: 0.15rem 0 0.55rem; font-size: 1.15rem; font-weight: 850; letter-spacing: -0.04em; }
 .budget-card-main { display: flex; align-items: baseline; justify-content: space-between; min-height: 2rem; gap: 0.45rem; min-width: 0; }
@@ -259,17 +260,17 @@ body.is-expense-reordering { overflow: hidden; overscroll-behavior: none; -webki
 .daily-budget-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.55rem; }
 .daily-budget-value { display: flex; min-width: 0; min-height: 4.4rem; padding: 0.65rem; overflow: hidden; border-radius: 0.8rem; background: var(--surface-2); flex-direction: column; justify-content: space-between; }
 .daily-budget-value > span { color: var(--muted); font-size: 0.64rem; font-weight: 750; line-height: 1.35; }
-.daily-budget-value > strong { display: block; margin-top: 0.25rem; overflow: hidden; font-size: clamp(1.42rem, 6.8vw, 1.72rem); font-variant-numeric: tabular-nums; letter-spacing: -0.04em; text-overflow: ellipsis; white-space: nowrap; }
+.daily-budget-value > strong { display: block; align-self: flex-start; width: fit-content; max-width: 100%; margin-top: 0.25rem; overflow: visible; font-size: clamp(1.42rem, 6.8vw, 1.72rem); font-variant-numeric: tabular-nums; letter-spacing: -0.04em; text-overflow: clip; white-space: nowrap; transform-origin: left center; }
 .daily-budget-amount.is-entry-value-increase { animation: daily-entry-value-increase 3s cubic-bezier(.2,.82,.24,1); }
 .daily-budget-amount.is-entry-value-decrease { animation: daily-entry-value-decrease 3s cubic-bezier(.2,.82,.24,1); }
 @keyframes daily-entry-value-increase {
   0% { transform: scale(1); filter: brightness(1); }
-  34% { transform: scale(1.055); filter: brightness(1.24) drop-shadow(0 .18rem .3rem color-mix(in srgb, var(--success) 44%, transparent)); }
+  34% { transform: scale(var(--entry-value-peak-scale, 1.055)); filter: brightness(1.24) drop-shadow(0 .18rem .3rem color-mix(in srgb, #3686c8 44%, transparent)); }
   100% { transform: scale(1); filter: brightness(1); }
 }
 @keyframes daily-entry-value-decrease {
   0% { transform: scale(1); filter: brightness(1); }
-  34% { transform: scale(1.05); filter: brightness(1.14) drop-shadow(0 .16rem .28rem color-mix(in srgb, var(--danger) 38%, transparent)); }
+  34% { transform: scale(var(--entry-value-peak-scale, 1.05)); filter: brightness(1.14) drop-shadow(0 .16rem .28rem color-mix(in srgb, var(--danger) 38%, transparent)); }
   100% { transform: scale(1); filter: brightness(1); }
 }
 .daily-budget-days { display: block; margin: 0.5rem 0; color: var(--primary); font-size: 0.68rem; font-weight: 800; text-align: right; }
@@ -643,12 +644,27 @@ input[type="color"] { width: 100%; height: 3rem; padding: 0.25rem; border: 1px s
 .developer-clock-actions p { margin: 0; font-size: 0.7rem; line-height: 1.45; }
 .developer-clock-actions strong { display: block; font-size: 0.78rem; }
 .developer-clock-actions .button { min-height: 2.7rem; flex: none; padding: 0.5rem 0.7rem; font-size: 0.72rem; }
+.developer-debug-section { display: grid; gap: .7rem; margin-top: .8rem; padding: .78rem; border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--line)); border-radius: .9rem; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); }
+.developer-debug-section .section-copy, .developer-debug-section h3, .developer-debug-section p { margin-bottom: 0; }
+.developer-debug-section .button { justify-self: stretch; }
 
 dialog { max-width: none; padding: 0; border: 0; color: var(--ink); background: transparent; }
 dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
 .sheet-dialog { width: 100%; height: 100%; margin: 0; }
 .sheet-dialog[open] { display: flex; align-items: end; justify-content: center; }
 .sheet-card { width: min(100%, 40rem); max-height: calc(100dvh - env(safe-area-inset-top) - 1rem); padding: 0.65rem max(1rem, env(safe-area-inset-right)) calc(1rem + env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); overflow-y: auto; border-radius: 1.5rem 1.5rem 0 0; background: var(--surface); box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.18); }
+.decision-sheet { display: grid; gap: .72rem; }
+.decision-sheet .dialog-heading, .decision-sheet .dialog-summary, .decision-sheet .help-text, .decision-sheet .dialog-actions { margin-top: 0; margin-bottom: 0; }
+.overage-decision-options { display: grid; gap: .48rem; }
+.overage-plan-option { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: .68rem; min-height: 4rem; padding: .68rem .72rem; border: 1px solid var(--line); border-radius: .82rem; background: var(--surface-2); cursor: pointer; transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease; }
+.overage-plan-option.selected { border-color: color-mix(in srgb, var(--primary) 55%, var(--line)); background: color-mix(in srgb, var(--primary) 9%, var(--surface)); box-shadow: 0 0 0 .18rem color-mix(in srgb, var(--primary) 9%, transparent); }
+.overage-plan-option input { width: 1.18rem; height: 1.18rem; margin: 0; accent-color: var(--primary); }
+.overage-plan-option span { display: grid; min-width: 0; gap: .16rem; }
+.overage-plan-option strong { font-size: .78rem; line-height: 1.35; }
+.overage-plan-option small { color: var(--muted); font-size: .66rem; font-weight: 650; line-height: 1.45; }
+.overage-remember-toggle { margin-top: .08rem; }
+.income-shortfall-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .62rem; }
+.income-shortfall-actions .button { min-height: 3.1rem; padding-inline: .55rem; }
 .calculator-card { padding-bottom: max(3rem, calc(env(safe-area-inset-bottom) + 1.5rem)); scroll-padding-bottom: 3rem; }
 .sheet-handle { width: 2.7rem; height: 0.3rem; margin: 0 auto 0.75rem; border-radius: 99px; background: var(--surface-3); }
 .version-card { display: grid; gap: 0.8rem; }

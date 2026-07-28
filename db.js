@@ -18,6 +18,7 @@
   const DEFAULT_THEME_ID = "forest";
   const THEME_IDS = new Set(["forest", "ocean", "sapphire", "violet", "plum", "rose", "coral", "amber", "olive", "slate"]);
   const OVERAGE_PLAN_HANDLINGS = new Set(["forecast", "nearest", "even"]);
+  const DEFAULT_OVERAGE_PLAN_HANDLING = "nearest";
 
   function pad(value) {
     return String(value).padStart(2, "0");
@@ -161,7 +162,11 @@
       ...category,
       planScaleMax: DEFAULT_PLAN_SCALE_MAX,
       dailyBudgetEnabled: category.id === "expense-food",
-      reminder: normalizeReminder()
+      reminder: normalizeReminder(),
+      ...(["variable", "fixed"].includes(category.group) && !category.isUnexpectedExpense ? {
+        overagePlanHandling: DEFAULT_OVERAGE_PLAN_HANDLING,
+        overageHandlingLocked: false
+      } : {})
     }));
 
     const plans = {};
@@ -175,7 +180,7 @@
     const now = new Date().toISOString();
     return {
       id: String(options.id || LEGACY_STATE_ID),
-      schemaVersion: 6,
+      schemaVersion: 8,
       settings: {
         closingDay: Math.min(31, Math.max(1, Math.round(Number(options.closingDay) || 31))),
         startDate,
@@ -191,6 +196,7 @@
       plans,
       transactions: [],
       budgetAdditions: [],
+      incomeForecastClosures: {},
       createdAt: now,
       updatedAt: now
     };
@@ -201,7 +207,7 @@
     const now = new Date().toISOString();
     return {
       id: String(options.id || LEGACY_STATE_ID),
-      schemaVersion: 6,
+      schemaVersion: 8,
       settings: {
         closingDay: Math.min(31, Math.max(1, Math.round(Number(options.closingDay) || 31))),
         startDate,
@@ -241,6 +247,7 @@
       plans: { "expense-unplanned": {}, "income-unplanned": {} },
       transactions: [],
       budgetAdditions: [],
+      incomeForecastClosures: {},
       createdAt: now,
       updatedAt: now
     };
@@ -282,12 +289,13 @@
       ...fallback,
       ...value,
       id: normalizedId,
-      schemaVersion: 6,
+      schemaVersion: 8,
       settings: { ...fallback.settings, ...(value.settings || {}) },
       categories: Array.isArray(value.categories) ? value.categories : fallback.categories,
       plans: value.plans && typeof value.plans === "object" ? value.plans : fallback.plans,
       transactions: Array.isArray(value.transactions) ? value.transactions : [],
-      budgetAdditions: Array.isArray(value.budgetAdditions) ? value.budgetAdditions : []
+      budgetAdditions: Array.isArray(value.budgetAdditions) ? value.budgetAdditions : [],
+      incomeForecastClosures: value.incomeForecastClosures && typeof value.incomeForecastClosures === "object" ? value.incomeForecastClosures : {}
     };
     state.settings.closingDay = Math.min(31, Math.max(1, Math.round(Number(state.settings.closingDay) || 31)));
     state.settings.themeId = THEME_IDS.has(state.settings.themeId) ? state.settings.themeId : DEFAULT_THEME_ID;
@@ -329,6 +337,15 @@
           : category.id === "expense-food"
       );
       if (category.isUnexpectedExpense) category.dailyBudgetEnabled = false;
+      if (["variable", "fixed"].includes(category.group) && !category.isUnexpectedExpense) {
+        category.overagePlanHandling = OVERAGE_PLAN_HANDLINGS.has(category.overagePlanHandling)
+          ? category.overagePlanHandling
+          : (OVERAGE_PLAN_HANDLINGS.has(state.settings.overagePlanHandling) ? state.settings.overagePlanHandling : DEFAULT_OVERAGE_PLAN_HANDLING);
+        category.overageHandlingLocked = category.overageHandlingLocked === true;
+      } else {
+        delete category.overagePlanHandling;
+        delete category.overageHandlingLocked;
+      }
       if (category.planRule && typeof category.planRule === "object") {
         category.planRule = {
           startMonth: /^\d{4}-\d{2}$/.test(category.planRule.startMonth) ? category.planRule.startMonth : monthKey(normalizationDate),
@@ -361,19 +378,77 @@
         ? transaction.enteredOn
         : (Number.isNaN(createdDate.getTime()) ? date : dateKey(createdDate));
       const category = state.categories.find((item) => String(item.id) === String(transaction.categoryId));
+      const amount = normalizeTransactionAmount(category, transaction.amount);
+      // Version 0 preserves the legacy once-per-category/month grouping.  Do
+      // not infer the version from the now-normalized policy field: doing so
+      // would silently promote old entries to version 1 on the next save and
+      // could change even-split rounding.
+      const hasOverageDecisionParts = Array.isArray(transaction.overageDecisionParts) && transaction.overageDecisionParts.length > 0;
+      const legacyOverageDecision = Math.round(Number(transaction.overageDecisionVersion) || 0) <= 0 && !hasOverageDecisionParts;
+      const transactionOveragePlanHandling = transaction.direction !== "income" && category && !category.isUnexpectedExpense
+        ? (OVERAGE_PLAN_HANDLINGS.has(transaction.overagePlanHandling)
+          ? transaction.overagePlanHandling
+          : legacyOverageDecision
+          ? (OVERAGE_PLAN_HANDLINGS.has(state.settings.overagePlanHandling) ? state.settings.overagePlanHandling : category.overagePlanHandling || DEFAULT_OVERAGE_PLAN_HANDLING)
+          : category.overagePlanHandling || DEFAULT_OVERAGE_PLAN_HANDLING)
+        : undefined;
+      let normalizedDecisionParts;
+      if (transactionOveragePlanHandling && hasOverageDecisionParts) {
+        let remaining = Math.max(0, amount);
+        normalizedDecisionParts = transaction.overageDecisionParts.reduce((parts, part, partIndex) => {
+          if (!part || remaining <= 0) return parts;
+          const partAmount = Math.min(remaining, Math.max(0, Math.round(Number(part.amount) || 0)));
+          if (partAmount <= 0) return parts;
+          const decidedAt = typeof part.decidedAt === "string" && !Number.isNaN(new Date(part.decidedAt).getTime())
+            ? part.decidedAt
+            : (transaction.updatedAt || createdAt);
+          const decisionOrder = Math.max(0, Math.round(Number(part.decisionOrder) || 0));
+          parts.push({
+            id: String(part.id || `${transaction.id || `transaction-${index}`}-decision-${partIndex}`),
+            amount: partAmount,
+            overagePlanHandling: OVERAGE_PLAN_HANDLINGS.has(part.overagePlanHandling) ? part.overagePlanHandling : transactionOveragePlanHandling,
+            decidedAt,
+            ...(decisionOrder > 0 ? { decisionOrder } : {}),
+            ...(part.legacyBatch === true ? { legacyBatch: true } : {})
+          });
+          remaining -= partAmount;
+          return parts;
+        }, []);
+        if (remaining > 0) {
+          normalizedDecisionParts.push({
+            id: `${transaction.id || `transaction-${index}`}-decision-rest`,
+            amount: remaining,
+            overagePlanHandling: transactionOveragePlanHandling,
+            decidedAt: transaction.updatedAt || createdAt
+          });
+        }
+      }
       return {
         id: String(transaction.id || `transaction-${index}`),
         direction: transaction.direction === "income" ? "income" : "expense",
         categoryId: String(transaction.categoryId || ""),
         date,
         enteredOn,
-        amount: normalizeTransactionAmount(category, transaction.amount),
+        amount,
         memo: String(transaction.memo || "").slice(0, 500),
+        ...(transactionOveragePlanHandling ? {
+          overagePlanHandling: transactionOveragePlanHandling,
+          overageDecisionVersion: normalizedDecisionParts ? 2 : legacyOverageDecision ? 0 : Math.max(1, Math.round(Number(transaction.overageDecisionVersion) || 1)),
+          ...(normalizedDecisionParts ? { overageDecisionParts: normalizedDecisionParts } : {})
+        } : {}),
         createdAt,
         updatedAt: transaction.updatedAt || normalizationTimestamp
       };
     });
     const categoryIds = new Set(state.categories.map((category) => category.id));
+    state.incomeForecastClosures = Object.fromEntries(Object.entries(state.incomeForecastClosures)
+      .filter(([key, closed]) => {
+        const separator = String(key).lastIndexOf("|");
+        const categoryId = separator >= 0 ? String(key).slice(0, separator) : "";
+        const month = separator >= 0 ? String(key).slice(separator + 1) : "";
+        return closed === true && categoryIds.has(categoryId) && /^\d{4}-\d{2}$/.test(month);
+      })
+      .map(([key]) => [key, true]));
     state.budgetAdditions = state.budgetAdditions
       .filter((entry) => entry && typeof entry === "object" && categoryIds.has(String(entry.categoryId)) && /^\d{4}-\d{2}$/.test(String(entry.month)) && Number(entry.amount) > 0)
       .map((entry, index) => ({
@@ -594,11 +669,14 @@
   }
 
   async function saveState(state, projectId) {
+    // Snapshot synchronously.  IndexedDB/workspace lookups below are async;
+    // cloning afterwards allowed a later UI edit to leak into this save.
+    const stateSnapshot = JSON.parse(JSON.stringify(state));
     const { workspace, projects } = await ensureWorkspace();
     const id = String(projectId || workspace.defaultProjectId);
     const project = projects.find((item) => item.id === id);
     if (!project) throw new Error("保存先のプロジェクトが見つかりません。");
-    const normalized = normalizeState(JSON.parse(JSON.stringify(state)), project.stateId);
+    const normalized = normalizeState(stateSnapshot, project.stateId);
     normalized.updatedAt = stateTimestamp(normalized);
     const nextProject = normalizeProject({ ...project, updatedAt: normalized.updatedAt }, normalized, project.id);
     await requestFromStores([STATE_STORE, PROJECT_STORE], "readwrite", (stores) => {

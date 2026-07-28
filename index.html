@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=59">
-  <link rel="icon" href="icons/icon.svg?v=59" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=59">
-  <link rel="stylesheet" href="styles.css?v=98">
-  <script src="db.js?v=75" defer></script>
-  <script src="app.js?v=98" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=100">
+  <link rel="icon" href="icons/icon.svg?v=100" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=100">
+  <link rel="stylesheet" href="styles.css?v=100">
+  <script src="db.js?v=100" defer></script>
+  <script src="app.js?v=100" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -116,12 +116,12 @@
       </section>
       <section id="calculator-shift-panel" class="calculator-shift-panel" aria-labelledby="calculator-shift-title" hidden>
         <div class="calculator-budget-panel-heading"><p class="eyebrow">BUDGET SHIFT</p><h3 id="calculator-shift-title">別の月へ予算をシフト</h3><p id="calculator-shift-source" class="help-text calculator-budget-source"></p></div>
-        <label><span class="calculator-operation-step">1. 移動先の月</span><select id="calculator-shift-target-month"></select></label>
+        <label class="calculator-budget-amount-field"><span class="field-label"><span class="calculator-operation-step">1. シフトする合計額</span><small>今月の予算と持ち越しから移動できます</small></span><span class="calculator-budget-amount-input"><input id="calculator-shift-amount" type="number" min="1" step="1" inputmode="numeric"><i>円</i></span></label>
         <div id="calculator-shift-mode" class="calculator-shift-mode" role="group" aria-label="シフト方法"><button type="button" class="is-active" data-shift-mode="single" aria-pressed="true">1か月へ移す</button><button type="button" data-shift-mode="distribute" aria-pressed="false">複数月へ分配</button></div>
+        <label><span class="calculator-operation-step">2. 移動先の月</span><select id="calculator-shift-target-month"></select></label>
         <p id="calculator-shift-target-summary" class="calculator-shift-target-summary" aria-live="polite"></p>
-        <section id="calculator-shift-distribution-panel" class="calculator-shift-distribution-panel" aria-labelledby="calculator-shift-distribution-title" hidden><div class="calculator-add-budget-carry-heading"><div><p class="calculator-operation-step">1. 分配する月と金額</p><h4 id="calculator-shift-distribution-title">予算設定済みの月へ分配</h4><p>移動先を選び、月ごとの金額を指定してください。</p></div><button id="calculator-shift-even-split" type="button" class="button small secondary">均等に配分</button></div><div id="calculator-shift-distribution-targets" class="calculator-add-budget-carry-sources" aria-live="polite"></div><p id="calculator-shift-distribution-summary" class="calculator-budget-change" aria-live="polite"></p></section>
-        <label id="calculator-shift-priority-field" class="calculator-budget-priority" hidden><span class="calculator-operation-step">2. 移す予算の優先順</span><select id="calculator-shift-priority"><option value="monthly">今月の予算から先に移す</option><option value="carry">持ち越し予算から先に移す</option></select></label>
-        <label class="calculator-budget-amount-field"><span class="field-label"><span class="calculator-operation-step">3. 移す金額</span><small>移動先の計画予算に加算されます</small></span><span class="calculator-budget-amount-input"><input id="calculator-shift-amount" type="number" min="1" step="1" inputmode="numeric"><i>円</i></span></label>
+        <section id="calculator-shift-distribution-panel" class="calculator-shift-distribution-panel" aria-labelledby="calculator-shift-distribution-title" hidden><div class="calculator-add-budget-carry-heading"><div><p class="calculator-operation-step">2. 分配する月と金額</p><h4 id="calculator-shift-distribution-title">未来の月へ分配</h4><p>計画がない月も含め、移動先と月ごとの金額を指定できます。</p></div><button id="calculator-shift-even-split" type="button" class="button small secondary">均等に配分</button></div><div id="calculator-shift-distribution-targets" class="calculator-add-budget-carry-sources" aria-live="polite"></div><p id="calculator-shift-distribution-summary" class="calculator-budget-change" aria-live="polite"></p></section>
+        <label id="calculator-shift-priority-field" class="calculator-budget-priority" hidden><span class="calculator-operation-step">3. 移す予算の優先順</span><select id="calculator-shift-priority"><option value="monthly">今月の予算から先に移す</option><option value="carry">持ち越し予算から先に移す</option></select></label>
         <p class="calculator-impact-label">4. シフト後の状態</p>
         <p id="calculator-shift-budget-summary" class="calculator-budget-change" aria-live="polite"></p>
         <p id="calculator-shift-forecast" class="calculator-return-forecast calculator-shift-forecast" aria-live="polite"></p>
@@ -168,6 +168,45 @@
       <div class="dialog-actions">
         <button id="memo-skip" type="button" class="button secondary">メモなしで保存</button>
         <button type="submit" class="button primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="overage-decision-dialog" class="sheet-dialog">
+    <form id="overage-decision-form" class="sheet-card decision-sheet">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="dialog-heading">
+        <div><p class="eyebrow">OVER BUDGET</p><h2>超過分をどこから引きますか？</h2></div>
+        <button type="button" class="icon-button" data-cancel-pending-transaction aria-label="入力を取り消す">×</button>
+      </div>
+      <p id="overage-decision-summary" class="dialog-summary"></p>
+      <div class="overage-decision-options" role="radiogroup" aria-label="超過分の処理方法">
+        <label class="overage-plan-option"><input type="radio" name="pending-overage-handling" value="nearest"><span><strong>直近の計画から順に引く</strong><small>次月度以降の近い計画から優先して調整します。</small></span></label>
+        <label class="overage-plan-option"><input type="radio" name="pending-overage-handling" value="even"><span><strong>残りの計画から平均して引く</strong><small>残りの月度へ、できるだけ均等に配分します。</small></span></label>
+        <label class="overage-plan-option"><input type="radio" name="pending-overage-handling" value="forecast"><span><strong>プロジェクト収支から引く</strong><small>未来の計画は変えず、見込み収支を下げます。</small></span></label>
+      </div>
+      <label class="plan-notification-toggle overage-remember-toggle">
+        <span class="category-daily-copy"><strong>今後もこの項目で同じ方法を使う</strong><span>次回から確認せずに適用します。支出項目の設定からいつでも変更できます。</span></span>
+        <input id="overage-decision-remember" class="daily-budget-toggle-input" type="checkbox" role="switch">
+        <span class="daily-budget-switch" aria-hidden="true"></span>
+      </label>
+      <p id="overage-decision-impact" class="calculator-return-forecast" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" data-cancel-pending-transaction>入力を取り消す</button>
+        <button type="submit" class="button primary">この方法で続ける</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="income-shortfall-dialog" class="sheet-dialog">
+    <form id="income-shortfall-form" class="sheet-card decision-sheet">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="dialog-heading"><div><p class="eyebrow">INCOME CHECK</p><h2>今月度は、まだ入力がありますか？</h2></div><button type="button" class="icon-button" data-cancel-pending-transaction aria-label="入力を取り消す">×</button></div>
+      <p id="income-shortfall-summary" class="dialog-summary"></p>
+      <p class="help-text">まだ入金予定がある場合は、計画額を見込みに維持します。今月はこれで完了する場合は、未達分を見込み収支から差し引きます。あとから追加入力すると、その分は見込み収支にも加算されます。</p>
+      <div class="income-shortfall-actions">
+        <button id="income-shortfall-more" type="button" class="button secondary">まだ入力する予定</button>
+        <button id="income-shortfall-complete" type="submit" class="button primary">今月はこれで完了</button>
       </div>
     </form>
   </dialog>
@@ -260,6 +299,15 @@
         <p><strong id="plan-scale-summary">上端 ￥100,000</strong><span id="plan-scale-step">棒は￥1,000刻み</span><span>金額欄は1円単位。棒は目盛り単位に丸めて表示します。</span></p>
       </div>
       <div id="monthly-plan-editor" class="monthly-plan-editor" aria-label="月ごとの計画金額"></div>
+      <section id="plan-overage-panel" class="plan-notification-panel" aria-labelledby="plan-overage-title" hidden>
+        <div class="section-copy"><p class="section-kicker">OVER BUDGET</p><h3 id="plan-overage-title">予算を超過したとき</h3><p>この設定は、変更後に入力する支出から適用します。過去の入力と計画調整は変更しません。</p></div>
+        <label><span class="field-label">超過分の処理方法</span><select id="plan-overage-handling"><option value="nearest">直近の計画から順に引く</option><option value="even">残りの計画から平均して引く</option><option value="forecast">プロジェクト収支から引く</option></select></label>
+        <label class="plan-notification-toggle">
+          <span class="category-daily-copy"><strong>入力時の確認を省略する</strong><span>無効の場合、超過するたびに処理方法を確認します。</span></span>
+          <input id="plan-overage-locked" class="daily-budget-toggle-input" type="checkbox" role="switch">
+          <span class="daily-budget-switch" aria-hidden="true"></span>
+        </label>
+      </section>
       <section class="plan-notification-panel" aria-labelledby="plan-notification-title">
         <div class="section-copy"><p class="section-kicker">REMINDER</p><h3 id="plan-notification-title">通知設定</h3><p>設定日を過ぎても当月の入力がないとき、入力画面の項目をやんわり点滅させます。</p></div>
         <label class="plan-notification-toggle">
@@ -294,7 +342,7 @@
       </div>
       <div class="version-summary">
         <span class="version-mark" aria-hidden="true">B−</span>
-        <div><span>アプリバージョン</span><strong id="app-version-name">v0.5.88</strong></div>
+        <div><span>アプリバージョン</span><strong id="app-version-name">v0.5.90</strong></div>
       </div>
       <p class="help-text">端末内のデータだけで動作する、オフライン対応の予算ベース家計簿です。</p>
       <p id="app-update-status" class="app-update-status" role="status">更新を確認できます。</p>

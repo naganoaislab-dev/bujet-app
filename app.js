@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.88";
+  const APP_VERSION = "0.5.90";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -23,6 +23,7 @@
   const OVERAGE_PLAN_HANDLING_FORECAST = "forecast";
   const OVERAGE_PLAN_HANDLING_NEAREST = "nearest";
   const OVERAGE_PLAN_HANDLING_EVEN = "even";
+  const OVERAGE_PLAN_HANDLINGS = Object.freeze([OVERAGE_PLAN_HANDLING_FORECAST, OVERAGE_PLAN_HANDLING_NEAREST, OVERAGE_PLAN_HANDLING_EVEN]);
   const REMINDER_WEEKDAY_LABELS = Object.freeze(["日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"]);
   const PLAN_AMOUNT_STEP = 100;
   const MIN_PLAN_SCALE_MAX = 100;
@@ -69,6 +70,8 @@
   const importFile = document.querySelector("#import-file");
   const calculatorDialog = document.querySelector("#calculator-dialog");
   const memoDialog = document.querySelector("#memo-dialog");
+  const overageDecisionDialog = document.querySelector("#overage-decision-dialog");
+  const incomeShortfallDialog = document.querySelector("#income-shortfall-dialog");
   const transactionDialog = document.querySelector("#transaction-dialog");
   const categoryDialog = document.querySelector("#category-dialog");
   const planDialog = document.querySelector("#plan-dialog");
@@ -106,12 +109,18 @@
   let unexpectedEntriesExpanded = false;
   let allTransactionsShown = false;
   let pendingTransaction = null;
+  let pendingTransactionEdit = null;
   let pendingTransactionEntryAnimation = null;
   let pendingTransactionSaving = false;
+  let pendingTransactionRememberOverageHandling = false;
+  let pendingIncomeShortfallQueue = [];
+  let pendingIncomeShortfallCurrent = null;
+  let pendingIncomeForecastClosureKeys = new Set();
   let editingPlanCategoryId = null;
   let planDraft = null;
   let planRuleDraft = null;
   let planScaleDraft = DEFAULT_PLAN_SCALE_MAX;
+  let planSaving = false;
   let planPointerGesture = null;
   let expenseReorderGesture = null;
   let expenseReorderSuppressClickUntil = 0;
@@ -122,12 +131,16 @@
   let calculatorAddBudgetMode = "new";
   let calculatorBudgetOperation = "";
   let calculatorShiftMode = "single";
+  let calculatorBudgetSaving = false;
   let lastRenderedDate = "";
   let nextDayRenderTimer = null;
   let serviceWorkerRegistration = null;
   let serviceWorkerUpdateRequested = false;
   let pendingEntryAnimation = null;
   let derivedDataCache = null;
+  let persistQueue = Promise.resolve();
+  let persistRevision = 0;
+  let entryAnimationGeneration = 0;
 
   // The entry screen and calculator both ask for the same month/category
   // aggregates many times.  With a long transaction history, recomputing
@@ -138,7 +151,9 @@
     derivedDataCache = {
       months: null,
       categoriesById: null,
+      transactionsIndexed: false,
       transactionsByMonth: new Map(),
+      transactionsByCategoryMonth: new Map(),
       actualAmounts: new Map(),
       latestEntryDates: new Map(),
       expensePlanScenarios: new Map(),
@@ -395,9 +410,9 @@
 
   function generatedPlanAmount(category, month) {
     const rule = category.planRule;
-    if (!rule) return Math.max(0, toInteger(category.defaultAmount));
+    if (!rule) return normalizePlanAmount(category, category.defaultAmount);
     const distance = monthDistance(rule.startMonth, month);
-    return distance >= 0 && distance % Math.max(1, toInteger(rule.interval, 1)) === 0 ? Math.max(0, toInteger(rule.amount)) : 0;
+    return distance >= 0 && distance % Math.max(1, toInteger(rule.interval, 1)) === 0 ? normalizePlanAmount(category, rule.amount) : 0;
   }
 
   function periodMonths() {
@@ -533,51 +548,176 @@
     return toInteger(state.plans[categoryId] && state.plans[categoryId][month], 0);
   }
 
-  function overagePlanHandling() {
-    const handling = state && state.settings && state.settings.overagePlanHandling;
-    return [OVERAGE_PLAN_HANDLING_FORECAST, OVERAGE_PLAN_HANDLING_NEAREST, OVERAGE_PLAN_HANDLING_EVEN].includes(handling)
-      ? handling
+  function categoryOveragePlanHandling(category) {
+    return category && OVERAGE_PLAN_HANDLINGS.includes(category.overagePlanHandling)
+      ? category.overagePlanHandling
       : OVERAGE_PLAN_HANDLING_NEAREST;
+  }
+
+  function transactionOveragePlanHandling(transaction, category) {
+    return transaction && OVERAGE_PLAN_HANDLINGS.includes(transaction.overagePlanHandling)
+      ? transaction.overagePlanHandling
+      : categoryOveragePlanHandling(category);
+  }
+
+  function nextOverageDecisionOrder() {
+    let implicitDecisionCount = 0;
+    let largestExplicitOrder = 0;
+    state.transactions.forEach((transaction) => {
+      if (transaction.direction !== "expense" || toInteger(transaction.overageDecisionVersion) <= 0) return;
+      const category = categoryById(transaction.categoryId);
+      transactionOverageDecisionParts(transaction, category).forEach((part) => {
+        const explicitOrder = Math.max(0, toInteger(part.decisionOrder));
+        if (explicitOrder > 0) largestExplicitOrder = Math.max(largestExplicitOrder, explicitOrder);
+        else implicitDecisionCount += 1;
+      });
+    });
+    // Legacy decisions do not have a stable clock-independent order. Treat all
+    // of them as an immutable prefix, then append every new decision after it.
+    return Math.max(implicitDecisionCount, largestExplicitOrder) + 1;
+  }
+
+  function createOverageDecisionPart(amount, handling, decidedAt = new Date().toISOString()) {
+    return {
+      id: makeId("overage-decision"),
+      amount: Math.max(0, toInteger(amount)),
+      overagePlanHandling: OVERAGE_PLAN_HANDLINGS.includes(handling) ? handling : OVERAGE_PLAN_HANDLING_NEAREST,
+      decidedAt,
+      decisionOrder: nextOverageDecisionOrder()
+    };
+  }
+
+  function transactionOverageDecisionParts(transaction, category) {
+    const total = Math.max(0, toInteger(transaction && transaction.amount));
+    if (!transaction || total <= 0) return [];
+    const fallbackHandling = transactionOveragePlanHandling(transaction, category);
+    const rawParts = toInteger(transaction.overageDecisionVersion) >= 2 && Array.isArray(transaction.overageDecisionParts)
+      ? transaction.overageDecisionParts
+      : [];
+    if (!rawParts.length) {
+      return [{
+        id: `${transaction.id || "transaction"}-decision`,
+        amount: total,
+        overagePlanHandling: fallbackHandling,
+        decidedAt: transaction.createdAt || transaction.updatedAt || "",
+        decisionOrder: 0,
+        legacyBatch: toInteger(transaction.overageDecisionVersion) <= 0
+      }];
+    }
+    let remaining = total;
+    const parts = [];
+    rawParts.forEach((part, index) => {
+      if (remaining <= 0) return;
+      const amount = Math.min(remaining, Math.max(0, toInteger(part && part.amount)));
+      if (amount <= 0) return;
+      parts.push({
+        id: String(part.id || `${transaction.id || "transaction"}-decision-${index}`),
+        amount,
+        overagePlanHandling: OVERAGE_PLAN_HANDLINGS.includes(part.overagePlanHandling) ? part.overagePlanHandling : fallbackHandling,
+        decidedAt: String(part.decidedAt || transaction.createdAt || transaction.updatedAt || ""),
+        decisionOrder: Math.max(0, toInteger(part.decisionOrder)),
+        legacyBatch: part.legacyBatch === true
+      });
+      remaining -= amount;
+    });
+    if (remaining > 0) {
+      parts.push({
+        id: `${transaction.id || "transaction"}-decision-rest`,
+        amount: remaining,
+        overagePlanHandling: fallbackHandling,
+        decidedAt: transaction.updatedAt || transaction.createdAt || "",
+        decisionOrder: 0,
+        legacyBatch: false
+      });
+    }
+    return parts;
+  }
+
+  function adjustedOverageDecisionParts(previousTransaction, candidateAmount, category, sameBudget) {
+    const nextAmount = Math.max(0, toInteger(candidateAmount));
+    const currentHandling = categoryOveragePlanHandling(category);
+    if (!sameBudget) {
+      const part = createOverageDecisionPart(nextAmount, currentHandling);
+      return { parts: part.amount > 0 ? [part] : [], decisionPartId: part.id };
+    }
+    const previousParts = transactionOverageDecisionParts(previousTransaction, category).map((part) => ({ ...part }));
+    const previousAmount = Math.max(0, toInteger(previousTransaction.amount));
+    if (nextAmount <= previousAmount) {
+      let remaining = nextAmount;
+      const parts = [];
+      previousParts.forEach((part) => {
+        if (remaining <= 0) return;
+        const amount = Math.min(remaining, part.amount);
+        if (amount > 0) parts.push({ ...part, amount });
+        remaining -= amount;
+      });
+      return { parts, decisionPartId: "" };
+    }
+    const added = createOverageDecisionPart(nextAmount - previousAmount, currentHandling);
+    return { parts: [...previousParts, added], decisionPartId: added.id };
+  }
+
+  function applyPendingOverageHandling(handling) {
+    if (!pendingTransaction) return;
+    const selected = OVERAGE_PLAN_HANDLINGS.includes(handling) ? handling : OVERAGE_PLAN_HANDLING_NEAREST;
+    pendingTransaction.overagePlanHandling = selected;
+    if (pendingTransactionEdit && pendingTransactionEdit.decisionPartId && Array.isArray(pendingTransaction.overageDecisionParts)) {
+      pendingTransaction.overageDecisionParts = pendingTransaction.overageDecisionParts.map((part) => (
+        part.id === pendingTransactionEdit.decisionPartId ? { ...part, overagePlanHandling: selected } : part
+      ));
+    }
+  }
+
+  function overagePlanHandlingLabel(handling, compact = false) {
+    if (handling === OVERAGE_PLAN_HANDLING_FORECAST) return compact ? "見込み収支" : "プロジェクト収支から引く";
+    if (handling === OVERAGE_PLAN_HANDLING_EVEN) return compact ? "残りへ均等" : "残りの計画から平均して引く";
+    return compact ? "直近の計画" : "直近の計画から順に引く";
   }
 
   // Keep configured plans immutable when an entry exceeds its budget.  The
   // scenario supplies a single effective plan for every view, while edits and
   // deletions automatically restore the original plan without reverse-writing
   // historical adjustments into state.plans.
-  function expensePlanScenario(categoryId, extraExpense = null) {
+  function expensePlanScenario(categoryId, extraExpense = null, extraHandling = null, configuredOverride = null) {
     const cache = derivedCache();
-    const canUseCache = extraExpense === null;
+    const canUseCache = extraExpense === null && configuredOverride === null;
     if (canUseCache && cache.expensePlanScenarios.has(categoryId)) return cache.expensePlanScenarios.get(categoryId);
     const category = categoryById(categoryId);
     const months = periodMonths();
     const zeroByMonth = () => Object.fromEntries(months.map((month) => [month, 0]));
+    const configuredFor = (month) => configuredOverride && Object.prototype.hasOwnProperty.call(configuredOverride, month)
+      ? Math.max(0, toInteger(configuredOverride[month]))
+      : Math.max(0, configuredPlanAmount(categoryId, month));
     const fallback = {
-      effectivePlans: Object.fromEntries(months.map((month) => [month, configuredPlanAmount(categoryId, month)])),
+      effectivePlans: Object.fromEntries(months.map((month) => [month, configuredFor(month)])),
       deductions: zeroByMonth(),
       carryBefore: zeroByMonth(),
-      deficits: zeroByMonth()
+      deficits: zeroByMonth(),
+      handlingByMonth: Object.fromEntries(months.map((month) => [month, []])),
+      unallocatedPlanDeficits: []
     };
     if (!isBudgetedExpenseCategory(category)) {
       if (canUseCache) cache.expensePlanScenarios.set(categoryId, fallback);
       return fallback;
     }
 
-    const handling = overagePlanHandling();
     const deductions = zeroByMonth();
     const effectivePlans = zeroByMonth();
     const carryBefore = zeroByMonth();
     const deficits = zeroByMonth();
+    const handlingByMonth = Object.fromEntries(months.map((month) => [month, []]));
+    const unallocatedPlanDeficits = [];
     let carry = 0;
 
-    const allocateFromFuturePlans = (amount, startIndex) => {
+    const allocateFromFuturePlans = (amount, startIndex, handling) => {
       let remaining = amount;
       const candidates = () => months.slice(startIndex).filter((month) => (
-        Math.max(0, configuredPlanAmount(categoryId, month) - deductions[month]) > 0
+        Math.max(0, configuredFor(month) - deductions[month]) > 0
       ));
       if (handling === OVERAGE_PLAN_HANDLING_NEAREST) {
         candidates().forEach((month) => {
           if (remaining <= 0) return;
-          const available = Math.max(0, configuredPlanAmount(categoryId, month) - deductions[month]);
+          const available = Math.max(0, configuredFor(month) - deductions[month]);
           const moved = Math.min(available, remaining);
           deductions[month] += moved;
           remaining -= moved;
@@ -597,7 +737,7 @@
           const desired = share + (remainder > 0 ? 1 : 0);
           if (remainder > 0) remainder -= 1;
           if (desired <= 0) return;
-          const available = Math.max(0, configuredPlanAmount(categoryId, month) - deductions[month]);
+          const available = Math.max(0, configuredFor(month) - deductions[month]);
           const moved = Math.min(available, desired);
           deductions[month] += moved;
           remaining -= moved;
@@ -609,31 +749,75 @@
     };
 
     months.forEach((month, index) => {
-      const rawPlan = Math.max(0, configuredPlanAmount(categoryId, month));
+      const rawPlan = configuredFor(month);
       const plan = Math.max(0, rawPlan - deductions[month]);
-      const pendingAmount = extraExpense
-        && extraExpense.categoryId === categoryId
-        && extraExpense.month === month
-        ? Math.max(0, toInteger(extraExpense.amount))
-        : 0;
-      const actual = Math.max(0, actualAmount(categoryId, month)) + pendingAmount;
       carryBefore[month] = carry;
       effectivePlans[month] = plan;
-      const balance = carry + plan - actual;
-      if (balance >= 0) {
-        carry = balance;
-        return;
+      let available = carry + plan;
+      const consume = (amount, handling) => {
+        const requested = Math.max(0, toInteger(amount));
+        if (requested <= 0) return;
+        const deficit = Math.max(0, requested - available);
+        available = Math.max(0, available - requested);
+        if (deficit <= 0) return;
+        deficits[month] += deficit;
+        if (!handlingByMonth[month].includes(handling)) handlingByMonth[month].push(handling);
+        if (handling !== OVERAGE_PLAN_HANDLING_FORECAST) {
+          const unallocated = allocateFromFuturePlans(deficit, index + 1, handling);
+          if (unallocated > 0) unallocatedPlanDeficits.push({ month, handling, amount: unallocated });
+        }
+      };
+      const transactions = transactionsForCategoryMonth(categoryId, month, "expense");
+      // Legacy data was calculated once per category/month.  Keep that exact
+      // grouping during migration so even-distribution rounding does not move.
+      const versionedDecisionEvents = transactions
+        .filter((transaction) => toInteger(transaction.overageDecisionVersion) > 0)
+        .flatMap((transaction, transactionIndex) => transactionOverageDecisionParts(transaction, category).map((part, partIndex) => ({
+          ...part,
+          transactionIndex,
+          partIndex
+        })));
+      const legacyBatchEvents = [
+        ...transactions.flatMap((transaction, transactionIndex) => (
+          toInteger(transaction.overageDecisionVersion) <= 0
+            ? [{
+              amount: Math.max(0, toInteger(transaction.amount)),
+              overagePlanHandling: transactionOveragePlanHandling(transaction, category),
+              transactionIndex,
+              partIndex: -1
+            }]
+            : []
+        )),
+        ...versionedDecisionEvents.filter((part) => part.legacyBatch)
+      ]
+        .sort((left, right) => left.transactionIndex - right.transactionIndex || left.partIndex - right.partIndex);
+      if (legacyBatchEvents.length) {
+        consume(
+          legacyBatchEvents.reduce((sum, event) => sum + Math.max(0, toInteger(event.amount)), 0),
+          legacyBatchEvents[0].overagePlanHandling
+        );
       }
-
-      const deficit = -balance;
-      deficits[month] = deficit;
-      // A deficit is settled immediately by either the project forecast or a
-      // future plan.  It must not become a second carryover debt as well.
-      carry = 0;
-      if (handling !== OVERAGE_PLAN_HANDLING_FORECAST) allocateFromFuturePlans(deficit, index + 1);
+      let implicitDecisionOrder = 0;
+      const decisionEvents = versionedDecisionEvents
+        .filter((part) => !part.legacyBatch)
+        .map((part) => ({
+          ...part,
+          hasExplicitDecisionOrder: part.decisionOrder > 0,
+          effectiveDecisionOrder: part.decisionOrder > 0 ? part.decisionOrder : ++implicitDecisionOrder
+        }))
+        .sort((left, right) => Number(left.hasExplicitDecisionOrder) - Number(right.hasExplicitDecisionOrder)
+          || left.effectiveDecisionOrder - right.effectiveDecisionOrder
+          || left.transactionIndex - right.transactionIndex
+          || left.partIndex - right.partIndex
+          || String(left.id).localeCompare(String(right.id)));
+      decisionEvents.forEach((part) => consume(part.amount, part.overagePlanHandling));
+      if (extraExpense && extraExpense.categoryId === categoryId && extraExpense.month === month) {
+        consume(extraExpense.amount, OVERAGE_PLAN_HANDLINGS.includes(extraHandling) ? extraHandling : categoryOveragePlanHandling(category));
+      }
+      carry = available;
     });
 
-    const scenario = { effectivePlans, deductions, carryBefore, deficits };
+    const scenario = { effectivePlans, deductions, carryBefore, deficits, handlingByMonth, unallocatedPlanDeficits };
     if (canUseCache) cache.expensePlanScenarios.set(categoryId, scenario);
     return scenario;
   }
@@ -641,64 +825,125 @@
   // The editor presents effective plans, after automatic overage deductions.
   // Convert those values back to configured plans on save without moving any
   // untouched future effective plan.
-  function configuredPlansFromEffectiveDraft(categoryId, effectiveDraft, isBudgetedExpense = null) {
-    const category = categoryById(categoryId);
+  function configuredPlansFromEffectiveDraft(categoryId, effectiveDraft, isBudgetedExpense = null, categoryOverride = null) {
+    const category = categoryOverride || categoryById(categoryId);
     const months = periodMonths();
-    const configured = Object.fromEntries(months.map((month) => [month, Math.max(0, toInteger(effectiveDraft[month]))]));
+    const normalizedDraft = Object.fromEntries(months.map((month) => [month, normalizePlanAmount(category, effectiveDraft[month])]));
     const shouldApplyOverage = isBudgetedExpense === null ? isBudgetedExpenseCategory(category) : isBudgetedExpense;
-    if (!shouldApplyOverage) return configured;
+    if (!shouldApplyOverage) return normalizedDraft;
 
-    const handling = overagePlanHandling();
-    const deductions = Object.fromEntries(months.map((month) => [month, 0]));
-    let carry = 0;
-
-    const availableFor = (month) => Math.max(0, Math.max(
-      toInteger(effectiveDraft[month]),
+    // Solve configured = desired effective + automatic deductions.  Replaying
+    // the stored per-entry decisions keeps untouched months stable even when a
+    // user edits a month that previously caused an overage.
+    const currentScenario = expensePlanScenario(categoryId);
+    let configured = Object.fromEntries(months.map((month) => [month, Math.max(0,
       configuredPlanAmount(categoryId, month)
-    ) - deductions[month]);
-    const allocateFromFutureEffectivePlans = (amount, startIndex) => {
-      let remaining = amount;
-      const candidates = () => months.slice(startIndex).filter((month) => availableFor(month) > 0);
-      if (handling === OVERAGE_PLAN_HANDLING_NEAREST) {
-        candidates().forEach((month) => {
-          if (remaining <= 0) return;
-          const moved = Math.min(availableFor(month), remaining);
-          deductions[month] += moved;
-          remaining -= moved;
-        });
-        return;
-      }
-      while (remaining > 0) {
-        const availableMonths = candidates();
-        if (!availableMonths.length) break;
-        const share = Math.floor(remaining / availableMonths.length);
-        let remainder = remaining % availableMonths.length;
-        let movedThisRound = 0;
-        availableMonths.forEach((month) => {
-          const desired = share + (remainder > 0 ? 1 : 0);
+      + toInteger(normalizedDraft[month])
+      - toInteger(currentScenario.effectivePlans[month])
+    )]));
+    for (let attempt = 0; attempt < 64; attempt += 1) {
+      const scenario = expensePlanScenario(categoryId, null, null, configured);
+      const next = Object.fromEntries(months.map((month) => [
+        month,
+        Math.max(0, toInteger(normalizedDraft[month])) + Math.max(0, toInteger(scenario.deductions[month]))
+      ]));
+      // If a large historical overage has exhausted every eligible future
+      // plan, a one-yen-at-a-time fixed point can take millions of rounds.
+      // Seed the still-unallocated amount into months that really have (or are
+      // being given) a plan; the next replay places it according to the exact
+      // per-entry policy and verifies the resulting effective values.
+      (scenario.unallocatedPlanDeficits || []).forEach((deficit) => {
+        const sourceIndex = months.indexOf(deficit.month);
+        const candidates = months.slice(sourceIndex + 1).filter((month) => (
+          toInteger(normalizedDraft[month]) > 0 || configuredPlanAmount(categoryId, month) > 0
+        ));
+        if (!candidates.length) return;
+        let remaining = Math.max(0, toInteger(deficit.amount));
+        if (deficit.handling === OVERAGE_PLAN_HANDLING_NEAREST) {
+          next[candidates[0]] += remaining;
+          return;
+        }
+        const share = Math.floor(remaining / candidates.length);
+        let remainder = remaining % candidates.length;
+        candidates.forEach((month) => {
+          next[month] += share + (remainder > 0 ? 1 : 0);
           if (remainder > 0) remainder -= 1;
-          if (desired <= 0) return;
-          const moved = Math.min(availableFor(month), desired);
-          deductions[month] += moved;
-          remaining -= moved;
-          movedThisRound += moved;
         });
-        if (movedThisRound <= 0) break;
+      });
+      const stable = months.every((month) => next[month] === configured[month]);
+      configured = next;
+      if (stable) {
+        const verification = expensePlanScenario(categoryId, null, null, configured);
+        if (!months.every((month) => toInteger(verification.effectivePlans[month]) === toInteger(normalizedDraft[month]))) {
+          throw new Error("過去の超過を保ったまま計画を保存できませんでした。計画額を確認してください。");
+        }
+        return configured;
       }
-    };
+    }
+    throw new Error("計画の再計算が完了しませんでした。金額を確認してもう一度お試しください。");
+  }
 
-    months.forEach((month, index) => {
-      const effective = Math.max(0, toInteger(effectiveDraft[month]));
-      configured[month] = effective + deductions[month];
-      const balance = carry + effective - Math.max(0, actualAmount(categoryId, month));
-      if (balance >= 0) {
-        carry = balance;
-        return;
-      }
-      carry = 0;
-      if (handling !== OVERAGE_PLAN_HANDLING_FORECAST) allocateFromFutureEffectivePlans(-balance, index + 1);
+  // Calculator budget tools describe their changes with the effective plans
+  // shown in the UI. A configured plan can be larger than that visible value
+  // when historical overages are being deducted from it, so applying the same
+  // delta directly to state.plans can move a different amount (especially when
+  // an even deduction is redistributed). Stage every affected category as a
+  // complete effective draft, invert it once, then verify the exact requested
+  // values before allowing the mutation to stand.
+  function applyEffectivePlanDeltas(deltas) {
+    const months = periodMonths();
+    const validMonths = new Set(months);
+    const changesByCategory = new Map();
+    (Array.isArray(deltas) ? deltas : []).forEach((delta) => {
+      const categoryId = delta && delta.categoryId;
+      const month = delta && delta.month;
+      const amount = toInteger(delta && delta.amount);
+      if (!amount) return;
+      const category = categoryById(categoryId);
+      if (!isBudgetedExpenseCategory(category)) throw new Error("予算を変更する支出項目を確認してください");
+      if (!validMonths.has(month)) throw new Error("予算を変更する月を確認してください");
+      if (!changesByCategory.has(categoryId)) changesByCategory.set(categoryId, new Map());
+      const changes = changesByCategory.get(categoryId);
+      changes.set(month, toInteger(changes.get(month)) + amount);
     });
-    return configured;
+
+    const staged = new Map();
+    changesByCategory.forEach((changes, categoryId) => {
+      const desired = Object.fromEntries(months.map((month) => [month, planAmount(categoryId, month)]));
+      changes.forEach((change, month) => {
+        const next = toInteger(desired[month]) + change;
+        if (next < 0) throw new Error("変更後の予算が0円を下回ります。金額を確認してください");
+        desired[month] = next;
+      });
+      staged.set(categoryId, {
+        desired,
+        configured: configuredPlansFromEffectiveDraft(categoryId, desired)
+      });
+    });
+
+    const previousPlans = new Map(Array.from(staged.keys()).map((categoryId) => [
+      categoryId,
+      Object.prototype.hasOwnProperty.call(state.plans, categoryId) ? { ...(state.plans[categoryId] || {}) } : null
+    ]));
+    try {
+      staged.forEach(({ configured }, categoryId) => {
+        state.plans[categoryId] = { ...(state.plans[categoryId] || {}), ...configured };
+      });
+      resetDerivedDataCache();
+      staged.forEach(({ desired }, categoryId) => {
+        if (!months.every((month) => toInteger(planAmount(categoryId, month)) === toInteger(desired[month]))) {
+          throw new Error("指定した金額どおりに予算を変更できませんでした。計画を確認してください");
+        }
+      });
+    } catch (error) {
+      previousPlans.forEach((plans, categoryId) => {
+        if (plans === null) delete state.plans[categoryId];
+        else state.plans[categoryId] = plans;
+      });
+      resetDerivedDataCache();
+      throw error;
+    }
+    return staged;
   }
 
   function planAmount(categoryId, month) {
@@ -795,25 +1040,64 @@
   function transactionsForMonth(month, direction = null) {
     const cache = derivedCache();
     const key = `${month}:${direction || "all"}`;
-    if (cache.transactionsByMonth.has(key)) return [...cache.transactionsByMonth.get(key)];
-    const transactions = state.transactions.filter((transaction) => {
-      if (direction && transaction.direction !== direction) return false;
-      if (transaction.date < state.settings.startDate || transaction.date > state.settings.endDate) return false;
-      return periodForDate(transaction.date) === month;
-    });
-    cache.transactionsByMonth.set(key, transactions);
-    return [...transactions];
+    if (!cache.transactionsIndexed) {
+      // Index the whole transaction list once. The former implementation
+      // rescanned every record for every month; a 120-month project therefore
+      // multiplied the cost of opening the input screen and its calculator.
+      state.transactions.forEach((transaction) => {
+        if (!transaction || transaction.date < state.settings.startDate || transaction.date > state.settings.endDate) return;
+        const transactionMonth = periodForDate(transaction.date);
+        [`${transactionMonth}:all`, `${transactionMonth}:${transaction.direction}`].forEach((indexKey) => {
+          if (!cache.transactionsByMonth.has(indexKey)) cache.transactionsByMonth.set(indexKey, []);
+          cache.transactionsByMonth.get(indexKey).push(transaction);
+        });
+        const categoryIndexKey = `${transaction.categoryId}\u0000${transactionMonth}\u0000${transaction.direction}`;
+        if (!cache.transactionsByCategoryMonth.has(categoryIndexKey)) cache.transactionsByCategoryMonth.set(categoryIndexKey, []);
+        cache.transactionsByCategoryMonth.get(categoryIndexKey).push(transaction);
+        const categoryMonthKey = `${transaction.categoryId}:${transactionMonth}`;
+        cache.actualAmounts.set(categoryMonthKey, toInteger(cache.actualAmounts.get(categoryMonthKey)) + toInteger(transaction.amount));
+        const enteredOn = isValidDateKey(transaction.enteredOn) ? transaction.enteredOn : transaction.date;
+        if (enteredOn > String(cache.latestEntryDates.get(categoryMonthKey) || "")) cache.latestEntryDates.set(categoryMonthKey, enteredOn);
+      });
+      cache.transactionsByCategoryMonth.forEach((transactions) => transactions.sort((left, right) => (
+        String(left.createdAt).localeCompare(String(right.createdAt)) || String(left.id).localeCompare(String(right.id))
+      )));
+      cache.transactionsIndexed = true;
+    }
+    return [...(cache.transactionsByMonth.get(key) || [])];
+  }
+
+  function transactionsForCategoryMonth(categoryId, month, direction) {
+    const cache = derivedCache();
+    if (!cache.transactionsIndexed) transactionsForMonth(month);
+    const key = `${categoryId}\u0000${month}\u0000${direction}`;
+    return cache.transactionsByCategoryMonth.get(key) || [];
   }
 
   function actualAmount(categoryId, month) {
     const cache = derivedCache();
     const key = `${categoryId}:${month}`;
     if (cache.actualAmounts.has(key)) return cache.actualAmounts.get(key);
-    const amount = transactionsForMonth(month)
-      .filter((transaction) => transaction.categoryId === categoryId)
-      .reduce((sum, transaction) => sum + toInteger(transaction.amount), 0);
+    transactionsForMonth(month);
+    if (cache.actualAmounts.has(key)) return cache.actualAmounts.get(key);
+    const amount = 0;
     cache.actualAmounts.set(key, amount);
     return amount;
+  }
+
+  function incomeForecastClosureKey(categoryId, month) {
+    return `${categoryId}|${month}`;
+  }
+
+  function incomeForecastIsClosed(categoryId, month) {
+    return state.incomeForecastClosures && state.incomeForecastClosures[incomeForecastClosureKey(categoryId, month)] === true;
+  }
+
+  function setIncomeForecastClosed(categoryId, month, closed) {
+    if (!state.incomeForecastClosures || typeof state.incomeForecastClosures !== "object") state.incomeForecastClosures = {};
+    const key = incomeForecastClosureKey(categoryId, month);
+    if (closed) state.incomeForecastClosures[key] = true;
+    else delete state.incomeForecastClosures[key];
   }
 
   function normalizeReminderConfig(value) {
@@ -831,12 +1115,9 @@
     const cache = derivedCache();
     const key = `${categoryId}:${month}`;
     if (cache.latestEntryDates.has(key)) return cache.latestEntryDates.get(key);
-    const latest = transactionsForMonth(month)
-      .filter((transaction) => transaction.categoryId === categoryId)
-      .reduce((latest, transaction) => {
-        const enteredOn = isValidDateKey(transaction.enteredOn) ? transaction.enteredOn : transaction.date;
-        return enteredOn > latest ? enteredOn : latest;
-      }, "");
+    transactionsForMonth(month);
+    if (cache.latestEntryDates.has(key)) return cache.latestEntryDates.get(key);
+    const latest = "";
     cache.latestEntryDates.set(key, latest);
     return latest;
   }
@@ -952,8 +1233,8 @@
         : today;
     const stats = categoryBudgetStats(category.id, month);
     const daysRemaining = inclusiveDaysBetween(budgetDate, range.end);
-    const spentToday = transactionsForMonth(month)
-      .filter((transaction) => transaction.categoryId === category.id && transaction.enteredOn === budgetDate)
+    const spentToday = transactionsForCategoryMonth(category.id, month, "expense")
+      .filter((transaction) => transaction.enteredOn === budgetDate)
       .reduce((sum, transaction) => sum + toInteger(transaction.amount), 0);
     const dailyStartingBudget = Math.floor((stats.monthlyRemaining + spentToday) / daysRemaining);
     return {
@@ -975,7 +1256,11 @@
     const incomeForecast = incomeCategories.reduce((sum, category) => {
       const planned = activeIncomePlanAmount(category, month);
       const actual = actualAmount(category.id, month);
-      return sum + (isSignedIncomeCategory(category) ? (actual !== 0 ? actual : planned) : Math.max(actual, planned));
+      if (isSignedIncomeCategory(category)) {
+        const hasEntries = transactionsForCategoryMonth(category.id, month, "income").length > 0;
+        return sum + (hasEntries ? actual : planned);
+      }
+      return sum + (incomeForecastIsClosed(category.id, month) ? actual : Math.max(actual, planned));
     }, 0);
     const expenseTransactions = transactionsForMonth(month, "expense");
     const expenseActual = expenseTransactions.reduce((sum, item) => sum + toInteger(item.amount), 0);
@@ -1072,14 +1357,14 @@
     return current - Math.max(0, toInteger(amount));
   }
 
-  function projectEndForecastAfterBudgetedExpense(categoryId, month, amount) {
+  function projectEndForecastAfterBudgetedExpense(categoryId, month, amount, handling = null) {
     const months = periodMonths();
     if (!months.length) return projectEndForecastFromAggregates([]);
     const current = projectEndForecastFromAggregates(months.map(aggregateMonth));
     const category = categoryById(categoryId);
     if (!isBudgetedExpenseCategory(category)) return current;
     const beforeScenario = expensePlanScenario(categoryId);
-    const afterScenario = expensePlanScenario(categoryId, { categoryId, month, amount });
+    const afterScenario = expensePlanScenario(categoryId, { categoryId, month, amount }, handling);
     const planDelta = months.reduce((sum, period) => (
       sum + toInteger(afterScenario.effectivePlans[period]) - toInteger(beforeScenario.effectivePlans[period])
     ), 0);
@@ -1089,7 +1374,7 @@
     return current - planDelta - deficitDelta;
   }
 
-  function normalExpenseOverageProjection(category, sourceMonth, amount) {
+  function normalExpenseOverageProjection(category, sourceMonth, amount, handling = null) {
     const requested = Math.max(0, toInteger(amount));
     if (!isBudgetedExpenseCategory(category) || requested <= 0) {
       const forecast = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
@@ -1107,7 +1392,8 @@
     }
     const currentSources = calculatorBudgetSources(category, sourceMonth);
     const beforeScenario = expensePlanScenario(category.id);
-    const afterScenario = expensePlanScenario(category.id, { categoryId: category.id, month: sourceMonth, amount: requested });
+    const selectedHandling = OVERAGE_PLAN_HANDLINGS.includes(handling) ? handling : categoryOveragePlanHandling(category);
+    const afterScenario = expensePlanScenario(category.id, { categoryId: category.id, month: sourceMonth, amount: requested }, selectedHandling);
     const sourceIndex = periodMonths().indexOf(sourceMonth);
     const futurePlans = periodMonths().slice(sourceIndex + 1).map((month) => {
       const before = Math.max(0, toInteger(beforeScenario.effectivePlans[month]));
@@ -1121,7 +1407,7 @@
     const futureCovered = futurePlans.reduce((sum, plan) => sum + plan.amount, 0);
     const unallocated = Math.max(0, planAdjustmentAmount - futureCovered);
     const forecastBefore = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
-    const forecastAfter = projectEndForecastAfterBudgetedExpense(category.id, sourceMonth, requested);
+    const forecastAfter = projectEndForecastAfterBudgetedExpense(category.id, sourceMonth, requested, selectedHandling);
     return {
       currentAvailable: currentSources.total,
       currentOverage,
@@ -1131,7 +1417,8 @@
       uncovered: unallocated,
       forecastBefore,
       forecastAfter,
-      forecastImpact: Math.max(0, forecastBefore - forecastAfter)
+      forecastImpact: Math.max(0, forecastBefore - forecastAfter),
+      overagePlanHandling: selectedHandling
     };
   }
 
@@ -1238,7 +1525,10 @@
       if (!isCurrentPendingTransaction()) return;
       // メモ画面を開けなかった入力は一切確定しません。カードだけが変わる状態を防ぎます。
       pendingTransaction = null;
+      pendingTransactionEdit = null;
       pendingTransactionEntryAnimation = null;
+      pendingTransactionRememberOverageHandling = false;
+      resetPendingIncomeShortfallState();
       pendingTransactionSaving = false;
       showToast("メモ画面を開けなかったため、入力は保存していません。もう一度お試しください。");
     }, 0);
@@ -1450,11 +1740,249 @@
 
   async function persist(message = "保存しました") {
     resetDerivedDataCache();
+    // Reconciliation belongs to the snapshot being committed.  Do not leave
+    // its provisional result on the live object while IndexedDB is pending:
+    // callers intentionally roll their own changes back when a save fails,
+    // and an eagerly-mutated carry floor would otherwise escape that rollback.
+    const liveBudgetAdditions = state.budgetAdditions;
     reconcileBudgetAdditionCarryUsageFloors();
-    state = await window.BudgetDB.saveState(state, currentProject && currentProject.id);
+    const revision = ++persistRevision;
+    const projectId = currentProject && currentProject.id;
+    const snapshot = JSON.parse(JSON.stringify(state));
+    state.budgetAdditions = liveBudgetAdditions;
     resetDerivedDataCache();
-    syncCurrentProjectPeriod();
-    showToast(message);
+    const saveTask = persistQueue.then(() => window.BudgetDB.saveState(snapshot, projectId));
+    persistQueue = saveTask.catch(() => undefined);
+    const savedState = await saveTask;
+    if (revision === persistRevision && currentProject && currentProject.id === projectId) {
+      state = savedState;
+      resetDerivedDataCache();
+      syncCurrentProjectPeriod();
+      showToast(message);
+    }
+    return savedState;
+  }
+
+  function resetPendingIncomeShortfallState() {
+    pendingIncomeShortfallQueue = [];
+    pendingIncomeShortfallCurrent = null;
+    pendingIncomeForecastClosureKeys = new Set();
+  }
+
+  function cancelPendingTransaction() {
+    pendingTransaction = null;
+    pendingTransactionEdit = null;
+    pendingTransactionEntryAnimation = null;
+    pendingTransactionRememberOverageHandling = false;
+    resetPendingIncomeShortfallState();
+    pendingTransactionSaving = false;
+    [overageDecisionDialog, incomeShortfallDialog, memoDialog].forEach((dialog) => {
+      if (dialog) closeDialog(dialog);
+    });
+  }
+
+  function pendingTransactionEditExpenseProjection(category, handling = null) {
+    if (!pendingTransaction || !pendingTransactionEdit || !isBudgetedExpenseCategory(category)) return null;
+    const transactionIndex = state.transactions.findIndex((item) => item.id === pendingTransactionEdit.transactionId);
+    if (transactionIndex < 0) return null;
+    const originalTransaction = state.transactions[transactionIndex];
+    const sourceMonth = periodForDate(pendingTransaction.date);
+    const months = periodMonths();
+    const sourceIndex = months.indexOf(sourceMonth);
+    const selectedHandling = OVERAGE_PLAN_HANDLINGS.includes(handling) ? handling : categoryOveragePlanHandling(category);
+    const beforeScenario = expensePlanScenario(category.id);
+    const currentSources = calculatorBudgetSources(category, sourceMonth);
+    const forecastBefore = projectEndForecastFromAggregates(months.map(aggregateMonth));
+    let afterScenario;
+    let forecastAfter;
+
+    try {
+      const projectedTransaction = {
+        ...pendingTransaction,
+        overagePlanHandling: selectedHandling
+      };
+      if (pendingTransactionEdit.decisionPartId && Array.isArray(projectedTransaction.overageDecisionParts)) {
+        projectedTransaction.overageDecisionParts = projectedTransaction.overageDecisionParts.map((part) => (
+          part.id === pendingTransactionEdit.decisionPartId ? { ...part, overagePlanHandling: selectedHandling } : part
+        ));
+      }
+      state.transactions[transactionIndex] = {
+        ...projectedTransaction
+      };
+      resetDerivedDataCache();
+      afterScenario = expensePlanScenario(category.id);
+      forecastAfter = projectEndForecastFromAggregates(months.map(aggregateMonth));
+    } finally {
+      state.transactions[transactionIndex] = originalTransaction;
+      resetDerivedDataCache();
+    }
+
+    const futurePlans = sourceIndex < 0 ? [] : months.slice(sourceIndex + 1).map((month) => {
+      const before = Math.max(0, toInteger(beforeScenario.effectivePlans[month]));
+      const after = Math.max(0, toInteger(afterScenario.effectivePlans[month]));
+      return { month, categoryName: category.name, before, after, amount: Math.max(0, before - after) };
+    }).filter((plan) => plan.amount > 0);
+    const beforeTargetDeficit = Math.max(0, toInteger(beforeScenario.deficits[sourceMonth]));
+    const afterTargetDeficit = Math.max(0, toInteger(afterScenario.deficits[sourceMonth]));
+    const currentOverage = Math.max(0, afterTargetDeficit - beforeTargetDeficit);
+    const futureCovered = futurePlans.reduce((sum, plan) => sum + plan.amount, 0);
+    return {
+      currentAvailable: currentSources.total,
+      currentOverage,
+      planAdjustmentAmount: currentOverage,
+      futurePlans,
+      futureCovered,
+      uncovered: Math.max(0, currentOverage - futureCovered),
+      forecastBefore,
+      forecastAfter,
+      forecastImpact: Math.max(0, forecastBefore - forecastAfter),
+      overagePlanHandling: selectedHandling,
+      beforeTargetDeficit,
+      afterTargetDeficit
+    };
+  }
+
+  function pendingTransactionIncomeActualAfter(categoryId = pendingTransaction && pendingTransaction.categoryId, month = pendingTransaction && periodForDate(pendingTransaction.date)) {
+    if (!pendingTransaction || !categoryId || !month) return 0;
+    let afterActual = actualAmount(categoryId, month);
+    if (pendingTransactionEdit) {
+      const original = pendingTransactionEdit.original;
+      if (original && original.direction === "income" && original.categoryId === categoryId && periodForDate(original.date) === month) {
+        afterActual -= toInteger(original.amount);
+      }
+    }
+    if (pendingTransaction.direction === "income" && pendingTransaction.categoryId === categoryId && periodForDate(pendingTransaction.date) === month) {
+      afterActual += toInteger(pendingTransaction.amount);
+    }
+    return afterActual;
+  }
+
+  function preparePendingTransactionEntryAnimation(category, entryAnimationBefore, handling = null) {
+    if (!pendingTransaction || !category) return null;
+    const entryAnimationType = pendingTransaction.direction === "income"
+      ? isUnexpectedIncomeCategory(category) ? "transaction-unexpected-income" : "transaction-income"
+      : isUnexpectedExpenseCategory(category) ? "transaction-unexpected-expense" : "transaction-expense";
+    const projection = entryAnimationType === "transaction-expense"
+      ? pendingTransactionEdit
+        ? pendingTransactionEditExpenseProjection(category, handling)
+        : normalExpenseOverageProjection(category, periodForDate(pendingTransaction.date), pendingTransaction.amount, handling)
+      : null;
+    pendingTransactionEntryAnimation = {
+      type: entryAnimationType,
+      targetCategoryId: category.id,
+      sourceCategoryIds: [],
+      details: projection ? {
+        futurePlans: projection.futurePlans,
+        forecastImpact: projection.forecastImpact,
+        overagePlanHandling: projection.overagePlanHandling
+      } : {},
+      before: entryAnimationBefore || entryAnimationSnapshot([category.id])
+    };
+    return projection;
+  }
+
+  function selectedPendingOverageHandling() {
+    const value = document.querySelector('input[name="pending-overage-handling"]:checked')?.value;
+    return OVERAGE_PLAN_HANDLINGS.includes(value) ? value : OVERAGE_PLAN_HANDLING_NEAREST;
+  }
+
+  function updatePendingOverageDecision() {
+    if (!pendingTransaction) return;
+    const category = categoryById(pendingTransaction.categoryId);
+    if (!category) return;
+    const handling = selectedPendingOverageHandling();
+    const before = pendingTransactionEntryAnimation && pendingTransactionEntryAnimation.before;
+    const projection = preparePendingTransactionEntryAnimation(category, before, handling);
+    document.querySelectorAll("#overage-decision-dialog .overage-plan-option").forEach((option) => option.classList.toggle("selected", Boolean(option.querySelector("input:checked"))));
+    document.querySelector("#overage-decision-summary").textContent = `${category.name}は、この入力で${formatCurrency(projection ? projection.currentOverage : 0)}超過します。今回の超過分だけに、選んだ方法を適用します。`;
+    const impact = document.querySelector("#overage-decision-impact");
+    if (!projection) {
+      impact.textContent = "超過内容を確認できませんでした。";
+      return;
+    }
+    if (handling === OVERAGE_PLAN_HANDLING_FORECAST) {
+      impact.textContent = `未来の計画は変更せず、見込み収支 ${formatSignedCurrency(projection.forecastBefore)} → ${formatSignedCurrency(projection.forecastAfter)} となります。`;
+    } else if (projection.futureCovered >= projection.currentOverage) {
+      impact.textContent = `${monthPlanListLabel(projection.futurePlans)}から合計${formatCurrency(projection.futureCovered)}を調整します。見込み収支は変わりません。`;
+    } else {
+      impact.textContent = `未来の計画から${formatCurrency(projection.futureCovered)}を調整し、足りない${formatCurrency(projection.uncovered)}は見込み収支へ反映します。`;
+    }
+    applyPendingOverageHandling(handling);
+  }
+
+  function openPendingOverageDecision(category, entryAnimationBefore) {
+    const handling = categoryOveragePlanHandling(category);
+    document.querySelectorAll('input[name="pending-overage-handling"]').forEach((input) => { input.checked = input.value === handling; });
+    document.querySelector("#overage-decision-remember").checked = false;
+    preparePendingTransactionEntryAnimation(category, entryAnimationBefore, handling);
+    updatePendingOverageDecision();
+    openDialog(overageDecisionDialog);
+  }
+
+  function pendingIncomeShortfallContexts() {
+    if (!pendingTransaction || pendingTransaction.direction !== "income") return [];
+    const candidates = [{ categoryId: pendingTransaction.categoryId, month: periodForDate(pendingTransaction.date) }];
+    if (pendingTransactionEdit && pendingTransactionEdit.original && pendingTransactionEdit.original.direction === "income") {
+      candidates.unshift({
+        categoryId: pendingTransactionEdit.original.categoryId,
+        month: periodForDate(pendingTransactionEdit.original.date)
+      });
+    }
+    const seen = new Set();
+    return candidates.filter(({ categoryId, month }) => {
+      const key = incomeForecastClosureKey(categoryId, month);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      const category = categoryById(categoryId);
+      if (!category || isSignedIncomeCategory(category) || isUnexpectedIncomeCategory(category)) return false;
+      const planned = Math.max(0, planAmount(categoryId, month));
+      return planned > 0
+        && pendingTransactionIncomeActualAfter(categoryId, month) < planned
+        && !incomeForecastIsClosed(categoryId, month);
+    });
+  }
+
+  function finishPendingTransactionDecisionFlow() {
+    if (!pendingTransaction) return;
+    pendingIncomeShortfallCurrent = null;
+    closeDialog(overageDecisionDialog);
+    closeDialog(incomeShortfallDialog);
+    if (pendingTransactionEdit) {
+      const saveAction = pendingTransactionEdit.isDelete ? savePendingTransactionDelete : savePendingTransactionEdit;
+      saveAction().catch((error) => showToast(error instanceof Error ? error.message : "明細を更新できませんでした"));
+      return;
+    }
+    openPendingTransactionMemo(pendingTransaction);
+  }
+
+  function openNextPendingIncomeShortfall() {
+    if (!pendingTransaction) return;
+    closeDialog(incomeShortfallDialog);
+    const context = pendingIncomeShortfallQueue.shift() || null;
+    pendingIncomeShortfallCurrent = context;
+    if (!context) {
+      finishPendingTransactionDecisionFlow();
+      return;
+    }
+    const category = categoryById(context.categoryId);
+    if (!category) {
+      openNextPendingIncomeShortfall();
+      return;
+    }
+    const planned = Math.max(0, planAmount(category.id, context.month));
+    const afterActual = pendingTransactionIncomeActualAfter(category.id, context.month);
+    document.querySelector("#income-shortfall-summary").textContent = `${monthLabel(context.month)}の${category.name}は、変更後の実績${formatCurrency(afterActual)}で、計画${formatCurrency(planned)}に${formatCurrency(Math.max(0, planned - afterActual))}届いていません。`;
+    openDialog(incomeShortfallDialog);
+  }
+
+  function beginPendingIncomeShortfallFlow() {
+    pendingIncomeShortfallQueue = pendingIncomeShortfallContexts();
+    pendingIncomeShortfallCurrent = null;
+    if (pendingIncomeShortfallQueue.length) {
+      openNextPendingIncomeShortfall();
+      return true;
+    }
+    return false;
   }
 
   async function resetCurrentProject() {
@@ -1525,6 +2053,8 @@
   }
 
   function render() {
+    cancelEntryAnimationEffects();
+    if (currentView !== "entry") pendingEntryAnimation = null;
     const chartScrollPositions = currentView === "overview"
       ? Array.from(viewHost.querySelectorAll("[data-chart-scroll-key]")).map((element) => ({
         key: element.dataset.chartScrollKey,
@@ -1561,9 +2091,12 @@
     if (currentView === "overview") configureOverviewChartInteractions();
     scheduleNextDateRefresh();
     if (currentView === "entry" && pendingEntryAnimation) {
+      const scheduledGeneration = entryAnimationGeneration;
       preparePendingEntryAnimation();
       window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(playPendingEntryAnimation);
+        window.requestAnimationFrame(() => {
+          if (scheduledGeneration === entryAnimationGeneration) playPendingEntryAnimation();
+        });
       });
     }
   }
@@ -1601,7 +2134,12 @@
     if (!element) return null;
     const bounds = element.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return null;
-    return { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height };
+    return {
+      left: bounds.left + window.scrollX,
+      top: bounds.top + window.scrollY,
+      width: bounds.width,
+      height: bounds.height
+    };
   }
 
   function entryAnimationSnapshot(categoryIds = []) {
@@ -1676,11 +2214,26 @@
       layer.setAttribute("aria-hidden", "true");
       document.body.append(layer);
     }
+    layer.style.width = `${Math.max(document.documentElement.scrollWidth, document.body.scrollWidth, window.innerWidth)}px`;
+    layer.style.height = `${Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, window.innerHeight)}px`;
     return layer;
   }
 
-  function entryNumberText(value, originalText) {
-    if (String(originalText).includes("超過")) return `${formatCurrency(Math.abs(value))} 超過`;
+  function cancelEntryAnimationEffects() {
+    entryAnimationGeneration += 1;
+    document.querySelector("#entry-money-animation-layer")?.remove();
+    document.querySelectorAll(".is-entry-value-increase, .is-entry-value-decrease").forEach((element) => {
+      element.classList.remove("is-entry-value-increase", "is-entry-value-decrease");
+      element.style.removeProperty("--entry-value-peak-scale");
+    });
+    document.querySelectorAll(".is-entry-progress-changing").forEach((element) => element.classList.remove("is-entry-progress-changing"));
+  }
+
+  function entryNumberText(value, originalText, element = null) {
+    const categoryId = element && element.dataset ? element.dataset.entryBudgetValue : "";
+    const category = categoryId ? categoryById(categoryId) : null;
+    const expenseBudgetValue = Boolean(category) && !isIncomeCategory(category);
+    if (value < 0 && (expenseBudgetValue || String(originalText).includes("超過"))) return `${formatCurrency(Math.abs(value))} 超過`;
     if (String(originalText).trim().startsWith("+")) return formatSignedCurrency(value);
     return value < 0 ? formatSignedCurrency(value) : formatCurrency(value);
   }
@@ -1698,19 +2251,40 @@
       element.textContent = finalText;
       return;
     }
-    element.textContent = entryNumberText(before, finalText);
+    element.textContent = finalText;
+    const finalBounds = element.getBoundingClientRect();
+    const finalScrollWidth = element.scrollWidth;
+    element.textContent = entryNumberText(before, finalText, element);
+    const initialBounds = element.getBoundingClientRect();
+    const container = element.closest(".daily-budget-value, .budget-card-main, .period-card, .overview-hero-total");
+    const containerBounds = container ? container.getBoundingClientRect() : null;
+    const desiredScale = element.classList.contains("daily-budget-amount") ? 1.055 : 1.16;
+    const contentWidth = Math.max(1, finalBounds.width, initialBounds.width, finalScrollWidth, element.scrollWidth);
+    const availableWidth = containerBounds
+      ? (element.classList.contains("daily-budget-amount")
+        ? containerBounds.right - Math.min(finalBounds.left, initialBounds.left)
+        : Math.max(finalBounds.right, initialBounds.right) - containerBounds.left)
+      : contentWidth * desiredScale;
+    const peakScale = clamp((availableWidth - 4) / contentWidth, 1, desiredScale);
+    element.style.setProperty("--entry-value-peak-scale", String(peakScale));
     element.classList.remove("is-entry-value-increase", "is-entry-value-decrease");
     element.classList.add(direction || (after >= before ? "is-entry-value-increase" : "is-entry-value-decrease"));
     const duration = ENTRY_ANIMATION_DURATION;
     const startedAt = performance.now();
+    const generation = entryAnimationGeneration;
     const tick = (now) => {
+      if (generation !== entryAnimationGeneration || !element.isConnected) return;
       const progress = Math.min(1, (now - startedAt) / duration);
       const eased = 1 - Math.pow(1 - progress, 3);
-      element.textContent = entryNumberText(Math.round(before + (after - before) * eased), finalText);
+      element.textContent = entryNumberText(Math.round(before + (after - before) * eased), finalText, element);
       if (progress < 1) window.requestAnimationFrame(tick);
       else {
         element.textContent = finalText;
-        window.setTimeout(() => element.classList.remove("is-entry-value-increase", "is-entry-value-decrease"), 80);
+        window.setTimeout(() => {
+          if (generation !== entryAnimationGeneration || !element.isConnected) return;
+          element.classList.remove("is-entry-value-increase", "is-entry-value-decrease");
+          element.style.removeProperty("--entry-value-peak-scale");
+        }, 80);
       }
     };
     window.requestAnimationFrame(tick);
@@ -1722,10 +2296,14 @@
     if (reduceMotion) return;
     element.style.setProperty("--progress", `${before}%`);
     element.classList.remove("is-entry-progress-changing");
+    const generation = entryAnimationGeneration;
     window.requestAnimationFrame(() => {
+      if (generation !== entryAnimationGeneration || !element.isConnected) return;
       element.classList.add("is-entry-progress-changing");
       element.style.setProperty("--progress", `${after}%`);
-      window.setTimeout(() => element.classList.remove("is-entry-progress-changing"), ENTRY_ANIMATION_DURATION + 80);
+      window.setTimeout(() => {
+        if (generation === entryAnimationGeneration && element.isConnected) element.classList.remove("is-entry-progress-changing");
+      }, ENTRY_ANIMATION_DURATION + 80);
     });
   }
 
@@ -1741,6 +2319,7 @@
     const to = entryPoint(toRect);
     if (!from || !to) return;
     const layer = entryMoneyLayer();
+    const generation = entryAnimationGeneration;
     const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const distance = Math.hypot(to.x - from.x, to.y - from.y);
     // 数値が動いている3秒間に合わせて、資金も途切れずに流れ続けるようにします。
@@ -1773,23 +2352,52 @@
         easing: "cubic-bezier(.22,.75,.25,1)",
         fill: "forwards"
       });
-      animation.onfinish = () => particle.remove();
+      animation.onfinish = () => {
+        if (generation === entryAnimationGeneration || particle.isConnected) particle.remove();
+      };
     }
   }
 
-  function showEntryMonthPlanFlight({ month, categoryName, before, after, direction = "in" }, index = 0) {
+  function compactEntryMonthPlans(plans, maximum = 4) {
+    const available = Array.isArray(plans) ? plans.filter(Boolean) : [];
+    if (available.length <= maximum) return available;
+    const shown = available.slice(0, Math.max(1, maximum - 1));
+    const hidden = available.slice(shown.length);
+    shown.push({
+      label: `ほか${hidden.length}ヶ月の合計`,
+      categoryName: "複数月をまとめて表示",
+      before: hidden.reduce((sum, plan) => sum + Math.max(0, toInteger(plan.before)), 0),
+      after: hidden.reduce((sum, plan) => sum + Math.max(0, toInteger(plan.after)), 0),
+      direction: hidden.reduce((sum, plan) => sum + toInteger(plan.after) - toInteger(plan.before), 0) >= 0 ? "in" : "out"
+    });
+    return shown;
+  }
+
+  function monthPlanListLabel(plans, maximum = 3) {
+    const months = Array.from(new Set((plans || []).map((plan) => plan && plan.month).filter(Boolean)));
+    if (!months.length) return "未来の計画";
+    const visible = months.slice(0, maximum).map(monthLabel);
+    return `${visible.join("、")}${months.length > maximum ? `ほか${months.length - maximum}ヶ月` : ""}`;
+  }
+
+  function showEntryMonthPlanFlight({ month, label = "", categoryName, before, after, direction = "in" }, index = 0) {
     const layer = entryMoneyLayer();
+    const generation = entryAnimationGeneration;
     const maximum = Math.max(1, before, after);
     const beforeHeight = Math.max(4, (Math.max(0, before) / maximum) * 100);
     const afterHeight = Math.max(4, (Math.max(0, after) / maximum) * 100);
     const flyout = document.createElement("section");
     flyout.className = `entry-month-plan-flight is-${direction}`;
-    flyout.innerHTML = `<span class="entry-month-plan-kicker">移動元の計画予算</span><strong>${escapeHtml(`${monthLabel(month)}の予算`)}</strong><span>${escapeHtml(categoryName)}</span><div class="entry-month-plan-bar"><i style="--entry-plan-before:${beforeHeight}%; --entry-plan-after:${afterHeight}%"></i></div><small>${formatCurrency(before)} <b>→</b> ${formatCurrency(after)}</small>`;
-    flyout.style.top = `${Math.max(88, Math.min(window.innerHeight - 214, 116 + index * 22))}px`;
+    flyout.innerHTML = `<span class="entry-month-plan-kicker">移動する計画予算</span><strong>${escapeHtml(label || `${monthLabel(month)}の予算`)}</strong><span>${escapeHtml(categoryName)}</span><div class="entry-month-plan-bar"><i style="--entry-plan-before:${beforeHeight}%; --entry-plan-after:${afterHeight}%"></i></div><small>${formatCurrency(before)} <b>→</b> ${formatCurrency(after)}</small>`;
+    flyout.style.top = `${window.scrollY + Math.max(88, Math.min(window.innerHeight - 214, 116 + index * 22))}px`;
     flyout.style.right = `${Math.max(12, 18 + index * 10)}px`;
     layer.append(flyout);
-    window.requestAnimationFrame(() => flyout.classList.add("is-active"));
-    window.setTimeout(() => flyout.classList.add("is-leaving"), ENTRY_ANIMATION_DURATION - 260 + index * 24);
+    window.requestAnimationFrame(() => {
+      if (generation === entryAnimationGeneration && flyout.isConnected) flyout.classList.add("is-active");
+    });
+    window.setTimeout(() => {
+      if (generation === entryAnimationGeneration && flyout.isConnected) flyout.classList.add("is-leaving");
+    }, ENTRY_ANIMATION_DURATION - 260 + index * 24);
     window.setTimeout(() => flyout.remove(), ENTRY_ANIMATION_DURATION + 80 + index * 24);
     return entryAnimationRect(flyout.querySelector(".entry-month-plan-bar"));
   }
@@ -1806,7 +2414,7 @@
         const valueSnapshot = snapshots[index] || snapshots[0];
         if (!valueSnapshot) return;
         element.dataset.entryAnimationFinalText = element.textContent;
-        element.textContent = entryNumberText(valueSnapshot.value, element.textContent);
+        element.textContent = entryNumberText(valueSnapshot.value, element.textContent, element);
       });
       const progressSnapshots = Array.isArray(snapshot.progresses) ? snapshot.progresses : [];
       entryBudgetProgressElements(categoryId).forEach((element, index) => {
@@ -1862,29 +2470,30 @@
       return;
     }
     if (animation.type === "shift") {
-      const targetPlans = Array.isArray(animation.details.targetPlans) && animation.details.targetPlans.length
+      const targetPlans = compactEntryMonthPlans(Array.isArray(animation.details.targetPlans) && animation.details.targetPlans.length
         ? animation.details.targetPlans
-        : [animation.details.targetPlan].filter(Boolean);
+        : [animation.details.targetPlan].filter(Boolean));
       targetPlans.forEach((targetPlan, index) => {
-        const destination = showEntryMonthPlanFlight(targetPlan, index * 110);
+        const destination = showEntryMonthPlanFlight(targetPlan, index);
         flyEntryMoney(targetSnapshot && targetSnapshot.rect, destination, "primary", index * 110);
       });
       return;
     }
     if (animation.type === "borrow") {
-      (animation.details.monthPlans || []).forEach((plan, index) => {
+      compactEntryMonthPlans(animation.details.monthPlans || []).forEach((plan, index) => {
         const source = showEntryMonthPlanFlight({ ...plan, direction: "out" }, index);
         flyEntryMoney(source, targetRect, "primary", index * 80);
       });
       return;
     }
     if (animation.type === "transaction-expense") {
-      (animation.details.futurePlans || []).forEach((plan, index) => {
+      const futurePlans = compactEntryMonthPlans(animation.details.futurePlans || []);
+      futurePlans.forEach((plan, index) => {
         const source = showEntryMonthPlanFlight({ ...plan, direction: "out" }, index);
         flyEntryMoney(source, targetRect, "primary", index * 80);
       });
       if (toInteger(animation.details.forecastImpact) > 0) {
-        flyEntryMoney(forecastRect, targetRect, "danger", (animation.details.futurePlans || []).length * 80);
+        flyEntryMoney(forecastRect, targetRect, "danger", futurePlans.length * 80);
         showToast(animation.details.overagePlanHandling === OVERAGE_PLAN_HANDLING_FORECAST
           ? "設定により、超過分をプロジェクト終了時の見込み収支から差し引きました。"
           : "次月度以降の予算がもうないため見込み収支が減ってしまいます。今月度以降の予算を追加してください。");
@@ -1892,7 +2501,7 @@
       return;
     }
     if (animation.type === "transaction-expense-adjust") {
-      const changedPlans = animation.details.monthPlans || [];
+      const changedPlans = compactEntryMonthPlans(animation.details.monthPlans || []);
       changedPlans.forEach((plan, index) => {
         const planRect = showEntryMonthPlanFlight(plan, index);
         const categorySnapshot = before.values[plan.categoryId];
@@ -1923,14 +2532,17 @@
       return;
     }
     if (animation.type === "carry" || animation.type === "reallocate") {
-      animation.sourceCategoryIds.forEach((categoryId, index) => {
+      animation.sourceCategoryIds.slice(0, 5).forEach((categoryId, index) => {
         if (categoryId === animation.targetCategoryId) return;
         flyEntryMoney(before.values[categoryId] && before.values[categoryId].rect, targetRect, "primary", index * 60);
       });
       return;
     }
     if (animation.type === "transaction-income" || animation.type === "transaction-unexpected-income") {
-      flyEntryMoney(targetRect, forecastRect, "success");
+      const forecastBefore = before.forecast ? before.forecast.value : 0;
+      const forecastAfter = forecast ? toInteger(forecast.dataset.entryAmount) : forecastBefore;
+      if (forecastAfter > forecastBefore) flyEntryMoney(targetRect, forecastRect, "success");
+      else if (forecastAfter < forecastBefore) flyEntryMoney(forecastRect, targetRect, "danger");
     }
     if (animation.type === "transaction-unexpected-expense") {
       flyEntryMoney(forecastRect, targetRect, "danger");
@@ -2088,14 +2700,31 @@
             ? 0
             : stats.monthlyRemaining;
       const remainingBudgetLabel = carryBudgetAvailable ? "持ち越し予算" : "今月の残予算";
-      const hasNoPlan = stats.configuredPlan <= 0 && stats.priorCarry === 0 && stats.actual === 0;
+      const appliedOverageHandlings = isBudgetedExpenseCategory(category)
+        ? (expensePlanScenario(category.id).handlingByMonth[month] || [])
+        : [];
+      const currentOverageHandling = categoryOveragePlanHandling(category);
+      const appliedOverageLabel = appliedOverageHandlings.length > 1
+        ? "入力ごとに異なる"
+        : overagePlanHandlingLabel(appliedOverageHandlings[0] || currentOverageHandling, true);
+      const nextOverageLabel = appliedOverageHandlings.length !== 1 || appliedOverageHandlings[0] !== currentOverageHandling
+        ? `／次回：${overagePlanHandlingLabel(currentOverageHandling, true)}`
+        : "";
+      const overageHandlingBadge = remainingOverage > 0
+        ? `<span class="budget-card-overage-policy">超過処理：${appliedOverageLabel}${nextOverageLabel}</span>`
+        : "";
+      // A future-plan overage adjustment can reduce an originally configured
+      // plan to zero.  That is "used by an earlier overage", not "no plan".
+      const hasNoPlan = stats.originalPlan <= 0 && stats.priorCarry === 0 && stats.actual === 0;
       const progressBase = stats.plan;
       const progress = remainingBudget < 0
         ? 100
+        : progressBase <= 0 && stats.originalPlan > 0 && stats.automaticPlanDeduction > 0
+          ? 100
         : progressBase > 0
           ? clamp((stats.actual / progressBase) * 100, 0, 100)
           : 0;
-      const progressBar = !hasNoPlan && (stats.configuredPlan > 0 || remainingBudget < 0)
+      const progressBar = !hasNoPlan && (stats.originalPlan > 0 || remainingBudget < 0)
         ? `<span class="budget-progress" data-entry-budget-progress="${escapeHtml(category.id)}" aria-label="予算消化率 ${Math.round(progress)}%"><span data-entry-progress-value="${progress}" style="--progress:${progress}%"></span></span>`
         : "";
       const carryLabel = carryBudgetAvailable
@@ -2114,6 +2743,7 @@
       if (dailyStats) {
         return `<button type="button" class="budget-card daily-budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
           <span class="budget-card-name">${escapeHtml(category.name)}</span>
+          ${overageHandlingBadge}
           <span class="daily-budget-main">
             <span class="daily-budget-value"><span>${dailyStats.dailyLabel}</span><strong data-entry-budget-value="${escapeHtml(category.id)}" data-entry-amount="${dailyStats.dailyRemaining}" class="daily-budget-amount ${budgetCardAmountSizeClass(dailyStats.dailyRemaining)} ${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
           </span>
@@ -2127,6 +2757,7 @@
       }
       return `<button type="button" class="budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
         <span class="budget-card-name">${escapeHtml(category.name)}${fixedExpenseStatus ? `<em class="budget-card-status ${fixedExpenseStatus.tone}">${fixedExpenseStatus.label}</em>` : ""}</span>
+        ${overageHandlingBadge}
         ${budgetSummary}
         ${cardFooter}
       </button>`;
@@ -3385,7 +4016,6 @@
 
   function renderBasicSettings() {
     const selectedTheme = themePresetFor(state.settings.themeId);
-    const selectedOverageHandling = overagePlanHandling();
     return `<form id="basic-settings-form" class="card settings-form">
       <div class="section-copy"><p class="section-kicker">PERIOD</p><h2>家計簿の期間</h2><p>締日を超えた支出は翌月分として集計します。存在しない締日は月末に丸めます。</p></div>
       <label><span class="field-label">締日</span><select id="closing-day">${Array.from({ length: 31 }, (_, index) => index + 1).map((day) => `<option value="${day}"${Number(state.settings.closingDay) === day ? " selected" : ""}>${day === 31 ? "月末（31日）" : `${day}日`}</option>`).join("")}</select></label>
@@ -3396,22 +4026,7 @@
         <label><span class="field-label">終了日</span><input id="end-date" type="date" value="${state.settings.endDate}" required></label>
       </div>
       <p class="help-text">現在は${periodMonths().length}ヶ月分を管理しています。初期設定は開始月から36ヶ月です。</p>
-      <fieldset class="overage-plan-settings">
-        <legend>支出項目が予算を超過したとき</legend>
-        <p class="help-text">超過分をどこで受け止めるかを選びます。「直近」「平均」は、設計/計画・入力・分析を含む全画面で調整後の計画値を表示します。後続の計画で吸収できない分は、プロジェクト収支に反映します。</p>
-        <label class="overage-plan-option${selectedOverageHandling === OVERAGE_PLAN_HANDLING_FORECAST ? " selected" : ""}">
-          <input type="radio" name="overage-plan-handling" value="${OVERAGE_PLAN_HANDLING_FORECAST}"${selectedOverageHandling === OVERAGE_PLAN_HANDLING_FORECAST ? " checked" : ""}>
-          <span><strong>プロジェクト収支から引く</strong><small>以降の計画値は変えず、超過分だけ見込み収支を下げます。</small></span>
-        </label>
-        <label class="overage-plan-option${selectedOverageHandling === OVERAGE_PLAN_HANDLING_NEAREST ? " selected" : ""}">
-          <input type="radio" name="overage-plan-handling" value="${OVERAGE_PLAN_HANDLING_NEAREST}"${selectedOverageHandling === OVERAGE_PLAN_HANDLING_NEAREST ? " checked" : ""}>
-          <span><strong>直近の計画から順に引く</strong><small>次の月度以降の計画から、近い月を優先して差し引きます。</small></span>
-        </label>
-        <label class="overage-plan-option${selectedOverageHandling === OVERAGE_PLAN_HANDLING_EVEN ? " selected" : ""}">
-          <input type="radio" name="overage-plan-handling" value="${OVERAGE_PLAN_HANDLING_EVEN}"${selectedOverageHandling === OVERAGE_PLAN_HANDLING_EVEN ? " checked" : ""}>
-          <span><strong>残りの計画から平均して引く</strong><small>残っている月度の計画へ、できるだけ均等に差し引きを配分します。</small></span>
-        </label>
-      </fieldset>
+      <section class="overage-plan-settings"><div class="section-copy"><p class="section-kicker">OVER BUDGET</p><h3>超過時の処理は項目ごとに設定</h3><p>支出計画の各項目から設定できます。変更後の入力だけに適用されるため、過去の予算や見込み収支が設定変更だけで動くことはありません。</p></div></section>
       <section class="theme-settings" aria-labelledby="theme-settings-title">
         <div class="section-copy"><p class="section-kicker">THEME</p><h3 id="theme-settings-title">テーマカラー</h3><p>アプリ全体のアクセントカラーを選べます。</p></div>
         <div class="theme-preset-grid" role="radiogroup" aria-label="テーマカラー">
@@ -3525,7 +4140,8 @@
           <input class="daily-budget-toggle-input" type="checkbox" role="switch" data-developer-mode-toggle${developerModeIsEnabled() ? " checked" : ""}>
           <span class="daily-budget-switch" aria-hidden="true"></span>
         </label>
-        ${developerModeIsEnabled() ? `<div class="developer-clock-actions"><p>設定日時：<strong>${escapeHtml(developerClockLabel())}</strong></p><button type="button" class="button secondary" data-action="open-developer-clock">時刻設定</button></div>` : ""}
+        ${developerModeIsEnabled() ? `<div class="developer-clock-actions"><p>設定日時：<strong>${escapeHtml(developerClockLabel())}</strong></p><button type="button" class="button secondary" data-action="open-developer-clock">時刻設定</button></div>
+        <section class="developer-debug-section"><div class="section-copy"><p class="section-kicker">DEBUG</p><h3>デバッグ</h3><p>調査に必要な計画・実績・内部計算・端末環境をJSONへ書き出します。メモなどの入力内容も含まれるため、共有先を確認してください。</p></div><button type="button" class="button secondary" data-action="export-debug">デバッグ情報の書き出し</button></section>` : ""}
       </section>
       ${outsideTransactions.length ? `<section class="section"><div class="section-header"><div><p class="section-kicker">OUTSIDE PERIOD</p><h2>管理期間外の実績</h2></div><p class="section-description">${outsideTransactions.length}件</p></div><p class="help-text">期間を短くしたため集計対象外になった実績です。タップして日付を修正または削除できます。</p><div class="transaction-list">${outsideTransactions.sort((a, b) => b.date.localeCompare(a.date)).map(renderTransactionRow).join("")}</div></section>` : ""}
       <section class="card"><div class="section-copy"><p class="section-kicker">RESET</p><h2>初期データへ戻す</h2><p>種別・月別計画・実績を削除し、空の状態に戻します。プロジェクト名と期間は残ります。</p></div><button type="button" class="button danger" data-action="reset-data">すべて初期化</button></section>
@@ -3547,9 +4163,7 @@
 
   function calculatorShiftDistributionTargetMonths(category, sourceMonth) {
     if (!category) return [];
-    return calculatorShiftTargetMonths(sourceMonth).filter((month) => (
-      Math.max(0, configuredPlanAmount(category.id, month)) > 0 || Math.max(0, planAmount(category.id, month)) > 0
-    ));
+    return calculatorShiftTargetMonths(sourceMonth);
   }
 
   function calculatorBudgetSources(category, sourceMonth) {
@@ -4017,9 +4631,9 @@
     container.innerHTML = targets.length
       ? targets.map((month) => {
         const budget = Math.max(0, planAmount(category.id, month));
-        return `<article class="calculator-budget-funding-source calculator-shift-distribution-target" data-shift-distribution-month="${escapeHtml(month)}" data-shift-distribution-budget="${budget}"><div class="calculator-budget-funding-source-head"><span class="calculator-budget-funding-source-copy"><strong>${escapeHtml(monthLabel(month))}</strong><span>現在の計画予算 ${formatCurrency(budget)}</span></span><button type="button" class="button small secondary calculator-budget-funding-toggle" data-shift-distribution-select aria-pressed="false">選ぶ</button></div><label class="calculator-budget-funding-amount"><span>この月へ移す金額</span><span><input type="number" min="0" step="1" inputmode="numeric" value="0" data-shift-distribution-amount aria-label="${escapeHtml(monthLabel(month))}へ移す金額" disabled><i>円</i></span></label></article>`;
+        return `<article class="calculator-budget-funding-source calculator-shift-distribution-target" data-shift-distribution-month="${escapeHtml(month)}" data-shift-distribution-budget="${budget}"><div class="calculator-budget-funding-source-head"><span class="calculator-budget-funding-source-copy"><strong>${escapeHtml(monthLabel(month))}</strong><span>${budget > 0 ? `現在の計画予算 ${formatCurrency(budget)}` : "計画なし（現在 ¥0）"}</span></span><button type="button" class="button small secondary calculator-budget-funding-toggle" data-shift-distribution-select aria-pressed="false">選ぶ</button></div><label class="calculator-budget-funding-amount"><span>この月へ移す金額</span><span><input type="number" min="0" step="1" inputmode="numeric" value="0" data-shift-distribution-amount aria-label="${escapeHtml(monthLabel(month))}へ移す金額" disabled><i>円</i></span></label></article>`;
       }).join("")
-      : '<p class="calculator-add-budget-carry-empty">未来の月のうち、予算が設定されている月がありません。</p>';
+      : '<p class="calculator-add-budget-carry-empty">移動できる未来の月がありません。</p>';
   }
 
   function calculatorShiftDistributionSelections() {
@@ -4071,7 +4685,7 @@
     updateCalculatorShiftTargetSummary();
   }
 
-  function setCalculatorShiftMode(mode = "single") {
+  function setCalculatorShiftMode(mode = "single", refresh = true) {
     calculatorShiftMode = mode === "distribute" ? "distribute" : "single";
     const panel = document.querySelector("#calculator-shift-panel");
     const distributionPanel = document.querySelector("#calculator-shift-distribution-panel");
@@ -4088,8 +4702,8 @@
       button.classList.toggle("is-active", isActive);
       button.setAttribute("aria-pressed", String(isActive));
     });
-    if (isDistributing) renderCalculatorShiftDistributionTargets();
-    updateCalculatorShiftTargetSummary();
+    if (isDistributing && refresh) renderCalculatorShiftDistributionTargets();
+    if (refresh) updateCalculatorShiftTargetSummary();
   }
 
   function calculatorCarryFundingSelections() {
@@ -4252,7 +4866,7 @@
     updateCalculatorAddBudgetSummary();
   }
 
-  function updateCalculatorAddBudgetMode() {
+  function updateCalculatorAddBudgetMode(refresh = true) {
     const mode = calculatorAddBudgetMode;
     const modeMeta = {
       new: {
@@ -4299,8 +4913,8 @@
     document.querySelector("#calculator-add-budget-borrow-panel").hidden = mode !== "borrow";
     document.querySelector("#calculator-add-budget-reallocate-panel").hidden = mode !== "reallocate";
     document.querySelector("#calculator-add-budget-confirm").textContent = modeMeta.confirm;
-    if (mode === "borrow" || mode === "reallocate") renderCalculatorAddBudgetExternalSources(mode);
-    updateCalculatorAddBudgetSummary();
+    if (refresh && (mode === "borrow" || mode === "reallocate")) renderCalculatorAddBudgetExternalSources(mode);
+    if (refresh) updateCalculatorAddBudgetSummary();
   }
 
   function distributeCalculatorCarryFundingEvenly() {
@@ -4586,13 +5200,19 @@
     addToggle.disabled = false;
     addToggle.title = `${monthLabel(sourceMonth)}の計画予算を追加します`;
     calculatorAddBudgetMode = "new";
-    setCalculatorShiftMode("single");
-    renderCalculatorAddBudgetCarrySources();
-    renderCalculatorAddBudgetExternalSources("borrow");
-    renderCalculatorAddBudgetExternalSources("reallocate");
-    updateCalculatorShiftTargetSummary();
-    updateCalculatorReturnSummary();
-    updateCalculatorAddBudgetMode();
+    // The budget tools can contain up to 120 months and many categories.
+    // Building every hidden tool made a simple card tap pay the full cost of
+    // carry, borrow, reallocation and distribution previews.  Clear stale
+    // rows here and build only the operation the user actually opens.
+    ["#calculator-add-budget-carry-sources", "#calculator-add-budget-borrow-sources", "#calculator-add-budget-reallocate-sources", "#calculator-shift-distribution-targets"].forEach((selector) => {
+      const container = document.querySelector(selector);
+      if (!container) return;
+      container.innerHTML = "";
+      delete container.dataset.targetCategoryId;
+      delete container.dataset.sourceMonth;
+    });
+    setCalculatorShiftMode("single", false);
+    updateCalculatorAddBudgetMode(false);
   }
 
   function setCalculatorBudgetOperation(operation = "") {
@@ -4624,7 +5244,31 @@
     });
   }
 
+  async function runCalculatorBudgetMutation(task) {
+    if (calculatorBudgetSaving) return;
+    calculatorBudgetSaving = true;
+    const confirmButtons = [
+      document.querySelector("#calculator-shift-confirm"),
+      document.querySelector("#calculator-return-confirm"),
+      document.querySelector("#calculator-add-budget-confirm")
+    ].filter(Boolean);
+    confirmButtons.forEach((button) => { button.disabled = true; });
+    try {
+      await task();
+    } finally {
+      calculatorBudgetSaving = false;
+      if (!calculatorDialog.open) return;
+      if (calculatorBudgetOperation === "shift") updateCalculatorShiftTargetSummary();
+      else if (calculatorBudgetOperation === "return") updateCalculatorReturnSummary();
+      else if (calculatorBudgetOperation === "add") updateCalculatorAddBudgetSummary();
+    }
+  }
+
   function openCalculator(categoryId) {
+    if (calculatorBudgetSaving || pendingTransactionSaving) {
+      showToast("保存中です。完了してから次の項目を開いてください");
+      return;
+    }
     const category = categoryById(categoryId);
     if (!category) return;
     calculatorContext = {
@@ -4662,7 +5306,7 @@
     document.querySelector("#calculator-ok").disabled = calculatorContext && calculatorContext.allowsNegative ? value === 0 : value <= 0;
     const forecast = document.querySelector("#calculator-project-forecast");
     const category = calculatorContext && categoryById(calculatorContext.categoryId);
-    if (calculatorContext && (calculatorContext.isUnexpectedExpense || calculatorContext.isUnexpectedIncome)) {
+    if (calculatorContext && (calculatorContext.isUnexpectedExpense || calculatorContext.isUnexpectedIncome) && value !== 0) {
       const before = projectEndForecastFromAggregates(periodMonths().map(aggregateMonth));
       const after = calculatorContext.isUnexpectedIncome
         ? projectEndForecastAfterUnexpectedIncome(calculatorContext.sourceMonth, value)
@@ -4671,14 +5315,16 @@
       forecast.classList.toggle("positive", calculatorContext.isUnexpectedIncome);
       forecast.hidden = false;
       forecast.textContent = `プロジェクト終了時の見込み収支 ${formatSignedCurrency(before)} → ${formatSignedCurrency(after)}`;
-    } else if (calculatorContext && calculatorContext.direction === "expense" && isBudgetedExpenseCategory(category)) {
-      const projection = normalExpenseOverageProjection(category, calculatorContext.sourceMonth, value);
+    } else if (calculatorContext && calculatorContext.direction === "expense" && isBudgetedExpenseCategory(category)
+      && value > calculatorBudgetSources(category, calculatorContext.sourceMonth).total) {
+      const selectedHandling = categoryOveragePlanHandling(category);
+      const projection = normalExpenseOverageProjection(category, calculatorContext.sourceMonth, value, selectedHandling);
       const adjustmentAmount = projection.planAdjustmentAmount || projection.currentOverage;
       if (adjustmentAmount > 0) {
         forecast.classList.remove("positive");
         forecast.classList.toggle("neutral", projection.forecastImpact === 0);
         forecast.hidden = false;
-        if (overagePlanHandling() === OVERAGE_PLAN_HANDLING_FORECAST) {
+        if (selectedHandling === OVERAGE_PLAN_HANDLING_FORECAST) {
           forecast.textContent = `設定により、今月の予算を超えた${formatCurrency(projection.currentOverage)}をプロジェクト終了時の見込み収支から差し引きます。 ${formatSignedCurrency(projection.forecastBefore)} → ${formatSignedCurrency(projection.forecastAfter)}`;
         } else if (projection.forecastImpact > 0) {
           const covered = projection.futureCovered > 0
@@ -4688,7 +5334,7 @@
         } else if (projection.futureCovered > projection.currentOverage) {
           forecast.textContent = `この入力により、後続月の既存実績も含めて ${formatCurrency(adjustmentAmount)} の計画を再調整します。次月度以降の計画から ${formatCurrency(projection.futureCovered)} を充当します。プロジェクト終了時の見込み収支は変わりません。`;
         } else {
-          const planSource = overagePlanHandling() === OVERAGE_PLAN_HANDLING_EVEN ? "残りの計画から平均して" : "次月度以降の計画から";
+          const planSource = selectedHandling === OVERAGE_PLAN_HANDLING_EVEN ? "残りの計画から平均して" : "次月度以降の計画から";
           forecast.textContent = `今月の予算を超えた${formatCurrency(projection.currentOverage)}は、${planSource}充当します。プロジェクト終了時の見込み収支は変わりません。`;
         }
       } else {
@@ -4792,16 +5438,6 @@
     if (!calculatorContext || (calculatorContext.allowsNegative ? amount === 0 : amount <= 0)) return;
     const category = categoryById(calculatorContext.categoryId);
     const entryAnimationBefore = category ? entryAnimationSnapshot([category.id]) : null;
-    const entryAnimationType = calculatorContext.direction === "income"
-      ? isUnexpectedIncomeCategory(category)
-        ? "transaction-unexpected-income"
-        : "transaction-income"
-      : isUnexpectedExpenseCategory(category)
-        ? "transaction-unexpected-expense"
-        : "transaction-expense";
-    const expenseOverageProjection = entryAnimationType === "transaction-expense"
-      ? normalExpenseOverageProjection(category, calculatorContext.sourceMonth, amount)
-      : null;
     const createdAt = appTimestamp();
     const transaction = {
       id: makeId("tx"),
@@ -4817,23 +5453,23 @@
     // メモ画面を閉じるまでは取引をstateへ反映しません。ここで先に保存すると、
     // シート遷移が中断したときに画面だけが入力前の数値へ残ってしまいます。
     pendingTransaction = transaction;
+    pendingTransactionEdit = null;
+    pendingTransactionRememberOverageHandling = false;
+    resetPendingIncomeShortfallState();
     closeDialog(calculatorDialog);
-    if (category) {
-      pendingTransactionEntryAnimation = {
-        type: entryAnimationType,
-        targetCategoryId: category.id,
-        sourceCategoryIds: [],
-        details: expenseOverageProjection ? {
-          futurePlans: expenseOverageProjection.futurePlans,
-          forecastImpact: expenseOverageProjection.forecastImpact,
-          overagePlanHandling: overagePlanHandling()
-        } : {},
-        before: entryAnimationBefore
-      };
+    const handling = category ? categoryOveragePlanHandling(category) : OVERAGE_PLAN_HANDLING_NEAREST;
+    const expenseOverageProjection = category ? preparePendingTransactionEntryAnimation(category, entryAnimationBefore, handling) : null;
+    if (expenseOverageProjection) {
+      transaction.overagePlanHandling = handling;
+      transaction.overageDecisionVersion = 1;
     }
     document.querySelector("#memo-summary").textContent = `${category ? category.name : "項目"}・${calculatorContext.allowsNegative ? formatSignedCurrency(amount) : formatCurrency(amount)}・${dateTimeLabel(transaction.date)}`;
     document.querySelector("#memo-input").value = "";
-    openPendingTransactionMemo(transaction);
+    if (category && expenseOverageProjection && expenseOverageProjection.currentOverage > 0 && category.overageHandlingLocked !== true) {
+      openPendingOverageDecision(category, entryAnimationBefore);
+      return;
+    }
+    if (!beginPendingIncomeShortfallFlow()) openPendingTransactionMemo(transaction);
   }
 
   async function shiftCalculatorBudget() {
@@ -4878,11 +5514,8 @@
     const previousPlans = { ...(state.plans[category.id] || {}) };
     const previousDefaultAmount = category.defaultAmount;
     const previousPlanRule = category.planRule ? { ...category.planRule } : null;
-    state.plans[category.id] = { ...previousPlans };
-    planChanges.forEach((change, month) => {
-      state.plans[category.id][month] = Math.max(0, toInteger(previousPlans[month]) + change);
-    });
-    category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
+    applyEffectivePlanDeltas(Array.from(planChanges, ([month, change]) => ({ categoryId: category.id, month, amount: change })));
+    category.defaultAmount = Math.max(0, configuredPlanAmount(category.id, currentPeriod));
     category.planRule = null;
 
     try {
@@ -4926,11 +5559,8 @@
     const previousPlans = { ...(state.plans[category.id] || {}) };
     const previousDefaultAmount = category.defaultAmount;
     const previousPlanRule = category.planRule ? { ...category.planRule } : null;
-    state.plans[category.id] = { ...previousPlans };
-    planChanges.forEach((change, month) => {
-      state.plans[category.id][month] = Math.max(0, toInteger(previousPlans[month]) + change);
-    });
-    category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
+    applyEffectivePlanDeltas(Array.from(planChanges, ([month, change]) => ({ categoryId: category.id, month, amount: change })));
+    category.defaultAmount = Math.max(0, configuredPlanAmount(category.id, currentPeriod));
     category.planRule = null;
     try {
       await persist(`${category.name}の${monthLabel(sourceMonth)}の予算から${formatCurrency(amount)}を返納しました（今月 ${formatCurrency(allocation.monthly)}・持ち越し ${formatCurrency(allocation.carry)}）`);
@@ -4938,6 +5568,7 @@
       state.plans[category.id] = previousPlans;
       category.defaultAmount = previousDefaultAmount;
       category.planRule = previousPlanRule;
+      resetDerivedDataCache();
       updateCalculatorReturnSummary();
       throw error;
     }
@@ -4973,7 +5604,6 @@
       }))
       : [];
 
-    const sourceBudget = configuredPlanAmount(category.id, sourceMonth);
     const targetCarryUsageFloor = categoryBudgetStats(category.id, sourceMonth).carryUsage;
     const affectedCategories = mode === "borrow"
       ? [category]
@@ -4986,24 +5616,20 @@
     const previousDefaultAmount = category.defaultAmount;
     const previousPlanRule = category.planRule ? { ...category.planRule } : null;
     const previousBudgetAdditions = Array.isArray(state.budgetAdditions) ? [...state.budgetAdditions] : [];
-    affectedCategories.forEach((affectedCategory) => {
-      state.plans[affectedCategory.id] = { ...(state.plans[affectedCategory.id] || {}) };
-    });
-    state.plans[category.id][sourceMonth] = sourceBudget + amount;
-    recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "carry");
+    const effectiveDeltas = [{ categoryId: category.id, month: sourceMonth, amount }];
     if (mode === "borrow") {
       selections.forEach((selection) => {
-        const futureBudget = configuredPlanAmount(category.id, selection.id);
-        state.plans[category.id][selection.id] = Math.max(0, futureBudget - selection.amount);
+        effectiveDeltas.push({ categoryId: category.id, month: selection.id, amount: -selection.amount });
       });
     } else {
       selections.forEach((selection) => {
         const sourceCategory = sourcesById.get(selection.id).category;
-        const availableBudget = configuredPlanAmount(sourceCategory.id, sourceMonth);
-        state.plans[sourceCategory.id][sourceMonth] = Math.max(0, availableBudget - selection.amount);
+        effectiveDeltas.push({ categoryId: sourceCategory.id, month: sourceMonth, amount: -selection.amount });
       });
     }
-    category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
+    applyEffectivePlanDeltas(effectiveDeltas);
+    recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "carry");
+    category.defaultAmount = Math.max(0, configuredPlanAmount(category.id, currentPeriod));
     category.planRule = null;
     const sourceNames = mode === "borrow"
       ? selections.map((selection) => monthLabel(selection.id)).join("、")
@@ -5020,6 +5646,7 @@
       category.defaultAmount = previousDefaultAmount;
       category.planRule = previousPlanRule;
       state.budgetAdditions = previousBudgetAdditions;
+      resetDerivedDataCache();
       updateCalculatorAddBudgetSummary();
       throw error;
     }
@@ -5056,7 +5683,6 @@
       });
       const entrySourceCategoryIds = funding.map((source) => source.category.id);
       const entryAnimationBefore = entryAnimationSnapshot([category.id, ...entrySourceCategoryIds]);
-      const sourceBudget = configuredPlanAmount(category.id, sourceMonth);
       const affectedCategories = [category, ...funding.map((source) => source.category).filter((sourceCategory, index, list) => list.findIndex((item) => item.id === sourceCategory.id) === index)];
       const previousPlans = new Map(affectedCategories.map((affectedCategory) => [
         affectedCategory.id,
@@ -5065,18 +5691,15 @@
       const previousDefaultAmount = category.defaultAmount;
       const previousPlanRule = category.planRule ? { ...category.planRule } : null;
       const previousBudgetAdditions = Array.isArray(state.budgetAdditions) ? [...state.budgetAdditions] : [];
-      affectedCategories.forEach((affectedCategory) => {
-        state.plans[affectedCategory.id] = { ...(state.plans[affectedCategory.id] || {}) };
-      });
-      state.plans[category.id][sourceMonth] = sourceBudget + amount;
-      recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "carry");
+      const effectiveDeltas = [{ categoryId: category.id, month: sourceMonth, amount }];
       funding.forEach((source) => {
         source.origins.forEach((origin) => {
-          const originBudget = configuredPlanAmount(source.category.id, origin.month);
-          state.plans[source.category.id][origin.month] = Math.max(0, originBudget - origin.amount);
+          effectiveDeltas.push({ categoryId: source.category.id, month: origin.month, amount: -origin.amount });
         });
       });
-      category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
+      applyEffectivePlanDeltas(effectiveDeltas);
+      recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "carry");
+      category.defaultAmount = Math.max(0, configuredPlanAmount(category.id, currentPeriod));
       category.planRule = null;
       try {
         await persist(`${funding.map((source) => source.category.name).join("、")}の持ち越しから${formatCurrency(amount)}を、${category.name}の${monthLabel(sourceMonth)}の予算へ充当しました`);
@@ -5088,6 +5711,7 @@
         category.defaultAmount = previousDefaultAmount;
         category.planRule = previousPlanRule;
         state.budgetAdditions = previousBudgetAdditions;
+        resetDerivedDataCache();
         updateCalculatorAddBudgetSummary();
         throw error;
       }
@@ -5103,28 +5727,183 @@
     }
 
     const entryAnimationBefore = entryAnimationSnapshot([category.id]);
-    const sourceBudget = configuredPlanAmount(category.id, sourceMonth);
     const targetCarryUsageFloor = categoryBudgetStats(category.id, sourceMonth).carryUsage;
+    const previousPlans = { ...(state.plans[category.id] || {}) };
     const previousDefaultAmount = category.defaultAmount;
     const previousPlanRule = category.planRule ? { ...category.planRule } : null;
     const previousBudgetAdditions = Array.isArray(state.budgetAdditions) ? [...state.budgetAdditions] : [];
-    state.plans[category.id] = { ...(state.plans[category.id] || {}) };
-    state.plans[category.id][sourceMonth] = sourceBudget + amount;
+    applyEffectivePlanDeltas([{ categoryId: category.id, month: sourceMonth, amount }]);
     recordBudgetAddition(category.id, sourceMonth, amount, targetCarryUsageFloor, "new");
-    category.defaultAmount = Math.max(0, toInteger(state.plans[category.id][currentPeriod]));
+    category.defaultAmount = Math.max(0, configuredPlanAmount(category.id, currentPeriod));
     category.planRule = null;
     try {
       await persist(`${category.name}の${monthLabel(sourceMonth)}の予算に${formatCurrency(amount)}を追加しました`);
     } catch (error) {
-      state.plans[category.id][sourceMonth] = sourceBudget;
+      state.plans[category.id] = previousPlans;
       category.defaultAmount = previousDefaultAmount;
       category.planRule = previousPlanRule;
       state.budgetAdditions = previousBudgetAdditions;
+      resetDerivedDataCache();
       updateCalculatorAddBudgetSummary();
       throw error;
     }
     queueEntryAnimation("new", category.id, [], {}, entryAnimationBefore);
     closeDialog(calculatorDialog);
+    render();
+  }
+
+  async function savePendingTransactionEdit() {
+    if (!pendingTransaction || !pendingTransactionEdit || pendingTransactionSaving) return;
+    pendingTransactionSaving = true;
+    const editContext = pendingTransactionEdit;
+    const transactionIndex = state.transactions.findIndex((item) => item.id === editContext.transactionId);
+    if (transactionIndex < 0) {
+      cancelPendingTransaction();
+      showToast("編集対象の明細が見つかりませんでした");
+      return;
+    }
+
+    const liveTransaction = state.transactions[transactionIndex];
+    const storedTransaction = { ...pendingTransaction, updatedAt: appTimestamp() };
+    const category = categoryById(storedTransaction.categoryId);
+    const previousCategoryOverageHandling = category && category.overagePlanHandling;
+    const previousCategoryOverageLocked = category && category.overageHandlingLocked;
+    const previousIncomeClosures = new Map(Array.from(pendingIncomeForecastClosureKeys).map((key) => [
+      key,
+      state.incomeForecastClosures && state.incomeForecastClosures[key] === true
+    ]));
+
+    if (category && storedTransaction.direction === "expense" && !isUnexpectedExpenseCategory(category)) {
+      storedTransaction.overagePlanHandling = OVERAGE_PLAN_HANDLINGS.includes(storedTransaction.overagePlanHandling)
+        ? storedTransaction.overagePlanHandling
+        : categoryOveragePlanHandling(category);
+      if (pendingTransactionRememberOverageHandling) {
+        category.overagePlanHandling = storedTransaction.overagePlanHandling;
+        category.overageHandlingLocked = true;
+      }
+    } else {
+      delete storedTransaction.overagePlanHandling;
+      delete storedTransaction.overageDecisionVersion;
+      delete storedTransaction.overageDecisionParts;
+    }
+    pendingIncomeForecastClosureKeys.forEach((key) => { state.incomeForecastClosures[key] = true; });
+    state.transactions[transactionIndex] = storedTransaction;
+    resetDerivedDataCache();
+
+    try {
+      await persist("明細を更新しました");
+    } catch (error) {
+      state.transactions[transactionIndex] = liveTransaction;
+      if (category) {
+        category.overagePlanHandling = previousCategoryOverageHandling;
+        category.overageHandlingLocked = previousCategoryOverageLocked;
+      }
+      previousIncomeClosures.forEach((closed, key) => {
+        if (closed) state.incomeForecastClosures[key] = true;
+        else delete state.incomeForecastClosures[key];
+      });
+      resetDerivedDataCache();
+      pendingTransaction = null;
+      pendingTransactionEdit = null;
+      pendingTransactionEntryAnimation = null;
+      pendingTransactionRememberOverageHandling = false;
+      resetPendingIncomeShortfallState();
+      pendingTransactionSaving = false;
+      closeDialog(overageDecisionDialog);
+      closeDialog(incomeShortfallDialog);
+      render();
+      showToast(error instanceof Error ? error.message : "明細を更新できませんでした");
+      return;
+    }
+
+    const affectedCategoryIds = editContext.affectedCategoryIds || [editContext.original.categoryId, storedTransaction.categoryId];
+    const entryAnimationBefore = editContext.entryAnimationBefore;
+    pendingTransaction = null;
+    pendingTransactionEdit = null;
+    pendingTransactionEntryAnimation = null;
+    pendingTransactionRememberOverageHandling = false;
+    resetPendingIncomeShortfallState();
+    pendingTransactionSaving = false;
+    closeDialog(overageDecisionDialog);
+    closeDialog(incomeShortfallDialog);
+    if (storedTransaction.direction === "expense") {
+      const savedCategory = categoryById(storedTransaction.categoryId);
+      const originalCategory = categoryById(editContext.original.categoryId);
+      const targetCategory = isBudgetedExpenseCategory(savedCategory) ? savedCategory : originalCategory;
+      queueEntryAnimation("transaction-expense-adjust", targetCategory ? targetCategory.id : storedTransaction.categoryId, affectedCategoryIds, {
+        monthPlans: expensePlanChangesFromSnapshot(editContext.expenseScenariosBefore)
+      }, entryAnimationBefore);
+    } else {
+      const savedCategory = categoryById(storedTransaction.categoryId);
+      queueEntryAnimation(
+        savedCategory && isUnexpectedIncomeCategory(savedCategory) ? "transaction-unexpected-income" : "transaction-income",
+        storedTransaction.categoryId,
+        affectedCategoryIds,
+        {},
+        entryAnimationBefore
+      );
+    }
+    render();
+  }
+
+  async function savePendingTransactionDelete() {
+    if (!pendingTransaction || !pendingTransactionEdit || !pendingTransactionEdit.isDelete || pendingTransactionSaving) return;
+    pendingTransactionSaving = true;
+    const deleteContext = pendingTransactionEdit;
+    const transactionIndex = state.transactions.findIndex((item) => item.id === deleteContext.transactionId);
+    if (transactionIndex < 0) {
+      cancelPendingTransaction();
+      showToast("削除対象の明細が見つかりませんでした");
+      return;
+    }
+    const transaction = state.transactions[transactionIndex];
+    const previousIncomeClosures = new Map(Array.from(pendingIncomeForecastClosureKeys).map((key) => [
+      key,
+      state.incomeForecastClosures && state.incomeForecastClosures[key] === true
+    ]));
+    pendingIncomeForecastClosureKeys.forEach((key) => { state.incomeForecastClosures[key] = true; });
+    state.transactions.splice(transactionIndex, 1);
+    resetDerivedDataCache();
+    try {
+      await persist("明細を削除しました");
+    } catch (error) {
+      state.transactions.splice(Math.max(0, transactionIndex), 0, transaction);
+      previousIncomeClosures.forEach((closed, key) => {
+        if (closed) state.incomeForecastClosures[key] = true;
+        else delete state.incomeForecastClosures[key];
+      });
+      resetDerivedDataCache();
+      pendingTransactionSaving = false;
+      cancelPendingTransaction();
+      render();
+      showToast(error instanceof Error ? error.message : "明細を削除できませんでした");
+      return;
+    }
+
+    const category = categoryById(transaction.categoryId);
+    const entryAnimationBefore = deleteContext.entryAnimationBefore;
+    const expenseScenariosBefore = deleteContext.expenseScenariosBefore;
+    pendingTransaction = null;
+    pendingTransactionEdit = null;
+    pendingTransactionEntryAnimation = null;
+    pendingTransactionRememberOverageHandling = false;
+    resetPendingIncomeShortfallState();
+    pendingTransactionSaving = false;
+    closeDialog(overageDecisionDialog);
+    closeDialog(incomeShortfallDialog);
+    if (transaction.direction === "expense") {
+      queueEntryAnimation("transaction-expense-adjust", transaction.categoryId, [transaction.categoryId], {
+        monthPlans: expensePlanChangesFromSnapshot(expenseScenariosBefore)
+      }, entryAnimationBefore);
+    } else {
+      queueEntryAnimation(
+        category && isUnexpectedIncomeCategory(category) ? "transaction-unexpected-income" : "transaction-income",
+        transaction.categoryId,
+        [transaction.categoryId],
+        {},
+        entryAnimationBefore
+      );
+    }
     render();
   }
 
@@ -5135,22 +5914,56 @@
     const category = categoryById(transaction.categoryId);
     const amount = transaction.amount;
     const entryAnimation = pendingTransactionEntryAnimation;
+    const previousCategoryOverageHandling = category && category.overagePlanHandling;
+    const previousCategoryOverageLocked = category && category.overageHandlingLocked;
+    const previousIncomeClosures = new Map(Array.from(pendingIncomeForecastClosureKeys).map((key) => [
+      key,
+      state.incomeForecastClosures && state.incomeForecastClosures[key] === true
+    ]));
     const storedTransaction = {
       ...transaction,
       memo: String(memo || "").trim(),
       updatedAt: appTimestamp()
     };
+    if (category && storedTransaction.direction === "expense" && !isUnexpectedExpenseCategory(category)) {
+      storedTransaction.overagePlanHandling = OVERAGE_PLAN_HANDLINGS.includes(storedTransaction.overagePlanHandling)
+        ? storedTransaction.overagePlanHandling
+        : categoryOveragePlanHandling(category);
+      if (toInteger(storedTransaction.overageDecisionVersion) < 2 || !Array.isArray(storedTransaction.overageDecisionParts)) {
+        storedTransaction.overageDecisionParts = [createOverageDecisionPart(
+          storedTransaction.amount,
+          storedTransaction.overagePlanHandling
+        )];
+        storedTransaction.overageDecisionVersion = 2;
+      }
+      if (pendingTransactionRememberOverageHandling) {
+        category.overagePlanHandling = storedTransaction.overagePlanHandling;
+        category.overageHandlingLocked = true;
+      }
+    }
+    pendingIncomeForecastClosureKeys.forEach((key) => { state.incomeForecastClosures[key] = true; });
     state.transactions.push(storedTransaction);
     try {
       await persist(`${category ? category.name : "記録"} ${category && isSignedIncomeCategory(category) ? formatSignedCurrency(amount) : formatCurrency(amount)}を保存しました`);
     } catch (error) {
       state.transactions = state.transactions.filter((item) => item.id !== transaction.id);
+      if (category) {
+        category.overagePlanHandling = previousCategoryOverageHandling;
+        category.overageHandlingLocked = previousCategoryOverageLocked;
+      }
+      previousIncomeClosures.forEach((closed, key) => {
+        if (closed) state.incomeForecastClosures[key] = true;
+        else delete state.incomeForecastClosures[key];
+      });
       pendingTransactionSaving = false;
       showToast(error instanceof Error ? error.message : "記録を保存できませんでした");
       return;
     }
     pendingTransaction = null;
+    pendingTransactionEdit = null;
     pendingTransactionEntryAnimation = null;
+    pendingTransactionRememberOverageHandling = false;
+    resetPendingIncomeShortfallState();
     pendingTransactionSaving = false;
     closeDialog(memoDialog);
     if (entryAnimation) pendingEntryAnimation = entryAnimation;
@@ -5158,6 +5971,10 @@
   }
 
   function openTransactionEditor(id) {
+    if (pendingTransactionSaving) {
+      showToast("明細を保存中です。完了までお待ちください");
+      return;
+    }
     const transaction = state.transactions.find((item) => item.id === id);
     if (!transaction) return;
     const category = categoryById(transaction.categoryId);
@@ -5241,6 +6058,8 @@
       : "月名をタップして選択。棒の上は上下で概算入力、横スクロールは余白から操作できます。";
     const bulkAmount = document.querySelector("#plan-bulk-amount");
     if (bulkAmount) bulkAmount.min = isSignedIncomeGroup(group) ? String(-MAX_PLAN_SCALE_MAX) : "0";
+    const overagePanel = document.querySelector("#plan-overage-panel");
+    if (overagePanel) overagePanel.hidden = !EXPENSE_CATEGORY_GROUPS.includes(group);
   }
 
   function planEditorAllowsNegative() {
@@ -5256,6 +6075,10 @@
   }
 
   function openPlanEditor(categoryId) {
+    if (planSaving) {
+      showToast("計画を保存中です。完了してから別の項目を開いてください");
+      return;
+    }
     const category = categoryById(categoryId);
     if (!category) return;
     cancelPlanPointerTracking();
@@ -5273,6 +6096,8 @@
     limitCategoryGroupOptions(groupSelect, category.group);
     groupSelect.value = category.group;
     document.querySelector("#plan-category-color").value = category.color;
+    document.querySelector("#plan-overage-handling").value = categoryOveragePlanHandling(category);
+    document.querySelector("#plan-overage-locked").checked = category.overageHandlingLocked === true;
     setPlanReminderControls(category.reminder);
     updatePlanCategoryKind(category.group);
     document.querySelector("#plan-start-month").innerHTML = monthOptions(planRuleDraft && periodMonths().includes(planRuleDraft.startMonth) ? planRuleDraft.startMonth : periodMonths()[0]);
@@ -5352,10 +6177,12 @@
     document.querySelector("#plan-scale-step").textContent = allowsNegative ? `上下とも${formatCurrency(planBarStep())}刻み` : `棒は${formatCurrency(planBarStep())}刻み`;
   }
 
-  function updatePlanColumn(month, amount, syncInput = true) {
+  function updatePlanColumn(month, amount, syncInput = true, userEdit = false) {
     if (!planDraft || !Object.prototype.hasOwnProperty.call(planDraft, month)) return;
     const allowsNegative = planEditorAllowsNegative();
     const normalizedAmount = normalizePlanEditorAmount(amount);
+    const previousAmount = normalizePlanEditorAmount(planDraft[month]);
+    if (userEdit && normalizedAmount !== previousAmount) planRuleDraft = null;
     planDraft[month] = normalizedAmount;
     const column = monthlyPlanEditor.querySelector(`[data-plan-column="${month}"]`);
     if (!column) return;
@@ -5399,7 +6226,7 @@
   }
 
   function setPlanAmountFromPointer(barArea, clientY) {
-    updatePlanColumn(barArea.dataset.planSlider, amountForPlanPointer(barArea, clientY));
+    updatePlanColumn(barArea.dataset.planSlider, amountForPlanPointer(barArea, clientY), true, true);
   }
 
   function capturePlanPointer(barArea, pointerId) {
@@ -5474,8 +6301,11 @@
   }
 
   function commitPlanInput(event) {
-    if (!event.target.dataset.planMonth) return;
-    updatePlanColumn(event.target.dataset.planMonth, event.target.value);
+    const month = event.target.dataset.planMonth;
+    if (!month) return;
+    const previous = normalizePlanEditorAmount(planDraft && planDraft[month]);
+    const next = normalizePlanEditorAmount(event.target.value);
+    updatePlanColumn(month, next, true, next !== previous);
   }
 
   function applyPlanPattern() {
@@ -5500,7 +6330,7 @@
     if (selectedIndex < 0 || selectedIndex >= months.length - 1) return;
     const sourceMonth = months[selectedIndex];
     const nextMonth = months[selectedIndex + 1];
-    updatePlanColumn(nextMonth, planDraft[sourceMonth]);
+    updatePlanColumn(nextMonth, planDraft[sourceMonth], true, true);
     planRuleDraft = null;
     selectPlanMonth(nextMonth, true);
     showToast(`${monthLabel(sourceMonth)}の金額を${monthLabel(nextMonth)}へコピーしました`);
@@ -5542,6 +6372,79 @@
     }
   }
 
+  function debugSection(builder) {
+    try { return builder(); }
+    catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+  }
+
+  async function exportDebugInfo() {
+    const capturedAt = new Date();
+    const appTime = appNow();
+    let storage = null;
+    try {
+      storage = navigator.storage && typeof navigator.storage.estimate === "function" ? await navigator.storage.estimate() : null;
+    } catch (error) {
+      storage = { error: error instanceof Error ? error.message : String(error) };
+    }
+    const cache = derivedCache();
+    const payload = {
+      app: APP_NAME,
+      appVersion: APP_VERSION,
+      backupVersion: BACKUP_VERSION,
+      capturedAt: capturedAt.toISOString(),
+      appDateTime: appTime.toISOString(),
+      view: { currentView, currentPeriod, analysisPeriod, settingsPane },
+      project: { current: currentProject, defaultProjectId, projects },
+      state: JSON.parse(JSON.stringify(state)),
+      diagnostics: {
+        months: debugSection(() => periodMonths().map((month) => ({ month, range: periodRange(month), aggregate: aggregateMonth(month) }))),
+        forecast: debugSection(() => projectEndForecastFromAggregates(periodMonths().map(aggregateMonth))),
+        categories: debugSection(() => state.categories.map((category) => ({
+          id: category.id,
+          name: category.name,
+          group: category.group,
+          active: category.active !== false,
+          overagePlanHandling: category.overagePlanHandling,
+          overageHandlingLocked: category.overageHandlingLocked === true,
+          months: periodMonths().map((month) => ({
+            month,
+            configuredPlan: configuredPlanAmount(category.id, month),
+            effectivePlan: planAmount(category.id, month),
+            actual: actualAmount(category.id, month),
+            ...(isBudgetedExpenseCategory(category) ? { budget: categoryBudgetStats(category.id, month) } : {})
+          })),
+          ...(isBudgetedExpenseCategory(category) ? { scenario: expensePlanScenario(category.id) } : {})
+        }))),
+        cache: {
+          transactionMonths: Array.from(cache.transactionsByMonth.keys()),
+          transactionCategoryMonthEntries: cache.transactionsByCategoryMonth.size,
+          actualAmountEntries: cache.actualAmounts.size,
+          expenseScenarioEntries: cache.expensePlanScenarios.size,
+          aggregateMonthEntries: cache.aggregateMonths.size
+        }
+      },
+      environment: {
+        userAgent: navigator.userAgent,
+        language: navigator.language,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        online: navigator.onLine,
+        viewport: { width: window.innerWidth, height: window.innerHeight, pixelRatio: window.devicePixelRatio },
+        screen: window.screen ? { width: window.screen.width, height: window.screen.height } : null,
+        standalone: Boolean(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches),
+        reducedMotion: Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches),
+        serviceWorker: {
+          controlled: Boolean(navigator.serviceWorker && navigator.serviceWorker.controller),
+          active: Boolean(serviceWorkerRegistration && serviceWorkerRegistration.active),
+          waiting: Boolean(serviceWorkerRegistration && serviceWorkerRegistration.waiting)
+        },
+        storage
+      }
+    };
+    const stamp = `${localDateKey(capturedAt)}-${pad(capturedAt.getHours())}${pad(capturedAt.getMinutes())}${pad(capturedAt.getSeconds())}`;
+    downloadBlob(JSON.stringify(payload, null, 2), "application/json", `budget-minus-debug-${stamp}.json`);
+    showToast("デバッグ情報を書き出しました");
+  }
+
   function validateImportedState(imported) {
     if (!imported || typeof imported !== "object" || !imported.settings || !Array.isArray(imported.categories) || !Array.isArray(imported.transactions) || !imported.plans || typeof imported.plans !== "object") {
       throw new Error("バックアップのデータ構造が不正です。");
@@ -5558,6 +6461,8 @@
       if (!category || !isSafeImportedId(category.id) || ids.has(String(category.id)) || !["variable", "fixed", "income", SIGNED_INCOME_GROUP].includes(category.group)) throw new Error("バックアップの種別データが不正です。");
       if (category.planScaleMax !== undefined && (!Number.isFinite(Number(category.planScaleMax)) || Number(category.planScaleMax) <= 0 || Number(category.planScaleMax) > MAX_PLAN_SCALE_MAX)) throw new Error(`${category.name || "種別"}の棒上限額が不正です。`);
       if (category.dailyBudgetEnabled !== undefined && typeof category.dailyBudgetEnabled !== "boolean") throw new Error(`${category.name || "種別"}の日毎予算設定が不正です。`);
+      if (category.overagePlanHandling !== undefined && !OVERAGE_PLAN_HANDLINGS.includes(category.overagePlanHandling)) throw new Error(`${category.name || "種別"}の超過時設定が不正です。`);
+      if (category.overageHandlingLocked !== undefined && typeof category.overageHandlingLocked !== "boolean") throw new Error(`${category.name || "種別"}の超過時確認設定が不正です。`);
       ids.add(String(category.id));
       const categoryPlans = imported.plans[category.id] || {};
       Object.entries(categoryPlans).forEach(([month, amount]) => {
@@ -5566,11 +6471,43 @@
       if (category.planRule && (!isValidMonthKey(category.planRule.startMonth) || toInteger(category.planRule.interval) < 1 || toInteger(category.planRule.interval) > 36 || (!isSignedIncomeCategory(category) && toInteger(category.planRule.amount, -1) < 0))) throw new Error(`${category.name || "種別"}の一括設定ルールが不正です。`);
     });
     const transactionIds = new Set();
+    const overageDecisionPartIds = new Set();
+    const overageDecisionOrders = new Set();
     imported.transactions.forEach((transaction) => {
       if (!transaction) throw new Error("バックアップの実績データが不正です。");
       const category = imported.categories.find((item) => String(item.id) === String(transaction.categoryId));
       const allowsNegative = isSignedIncomeCategory(category);
       if (!isSafeImportedId(transaction.id) || transactionIds.has(String(transaction.id)) || !ids.has(String(transaction.categoryId)) || !["expense", "income"].includes(transaction.direction) || !isValidDateKey(transaction.date) || (allowsNegative ? toInteger(transaction.amount) === 0 : toInteger(transaction.amount) <= 0)) throw new Error("バックアップの実績データが不正です。");
+      if (transaction.overagePlanHandling !== undefined && !OVERAGE_PLAN_HANDLINGS.includes(transaction.overagePlanHandling)) throw new Error("バックアップの超過処理履歴が不正です。");
+      const overageDecisionVersion = Math.max(0, toInteger(transaction.overageDecisionVersion));
+      if (overageDecisionVersion >= 2 && !Array.isArray(transaction.overageDecisionParts)) throw new Error("バックアップの超過処理明細が不足しています。");
+      if (transaction.overageDecisionParts !== undefined) {
+        const invalidPart = !Array.isArray(transaction.overageDecisionParts)
+          || overageDecisionVersion < 2
+          || transaction.direction !== "expense"
+          || !category
+          || !["variable", "fixed"].includes(category.group)
+          || category.isUnexpectedExpense === true
+          || transaction.overageDecisionParts.some((part) => {
+            const partId = part && String(part.id || "");
+            const decisionOrder = part && part.decisionOrder !== undefined ? Number(part.decisionOrder) : 0;
+            if (!part
+              || !isSafeImportedId(partId)
+              || overageDecisionPartIds.has(partId)
+              || toInteger(part.amount) <= 0
+              || !OVERAGE_PLAN_HANDLINGS.includes(part.overagePlanHandling)
+              || (part.legacyBatch !== undefined && typeof part.legacyBatch !== "boolean")
+              || (part.decisionOrder !== undefined && (!Number.isSafeInteger(decisionOrder) || decisionOrder <= 0 || overageDecisionOrders.has(decisionOrder)))
+              || Number.isNaN(new Date(part.decidedAt).getTime())) return true;
+            overageDecisionPartIds.add(partId);
+            if (decisionOrder > 0) overageDecisionOrders.add(decisionOrder);
+            return false;
+          });
+        if (invalidPart
+          || transaction.overageDecisionParts.reduce((sum, part) => sum + toInteger(part.amount), 0) !== Math.max(0, toInteger(transaction.amount))) {
+          throw new Error("バックアップの超過処理明細が不正です。");
+        }
+      }
       if (directionForImportedCategory(category) !== transaction.direction) throw new Error("バックアップの実績区分と種別が一致しません。");
       transactionIds.add(String(transaction.id));
     });
@@ -5633,6 +6570,7 @@
     else if (target.dataset.action === "toggle-unexpected-entries") { unexpectedEntriesExpanded = !unexpectedEntriesExpanded; render(); }
     else if (target.dataset.action === "toggle-history") { allTransactionsShown = !allTransactionsShown; render(); }
     else if (target.dataset.action === "open-developer-clock") openDeveloperClockDialog();
+    else if (target.dataset.action === "export-debug") await exportDebugInfo();
     else if (target.dataset.action === "export-json") await exportJson();
     else if (target.dataset.action === "import-json") { importFile.accept = "application/json,.json"; importFile.value = ""; importFile.click(); }
     else if (target.dataset.action === "load-project") await loadSelectedProject();
@@ -5696,27 +6634,35 @@
     const startDate = document.querySelector("#start-date").value;
     const endDate = document.querySelector("#end-date").value;
     const themeId = themePresetFor(document.querySelector('input[name="theme-id"]:checked')?.value).id;
-    const overagePlanHandling = document.querySelector('input[name="overage-plan-handling"]:checked')?.value;
     if (!startDate || !endDate || parseLocalDate(endDate) < parseLocalDate(startDate)) {
       showToast("終了日は開始日以降にしてください");
       return;
     }
-    if (closingDay !== Number(state.settings.closingDay) && state.transactions.length && !window.confirm("締日を変えると、入力済み実績が所属する月も再計算されます。変更しますか？")) return;
+    const closingDayChanged = closingDay !== Number(state.settings.closingDay);
+    if (closingDayChanged && state.transactions.length && !window.confirm("締日を変えると、入力済み実績が所属する月と、収入の入力完了状態が再計算されます。変更しますか？")) return;
     const previousSettings = state.settings;
+    const previousPlans = JSON.parse(JSON.stringify(state.plans));
+    const previousIncomeForecastClosures = { ...(state.incomeForecastClosures || {}) };
+    const previousCurrentPeriod = currentPeriod;
+    const previousAnalysisPeriod = analysisPeriod;
     state.settings = {
       ...state.settings,
       closingDay,
       dateRolloverTime,
       startDate,
       endDate,
-      themeId,
-      overagePlanHandling: [OVERAGE_PLAN_HANDLING_FORECAST, OVERAGE_PLAN_HANDLING_NEAREST, OVERAGE_PLAN_HANDLING_EVEN].includes(overagePlanHandling)
-        ? overagePlanHandling
-        : OVERAGE_PLAN_HANDLING_NEAREST
+      themeId
     };
+    // A closure means "this period's income entry is complete". Once the
+    // closing day changes, the same YYYY-MM label can contain different dates,
+    // so retaining it could silently mark a newly-composed period complete.
+    if (closingDayChanged) state.incomeForecastClosures = {};
+    resetDerivedDataCache();
     const months = periodMonths();
     if (months.length > 120) {
       state.settings = previousSettings;
+      state.incomeForecastClosures = previousIncomeForecastClosures;
+      resetDerivedDataCache();
       showToast("管理期間は最大120ヶ月にしてください");
       return;
     }
@@ -5729,13 +6675,29 @@
     currentPeriod = currentPeriodForToday();
     analysisPeriod = currentPeriod;
     applyTheme();
-    await persist("基本設定を保存しました");
-    render();
+    try {
+      await persist("基本設定を保存しました");
+      render();
+    } catch (error) {
+      state.settings = previousSettings;
+      state.plans = previousPlans;
+      state.incomeForecastClosures = previousIncomeForecastClosures;
+      currentPeriod = previousCurrentPeriod;
+      analysisPeriod = previousAnalysisPeriod;
+      resetDerivedDataCache();
+      applyTheme();
+      render();
+      throw error;
+    }
   }
 
   document.querySelector(".bottom-nav").addEventListener("click", (event) => {
     const button = event.target.closest("[data-view]");
     if (!button) return;
+    if (pendingTransactionSaving || calculatorBudgetSaving || planSaving) {
+      showToast("保存中です。完了までお待ちください");
+      return;
+    }
     currentView = button.dataset.view;
     render();
     viewHost.focus({ preventScroll: true });
@@ -5820,10 +6782,10 @@
     if (!event.target.closest("[data-shift-distribution-amount]")) return;
     updateCalculatorShiftTargetSummary();
   });
-  document.querySelector("#calculator-shift-confirm").addEventListener("click", () => shiftCalculatorBudget().catch((error) => showToast(error.message)));
+  document.querySelector("#calculator-shift-confirm").addEventListener("click", () => runCalculatorBudgetMutation(shiftCalculatorBudget).catch((error) => showToast(error.message)));
   document.querySelector("#calculator-return-priority").addEventListener("change", updateCalculatorReturnSummary);
   document.querySelector("#calculator-return-amount").addEventListener("input", updateCalculatorReturnSummary);
-  document.querySelector("#calculator-return-confirm").addEventListener("click", () => returnCalculatorBudget().catch((error) => showToast(error.message)));
+  document.querySelector("#calculator-return-confirm").addEventListener("click", () => runCalculatorBudgetMutation(returnCalculatorBudget).catch((error) => showToast(error.message)));
   document.querySelector("#calculator-add-budget-mode-select").addEventListener("change", (event) => {
     calculatorAddBudgetMode = ["new", "carry", "borrow", "reallocate"].includes(event.target.value)
       ? event.target.value
@@ -5884,7 +6846,7 @@
     document.querySelector(`#calculator-add-budget-${mode}-even-split`).addEventListener("click", () => distributeCalculatorExternalFundingEvenly(mode));
   });
   document.querySelector("#calculator-add-budget-amount").addEventListener("input", updateCalculatorAddBudgetSummary);
-  document.querySelector("#calculator-add-budget-confirm").addEventListener("click", () => addCalculatorBudget().catch((error) => showToast(error.message)));
+  document.querySelector("#calculator-add-budget-confirm").addEventListener("click", () => runCalculatorBudgetMutation(addCalculatorBudget).catch((error) => showToast(error.message)));
   document.querySelector("#calculator-form").addEventListener("submit", (event) => event.preventDefault());
 
   document.querySelector("#app-version-button").addEventListener("click", () => {
@@ -5896,6 +6858,14 @@
 
   document.querySelectorAll("[data-close]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (button.dataset.close === "calculator-dialog" && calculatorBudgetSaving) {
+        showToast("予算を保存中です。完了までお待ちください");
+        return;
+      }
+      if (button.dataset.close === "plan-dialog" && planSaving) {
+        showToast("計画を保存中です。完了までお待ちください");
+        return;
+      }
       if (button.dataset.close === "memo-dialog" && pendingTransaction) {
         savePendingTransaction("").catch((error) => showToast(error.message));
         return;
@@ -5903,7 +6873,53 @@
       closeDialog(document.querySelector(`#${button.dataset.close}`));
     });
   });
-  planDialog.addEventListener("cancel", cancelPlanPointerTracking);
+  document.querySelectorAll("[data-cancel-pending-transaction]").forEach((button) => button.addEventListener("click", cancelPendingTransaction));
+  overageDecisionDialog.addEventListener("change", (event) => {
+    if (event.target.name === "pending-overage-handling") updatePendingOverageDecision();
+  });
+  document.querySelector("#overage-decision-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!pendingTransaction) return;
+    applyPendingOverageHandling(selectedPendingOverageHandling());
+    pendingTransactionRememberOverageHandling = document.querySelector("#overage-decision-remember").checked;
+    if (!beginPendingIncomeShortfallFlow()) finishPendingTransactionDecisionFlow();
+  });
+  overageDecisionDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    cancelPendingTransaction();
+  });
+  document.querySelector("#income-shortfall-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (pendingIncomeShortfallCurrent) {
+      pendingIncomeForecastClosureKeys.add(incomeForecastClosureKey(
+        pendingIncomeShortfallCurrent.categoryId,
+        pendingIncomeShortfallCurrent.month
+      ));
+    }
+    pendingIncomeShortfallCurrent = null;
+    openNextPendingIncomeShortfall();
+  });
+  document.querySelector("#income-shortfall-more").addEventListener("click", () => {
+    pendingIncomeShortfallCurrent = null;
+    openNextPendingIncomeShortfall();
+  });
+  incomeShortfallDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    cancelPendingTransaction();
+  });
+  calculatorDialog.addEventListener("cancel", (event) => {
+    if (!calculatorBudgetSaving) return;
+    event.preventDefault();
+    showToast("予算を保存中です。完了までお待ちください");
+  });
+  planDialog.addEventListener("cancel", (event) => {
+    if (planSaving) {
+      event.preventDefault();
+      showToast("計画を保存中です。完了までお待ちください");
+      return;
+    }
+    cancelPlanPointerTracking();
+  });
   planDialog.addEventListener("close", cancelPlanPointerTracking);
 
   document.querySelector("#memo-form").addEventListener("submit", (event) => {
@@ -5928,6 +6944,10 @@
 
   document.querySelector("#transaction-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (pendingTransactionSaving) {
+      showToast("明細を保存中です。完了までお待ちください");
+      return;
+    }
     const id = document.querySelector("#transaction-id").value;
     const transaction = state.transactions.find((item) => item.id === id);
     if (!transaction) return;
@@ -5935,6 +6955,10 @@
     const category = categoryById(categoryId);
     if (!category) return;
     const rawAmount = toInteger(document.querySelector("#transaction-amount").value);
+    if (rawAmount < 0 && !isSignedIncomeCategory(category)) {
+      showToast("マイナスの実績は「収入（マイナス込み）」の項目だけに保存できます");
+      return;
+    }
     const amount = isSignedIncomeCategory(category) ? rawAmount : Math.max(1, rawAmount);
     if (isSignedIncomeCategory(category) && amount === 0) {
       showToast("収入（マイナス込み）の実績は0円以外で入力してください");
@@ -5947,62 +6971,103 @@
     }
     const previousTransaction = { ...transaction };
     const affectedCategoryIds = [previousTransaction.categoryId, categoryId];
-    const entryAnimationBefore = transaction.direction === "expense"
-      ? entryAnimationSnapshot(affectedCategoryIds)
-      : null;
+    const entryAnimationBefore = entryAnimationSnapshot(affectedCategoryIds);
     const expenseScenariosBefore = transaction.direction === "expense"
       ? expensePlanScenarioSnapshot(affectedCategoryIds)
       : null;
-    transaction.categoryId = categoryId;
-    transaction.amount = amount;
-    transaction.date = date;
-    transaction.memo = document.querySelector("#transaction-memo").value.trim();
-    transaction.updatedAt = appTimestamp();
+    const candidate = {
+      ...previousTransaction,
+      categoryId,
+      amount,
+      date,
+      memo: document.querySelector("#transaction-memo").value.trim(),
+      updatedAt: appTimestamp()
+    };
+    let overageDecisionPartId = "";
+    let expenseBudgetChanged = false;
+    if (candidate.direction === "expense" && !isUnexpectedExpenseCategory(category)) {
+      const originalMonth = periodForDate(previousTransaction.date);
+      const candidateMonth = periodForDate(candidate.date);
+      const sameBudget = previousTransaction.categoryId === categoryId && originalMonth === candidateMonth;
+      expenseBudgetChanged = !sameBudget || toInteger(previousTransaction.amount) !== amount;
+      if (expenseBudgetChanged) {
+        const adjustment = adjustedOverageDecisionParts(previousTransaction, amount, category, sameBudget);
+        candidate.overageDecisionParts = adjustment.parts;
+        candidate.overageDecisionVersion = 2;
+        overageDecisionPartId = adjustment.decisionPartId;
+        candidate.overagePlanHandling = overageDecisionPartId
+          ? categoryOveragePlanHandling(category)
+          : transactionOveragePlanHandling(previousTransaction, category);
+      } else {
+        candidate.overagePlanHandling = transactionOveragePlanHandling(previousTransaction, category);
+      }
+    } else {
+      delete candidate.overagePlanHandling;
+      delete candidate.overageDecisionVersion;
+      delete candidate.overageDecisionParts;
+    }
+
+    pendingTransaction = candidate;
+    pendingTransactionEdit = {
+      transactionId: previousTransaction.id,
+      original: previousTransaction,
+      candidate,
+      affectedCategoryIds,
+      entryAnimationBefore,
+      expenseScenariosBefore,
+      decisionPartId: overageDecisionPartId,
+      expenseBudgetChanged
+    };
+    pendingTransactionEntryAnimation = null;
+    pendingTransactionRememberOverageHandling = false;
+    resetPendingIncomeShortfallState();
     closeDialog(transactionDialog);
-    try {
-      await persist("明細を更新しました");
-    } catch (error) {
-      Object.assign(transaction, previousTransaction);
-      render();
-      throw error;
+
+    if (candidate.direction === "expense" && !isUnexpectedExpenseCategory(category)) {
+      const handling = candidate.overagePlanHandling;
+      const projection = preparePendingTransactionEntryAnimation(category, entryAnimationBefore, handling);
+      // Existing decision parts keep their original policies. Only a newly
+      // added/moved amount receives a new decision, so an older edit cannot
+      // silently move a later entry's overage to another policy.
+      const needsOverageDecision = projection && projection.currentOverage > 0 && Boolean(overageDecisionPartId);
+      if (needsOverageDecision && category.overageHandlingLocked !== true) {
+        openPendingOverageDecision(category, entryAnimationBefore);
+        return;
+      }
     }
-    if (transaction.direction === "expense") {
-      const targetCategory = isBudgetedExpenseCategory(category)
-        ? category
-        : categoryById(previousTransaction.categoryId);
-      queueEntryAnimation("transaction-expense-adjust", targetCategory ? targetCategory.id : categoryId, affectedCategoryIds, {
-        monthPlans: expensePlanChangesFromSnapshot(expenseScenariosBefore)
-      }, entryAnimationBefore);
-    }
-    render();
+
+    if (!beginPendingIncomeShortfallFlow()) await savePendingTransactionEdit();
   });
 
   document.querySelector("#transaction-delete").addEventListener("click", async () => {
+    if (pendingTransactionSaving) {
+      showToast("明細を保存中です。完了までお待ちください");
+      return;
+    }
     const id = document.querySelector("#transaction-id").value;
     const transaction = state.transactions.find((item) => item.id === id);
     if (!transaction || !window.confirm(`${formatCurrency(transaction.amount)}の記録を削除しますか？`)) return;
-    const transactionIndex = state.transactions.findIndex((item) => item.id === id);
-    const entryAnimationBefore = transaction.direction === "expense"
-      ? entryAnimationSnapshot([transaction.categoryId])
-      : null;
+    const entryAnimationBefore = entryAnimationSnapshot([transaction.categoryId]);
     const expenseScenariosBefore = transaction.direction === "expense"
       ? expensePlanScenarioSnapshot([transaction.categoryId])
       : null;
-    state.transactions = state.transactions.filter((item) => item.id !== id);
+    pendingTransaction = { ...transaction, amount: 0 };
+    pendingTransactionEdit = {
+      transactionId: transaction.id,
+      original: { ...transaction },
+      candidate: null,
+      affectedCategoryIds: [transaction.categoryId],
+      entryAnimationBefore,
+      expenseScenariosBefore,
+      decisionPartId: "",
+      expenseBudgetChanged: transaction.direction === "expense",
+      isDelete: true
+    };
+    pendingTransactionEntryAnimation = null;
+    pendingTransactionRememberOverageHandling = false;
+    resetPendingIncomeShortfallState();
     closeDialog(transactionDialog);
-    try {
-      await persist("明細を削除しました");
-    } catch (error) {
-      state.transactions.splice(Math.max(0, transactionIndex), 0, transaction);
-      render();
-      throw error;
-    }
-    if (transaction.direction === "expense") {
-      queueEntryAnimation("transaction-expense-adjust", transaction.categoryId, [transaction.categoryId], {
-        monthPlans: expensePlanChangesFromSnapshot(expenseScenariosBefore)
-      }, entryAnimationBefore);
-    }
-    render();
+    if (!beginPendingIncomeShortfallFlow()) await savePendingTransactionDelete();
   });
 
   document.querySelector("#category-form").addEventListener("submit", async (event) => {
@@ -6026,10 +7091,29 @@
       category.active = true;
       category.archivedAt = null;
       if (group !== "variable") category.dailyBudgetEnabled = false;
+      if (EXPENSE_CATEGORY_GROUPS.includes(group) && !isUnexpectedExpenseCategory(category)) {
+        category.overagePlanHandling = categoryOveragePlanHandling(category);
+        category.overageHandlingLocked = category.overageHandlingLocked === true;
+      } else {
+        delete category.overagePlanHandling;
+        delete category.overageHandlingLocked;
+      }
     } else {
       const categoryId = makeId("category");
       const order = Math.max(0, ...state.categories.map((category) => toInteger(category.order))) + 10;
-      state.categories.push({ id: categoryId, name, group, color, order, active: true, defaultAmount: 0, planScaleMax: DEFAULT_PLAN_SCALE_MAX, dailyBudgetEnabled: false, reminder: normalizeReminderConfig() });
+      state.categories.push({
+        id: categoryId,
+        name,
+        group,
+        color,
+        order,
+        active: true,
+        defaultAmount: 0,
+        planScaleMax: DEFAULT_PLAN_SCALE_MAX,
+        dailyBudgetEnabled: false,
+        reminder: normalizeReminderConfig(),
+        ...(EXPENSE_CATEGORY_GROUPS.includes(group) ? { overagePlanHandling: OVERAGE_PLAN_HANDLING_NEAREST, overageHandlingLocked: false } : {})
+      });
       state.plans[categoryId] = {};
       periodMonths().forEach((month) => { state.plans[categoryId][month] = 0; });
     }
@@ -6039,6 +7123,10 @@
   });
 
   async function deleteCategory(id, dialog) {
+    if (planSaving && dialog === planDialog) {
+      showToast("計画を保存中です。完了してから削除してください");
+      return;
+    }
     const category = categoryById(id);
     if (!category || !window.confirm(`${category.name}を非表示にしますか？入力済み実績は残ります。`)) return;
     const hasTransactions = state.transactions.some((item) => item.categoryId === id);
@@ -6083,7 +7171,7 @@
   monthlyPlanEditor.addEventListener("input", (event) => {
     if (!event.target.dataset.planMonth) return;
     selectPlanMonth(event.target.dataset.planMonth);
-    updatePlanColumn(event.target.dataset.planMonth, event.target.value, false);
+    updatePlanColumn(event.target.dataset.planMonth, event.target.value, false, true);
   });
   monthlyPlanEditor.addEventListener("focusin", (event) => {
     if (event.target.dataset.planMonth) selectPlanMonth(event.target.dataset.planMonth);
@@ -6138,11 +7226,13 @@
     const maximum = Math.abs(currentAmount) > planScaleDraft ? MAX_PLAN_SCALE_MAX : planScaleDraft;
     const minimum = allowsNegative ? -maximum : 0;
     const roundedAmount = allowsNegative ? roundSignedAmountToStep(nextAmount, barStep) : roundAmountToStep(nextAmount, barStep);
-    updatePlanColumn(month, clamp(roundedAmount, minimum, maximum));
+    updatePlanColumn(month, clamp(roundedAmount, minimum, maximum), true, true);
   });
   document.querySelector("#plan-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const category = categoryById(editingPlanCategoryId);
+    if (planSaving) return;
+    const categoryId = editingPlanCategoryId;
+    const category = categoryById(categoryId);
     if (!category || !planDraft) return;
     const name = document.querySelector("#plan-category-name-input").value.trim();
     const group = document.querySelector("#plan-category-group").value;
@@ -6156,30 +7246,74 @@
       showToast("実績がある項目は支出・収入の区分を変更できません");
       return;
     }
-    planScaleDraft = normalizePlanScaleMax(document.querySelector("#plan-scale-max").value);
-    const allowsNegative = isSignedIncomeGroup(group);
-    const normalizedPlanDraft = {};
-    Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = allowsNegative ? toInteger(amount) : Math.max(0, toInteger(amount)); });
-    const configuredPlanDraft = configuredPlansFromEffectiveDraft(
-      editingPlanCategoryId,
-      normalizedPlanDraft,
-      EXPENSE_CATEGORY_GROUPS.includes(group) && !isUnexpectedExpenseCategory(category)
-    );
-    state.plans[editingPlanCategoryId] = { ...(state.plans[editingPlanCategoryId] || {}), ...configuredPlanDraft };
-    category.name = name;
-    category.group = group;
-    category.color = color;
-    category.active = true;
-    category.archivedAt = null;
-    if (group !== "variable") category.dailyBudgetEnabled = false;
-    category.defaultAmount = allowsNegative ? toInteger(configuredPlanDraft[currentPeriod] ?? Object.values(configuredPlanDraft)[0]) : Math.max(0, toInteger(configuredPlanDraft[currentPeriod] ?? Object.values(configuredPlanDraft)[0]));
-    category.planRule = planRuleDraft ? { ...planRuleDraft, amount: allowsNegative ? toInteger(planRuleDraft.amount) : Math.max(0, toInteger(planRuleDraft.amount)) } : null;
-    category.planScaleMax = planScaleDraft;
-    category.reminder = planReminderConfigFromForm();
-    cancelPlanPointerTracking();
-    closeDialog(planDialog);
-    await persist(`${category.name}の項目と計画を保存しました`);
-    render();
+    if (isSignedIncomeCategory(category) && group === "income") {
+      const hasNegativeValues = state.transactions.some((item) => item.categoryId === category.id && toInteger(item.amount) < 0)
+        || Object.values(planDraft).some((amount) => toInteger(amount) < 0);
+      if (hasNegativeValues) {
+        showToast("マイナスの計画または実績があるため、通常の収入区分へ変更できません");
+        return;
+      }
+    }
+    const submitButton = event.submitter || event.target.querySelector('button[type="submit"]');
+    const previousCategory = JSON.parse(JSON.stringify(category));
+    const previousPlans = { ...(state.plans[categoryId] || {}) };
+    planSaving = true;
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "保存中…";
+    }
+    try {
+      planScaleDraft = normalizePlanScaleMax(document.querySelector("#plan-scale-max").value);
+      const allowsNegative = isSignedIncomeGroup(group);
+      const normalizedPlanDraft = {};
+      Object.entries(planDraft).forEach(([month, amount]) => { normalizedPlanDraft[month] = allowsNegative ? toInteger(amount) : Math.max(0, toInteger(amount)); });
+      const planValuesChanged = periodMonths().some((month) => (
+        toInteger(normalizedPlanDraft[month]) !== toInteger(planAmount(categoryId, month))
+      ));
+      const configuredPlanDraft = planValuesChanged
+        ? configuredPlansFromEffectiveDraft(
+          categoryId,
+          normalizedPlanDraft,
+          EXPENSE_CATEGORY_GROUPS.includes(group) && !isUnexpectedExpenseCategory(category),
+          { ...category, group }
+        )
+        : Object.fromEntries(periodMonths().map((month) => [month, configuredPlanAmount(categoryId, month)]));
+      state.plans[categoryId] = { ...(state.plans[categoryId] || {}), ...configuredPlanDraft };
+      category.name = name;
+      category.group = group;
+      category.color = color;
+      category.active = true;
+      category.archivedAt = null;
+      if (group !== "variable") category.dailyBudgetEnabled = false;
+      category.defaultAmount = normalizePlanAmount(category, configuredPlanDraft[currentPeriod] ?? Object.values(configuredPlanDraft)[0]);
+      category.planRule = planRuleDraft ? { ...planRuleDraft, amount: normalizePlanAmount(category, planRuleDraft.amount) } : null;
+      category.planScaleMax = planScaleDraft;
+      category.reminder = planReminderConfigFromForm();
+      if (EXPENSE_CATEGORY_GROUPS.includes(group) && !isUnexpectedExpenseCategory(category)) {
+        const selectedHandling = document.querySelector("#plan-overage-handling").value;
+        category.overagePlanHandling = OVERAGE_PLAN_HANDLINGS.includes(selectedHandling) ? selectedHandling : OVERAGE_PLAN_HANDLING_NEAREST;
+        category.overageHandlingLocked = document.querySelector("#plan-overage-locked").checked;
+      } else {
+        delete category.overagePlanHandling;
+        delete category.overageHandlingLocked;
+      }
+      cancelPlanPointerTracking();
+      await persist(`${category.name}の項目と計画を保存しました`);
+      closeDialog(planDialog);
+      render();
+    } catch (error) {
+      Object.keys(category).forEach((key) => delete category[key]);
+      Object.assign(category, previousCategory);
+      state.plans[categoryId] = previousPlans;
+      resetDerivedDataCache();
+      showToast(error instanceof Error ? error.message : "計画を保存できませんでした");
+    } finally {
+      planSaving = false;
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = "項目と計画を保存";
+      }
+    }
   });
 
   importFile.addEventListener("change", async () => {
