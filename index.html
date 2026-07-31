@@ -79,35 +79,6 @@
         </div>
       </div>
       <button id="calculator-budget-back" type="button" class="button small secondary calculator-budget-back" hidden>‹ 金額の入力に戻る</button>
-      <section id="calculator-budget-progress" class="calculator-budget-progress" aria-label="予算操作の進行状況" hidden>
-        <span class="is-current" data-budget-progress-step="setup"><b>1</b>設定</span>
-        <i aria-hidden="true"></i>
-        <span data-budget-progress-step="confirm"><b>2</b>確認</span>
-        <i aria-hidden="true"></i>
-        <span data-budget-progress-step="complete"><b>3</b>完了</span>
-        <em id="calculator-budget-progress-operation"></em>
-      </section>
-      <section id="calculator-budget-confirmation" class="calculator-budget-confirmation" aria-labelledby="calculator-budget-confirmation-title" hidden>
-        <div class="calculator-budget-confirmation-heading">
-          <p class="eyebrow">REVIEW</p>
-          <h3 id="calculator-budget-confirmation-title">操作内容を確認</h3>
-          <p id="calculator-budget-confirmation-copy">内容を確認してから実行します。</p>
-        </div>
-        <section id="calculator-budget-confirmation-summary" class="calculator-budget-confirmation-summary" aria-live="polite"></section>
-        <section id="calculator-budget-confirmation-visual" class="calculator-budget-confirmation-visual" aria-live="polite"></section>
-        <div class="calculator-budget-confirmation-actions">
-          <button id="calculator-budget-confirm-back" type="button" class="button secondary">設定を修正する</button>
-          <button id="calculator-budget-final-confirm" type="button" class="button primary">この内容で実行する</button>
-        </div>
-      </section>
-      <section id="calculator-budget-completion" class="calculator-budget-completion" aria-labelledby="calculator-budget-completion-title" hidden>
-        <span class="calculator-budget-completion-mark" aria-hidden="true">✓</span>
-        <p class="eyebrow">COMPLETED</p>
-        <h3 id="calculator-budget-completion-title">予算操作が完了しました</h3>
-        <p id="calculator-budget-completion-copy"></p>
-        <section id="calculator-budget-completion-summary" class="calculator-budget-completion-summary" aria-live="polite"></section>
-        <button id="calculator-budget-completion-close" type="button" class="button primary">入力画面に戻る</button>
-      </section>
       <section id="calculator-return-panel" class="calculator-return-panel" aria-labelledby="calculator-return-title" hidden>
         <div class="calculator-budget-panel-heading"><p class="eyebrow">BUDGET RETURN</p><h3 id="calculator-return-title">使わない予算を返納</h3><p id="calculator-return-source" class="help-text calculator-budget-source"></p></div>
         <label id="calculator-return-priority-field" class="calculator-budget-priority" hidden><span class="calculator-operation-step">1. 返納元の優先順</span><select id="calculator-return-priority"><option value="monthly">今月の予算から先に返納</option><option value="carry">持ち越し予算から先に返納</option></select></label>
@@ -116,7 +87,7 @@
         <p id="calculator-return-budget-summary" class="calculator-budget-change" aria-live="polite"></p>
         <p id="calculator-return-forecast" class="calculator-return-forecast" aria-live="polite"></p>
         <section id="calculator-return-visual" class="calculator-budget-visual" aria-live="polite"></section>
-        <button id="calculator-return-confirm" type="button" class="button primary calculator-budget-confirm">内容を確認する</button>
+        <button id="calculator-return-confirm" type="button" class="button primary calculator-budget-confirm">この内容で返納する</button>
       </section>
       <section id="calculator-add-budget-panel" class="calculator-add-budget-panel" aria-labelledby="calculator-add-budget-title" hidden>
         <div class="calculator-budget-panel-heading"><p class="eyebrow">ADD BUDGET</p><h3 id="calculator-add-budget-title">予算を追加</h3><p id="calculator-add-budget-source" class="help-text calculator-budget-source"></p></div>
@@ -141,7 +112,7 @@
         <p id="calculator-add-budget-impact-label" class="calculator-impact-label">3. 追加後の状態</p>
         <p id="calculator-add-budget-forecast" class="calculator-add-budget-forecast" aria-live="polite"></p>
         <section id="calculator-add-budget-visual" class="calculator-budget-visual" aria-live="polite"></section>
-        <button id="calculator-add-budget-confirm" type="button" class="button primary calculator-budget-confirm">内容を確認する</button>
+        <button id="calculator-add-budget-confirm" type="button" class="button primary calculator-budget-confirm">この内容で予算を追加する</button>
       </section>
       <section id="calculator-shift-panel" class="calculator-shift-panel" aria-labelledby="calculator-shift-title" hidden>
         <div class="calculator-budget-panel-heading"><p class="eyebrow">BUDGET SHIFT</p><h3 id="calculator-shift-title">別の月へ予算をシフト</h3><p id="calculator-shift-source" class="help-text calculator-budget-source"></p></div>
@@ -155,7 +126,7 @@
         <p id="calculator-shift-budget-summary" class="calculator-budget-change" aria-live="polite"></p>
         <p id="calculator-shift-forecast" class="calculator-return-forecast calculator-shift-forecast" aria-live="polite"></p>
         <section id="calculator-shift-visual" class="calculator-budget-visual" aria-live="polite"></section>
-        <button id="calculator-shift-confirm" type="button" class="button primary calculator-budget-confirm">内容を確認する</button>
+        <button id="calculator-shift-confirm" type="button" class="button primary calculator-budget-confirm">この内容でシフトする</button>
       </section>
       <div id="calculator-keys" class="calculator-keys">
         <button type="button" data-calc="clear" class="calc-key utility">AC</button>

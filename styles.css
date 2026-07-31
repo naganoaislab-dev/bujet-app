@@ -722,44 +722,6 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .calculator-budget-action:active:not(:disabled) { transform: scale(0.985); }
 .calculator-budget-back { width: 100%; margin: -0.05rem 0 0.62rem; color: var(--primary-strong); }
 .calculator-budget-back[hidden] { display: none !important; }
-.calculator-budget-progress { --calculator-operation-color: var(--primary); display: grid; grid-template-columns: auto minmax(1.2rem, 1fr) auto minmax(1.2rem, 1fr) auto; align-items: center; gap: 0.32rem; margin: -0.02rem 0 0.62rem; padding: 0.55rem 0.6rem; border: 1px solid color-mix(in srgb, var(--calculator-operation-color) 28%, var(--line)); border-radius: 0.74rem; background: color-mix(in srgb, var(--calculator-operation-color) 7%, var(--surface)); }
-.calculator-dialog[data-budget-operation="return"] .calculator-budget-progress, .calculator-dialog[data-budget-operation="return"] .calculator-budget-confirmation, .calculator-dialog[data-budget-operation="return"] .calculator-budget-completion { --calculator-operation-color: #4f9974; }
-.calculator-dialog[data-budget-operation="add"] .calculator-budget-progress, .calculator-dialog[data-budget-operation="add"] .calculator-budget-confirmation, .calculator-dialog[data-budget-operation="add"] .calculator-budget-completion { --calculator-operation-color: #3a82b5; }
-.calculator-dialog[data-budget-operation="shift"] .calculator-budget-progress, .calculator-dialog[data-budget-operation="shift"] .calculator-budget-confirmation, .calculator-dialog[data-budget-operation="shift"] .calculator-budget-completion { --calculator-operation-color: #8871b7; }
-.calculator-budget-progress > span { display: inline-flex; align-items: center; gap: 0.26rem; color: var(--muted); font-size: 0.64rem; font-weight: 800; white-space: nowrap; }
-.calculator-budget-progress > span b { display: grid; place-items: center; width: 1.12rem; height: 1.12rem; border: 1px solid var(--line); border-radius: 999px; font-size: 0.6rem; }
-.calculator-budget-progress > span.is-current { color: var(--calculator-operation-color); }
-.calculator-budget-progress > span.is-current b { color: #fff; border-color: var(--calculator-operation-color); background: var(--calculator-operation-color); box-shadow: 0 0.18rem 0.44rem color-mix(in srgb, var(--calculator-operation-color) 35%, transparent); }
-.calculator-budget-progress > span.is-complete { color: color-mix(in srgb, var(--calculator-operation-color) 80%, var(--ink)); }
-.calculator-budget-progress > span.is-complete b { color: var(--calculator-operation-color); border-color: color-mix(in srgb, var(--calculator-operation-color) 58%, var(--line)); background: color-mix(in srgb, var(--calculator-operation-color) 12%, var(--surface)); }
-.calculator-budget-progress > i { display: block; height: 1px; background: color-mix(in srgb, var(--calculator-operation-color) 34%, var(--line)); }
-.calculator-budget-progress > em { grid-column: 1 / -1; overflow: hidden; color: var(--muted); font-size: 0.59rem; font-style: normal; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-.calculator-budget-progress[hidden], .calculator-budget-confirmation[hidden], .calculator-budget-completion[hidden] { display: none !important; }
-.calculator-budget-confirmation, .calculator-budget-completion { --calculator-operation-color: var(--primary); display: grid; gap: 0.7rem; margin: -0.08rem 0 0.8rem; padding: 0.85rem; border: 1px solid color-mix(in srgb, var(--calculator-operation-color) 38%, var(--line)); border-radius: 0.95rem; background: linear-gradient(150deg, color-mix(in srgb, var(--calculator-operation-color) 10%, var(--surface-2)), var(--surface-2) 42%); }
-.calculator-budget-confirmation-heading { display: grid; gap: 0.18rem; padding-bottom: 0.64rem; border-bottom: 1px solid color-mix(in srgb, var(--calculator-operation-color) 24%, var(--line)); }
-.calculator-budget-confirmation-heading .eyebrow { margin: 0; color: var(--calculator-operation-color); }
-.calculator-budget-confirmation-heading h3, .calculator-budget-completion h3 { margin: 0; font-size: 1.02rem; }
-.calculator-budget-confirmation-heading p:last-child { margin: 0; color: var(--muted); font-size: 0.72rem; font-weight: 700; line-height: 1.45; }
-.calculator-budget-confirmation-summary { display: grid; gap: 0.42rem; padding: 0.68rem; border: 1px solid color-mix(in srgb, var(--calculator-operation-color) 26%, var(--line)); border-radius: 0.72rem; background: var(--surface); }
-.calculator-budget-confirmation-summary > div { display: grid; grid-template-columns: minmax(5.2rem, 0.75fr) minmax(0, 1.55fr); align-items: start; gap: 0.5rem; }
-.calculator-budget-confirmation-summary span { color: var(--muted); font-size: 0.66rem; font-weight: 750; }
-.calculator-budget-confirmation-summary strong { font-size: 0.71rem; line-height: 1.42; text-align: right; white-space: pre-line; word-break: break-word; }
-.calculator-budget-confirmation-visual { display: grid; gap: 0.48rem; }
-.calculator-budget-confirmation-visual-label { margin: 0; color: var(--calculator-operation-color); font-size: 0.71rem; font-weight: 850; }
-.calculator-budget-confirmation-visual .calculator-budget-visual-heading { display: none; }
-.calculator-budget-confirmation-actions { display: grid; grid-template-columns: minmax(0, .86fr) minmax(0, 1.14fr); gap: 0.48rem; }
-.calculator-budget-confirmation-actions .button { min-height: 3rem; padding-right: 0.5rem; padding-left: 0.5rem; font-size: 0.78rem; }
-.calculator-budget-confirmation-actions .primary { border-color: var(--calculator-operation-color); background: var(--calculator-operation-color); box-shadow: 0 0.45rem 1rem color-mix(in srgb, var(--calculator-operation-color) 24%, transparent); }
-.calculator-budget-completion { justify-items: stretch; padding: 1.15rem 0.9rem 0.9rem; text-align: center; }
-.calculator-budget-completion-mark { display: grid; place-items: center; width: 3.6rem; height: 3.6rem; margin: 0 auto 0.05rem; border: 2px solid var(--calculator-operation-color); border-radius: 999px; color: var(--calculator-operation-color); font-size: 2rem; font-weight: 500; box-shadow: inset 0 0 1rem color-mix(in srgb, var(--calculator-operation-color) 10%, transparent), 0 0.45rem 1.1rem color-mix(in srgb, var(--calculator-operation-color) 16%, transparent); animation: calculator-budget-completion-pop 360ms cubic-bezier(.2,.9,.28,1) both; }
-.calculator-budget-completion .eyebrow { margin: 0; color: var(--calculator-operation-color); }
-.calculator-budget-completion > p:not(.eyebrow) { margin: -0.2rem 0 0; color: var(--muted); font-size: 0.74rem; font-weight: 700; line-height: 1.48; }
-.calculator-budget-completion-summary { display: grid; gap: 0.42rem; width: 100%; padding: 0.68rem; border: 1px solid color-mix(in srgb, var(--calculator-operation-color) 25%, var(--line)); border-radius: 0.72rem; background: var(--surface); text-align: left; }
-.calculator-budget-completion-summary > div { display: grid; grid-template-columns: minmax(5.2rem, 0.75fr) minmax(0, 1.55fr); gap: 0.5rem; }
-.calculator-budget-completion-summary span { color: var(--muted); font-size: 0.64rem; font-weight: 750; }
-.calculator-budget-completion-summary strong { font-size: 0.69rem; line-height: 1.42; text-align: right; white-space: pre-line; word-break: break-word; }
-.calculator-budget-completion .button { min-height: 3rem; border-color: var(--calculator-operation-color); background: var(--calculator-operation-color); box-shadow: 0 0.45rem 1rem color-mix(in srgb, var(--calculator-operation-color) 24%, transparent); }
-@keyframes calculator-budget-completion-pop { 0% { opacity: 0; transform: scale(.65); } 65% { opacity: 1; transform: scale(1.08); } 100% { opacity: 1; transform: scale(1); } }
 .calculator-return-panel, .calculator-add-budget-panel, .calculator-shift-panel { --budget-operation-color: var(--primary); display: grid; gap: 0.65rem; margin: -0.1rem 0 0.8rem; padding: 0.8rem; border: 1px solid color-mix(in srgb, var(--budget-operation-color) 34%, var(--line)); border-radius: 0.9rem; background: linear-gradient(150deg, color-mix(in srgb, var(--budget-operation-color) 8%, var(--surface-2)), var(--surface-2) 36%); }
 .calculator-return-panel { --budget-operation-color: #4f9974; }
 .calculator-add-budget-panel { --budget-operation-color: #3a82b5; }
