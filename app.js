@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.94";
+  const APP_VERSION = "0.5.91";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -5307,107 +5307,33 @@
     visual.innerHTML = elements.visual && elements.visual.innerHTML
       ? `<p class="calculator-budget-confirmation-visual-label">予算の動き</p>${elements.visual.innerHTML}`
       : "<p>予算の動きを確認できませんでした。設定に戻って内容を確認してください。</p>";
-    document.querySelector("#calculator-budget-review-next").textContent = "次へ（最終確認）";
-  }
-
-  function updateCalculatorBudgetFinalReview() {
-    const meta = calculatorBudgetOperationMeta();
-    const summary = document.querySelector("#calculator-budget-final-review-summary");
-    const warning = document.querySelector("#calculator-budget-final-review-warning");
-    const reviewSummary = document.querySelector("#calculator-budget-confirmation-summary");
-    summary.innerHTML = reviewSummary ? reviewSummary.innerHTML : "";
-    const warnings = {
-      return: "返納した予算はプロジェクト全体へ戻ります。返納後は、同じ項目へ自動では戻りません。",
-      shift: "シフト元の予算が減り、選択した未来月度の予算が増えます。見込み収支の総額は変わりません。",
-      new: "新しく予算を増やすため、追加額と同じ金額だけプロジェクト終了時の見込み収支が減少します。",
-      carry: "持ち越し予算を今月度の計画予算へ組み込みます。見込み収支の総額は変わりません。",
-      borrow: "選択した未来月度の計画予算が減り、今月度の予算が増えます。見込み収支の総額は変わりません。",
-      reallocate: "選択した同月度の項目予算が減り、対象項目の予算が増えます。見込み収支の総額は変わりません。"
-    };
-    const warningKey = calculatorBudgetOperation === "add" ? calculatorAddBudgetMode : calculatorBudgetOperation;
-    warning.textContent = warnings[warningKey] || "実行後は予算へ反映されます。";
-    warning.className = `calculator-budget-final-review-warning is-${warningKey}`;
-    document.querySelector("#calculator-budget-final-review-title").textContent = `${meta.completionVerb}内容の最終確認`;
     document.querySelector("#calculator-budget-final-confirm").textContent = `この内容で${meta.completionVerb}する`;
-  }
-
-  function calculatorBudgetProgressStep(step = calculatorBudgetStep) {
-    if (["amount", "method", "source", "setup"].includes(step)) return "setup";
-    return ["confirm", "final", "complete"].includes(step) ? step : "setup";
-  }
-
-  function calculatorBudgetBackStep() {
-    if (calculatorBudgetStep === "final") return "confirm";
-    if (calculatorBudgetStep === "confirm") {
-      if (calculatorBudgetOperation === "add") return calculatorAddBudgetMode === "new" ? "method" : "source";
-      return "setup";
-    }
-    if (calculatorBudgetOperation === "add" && calculatorBudgetStep === "source") return "method";
-    if (calculatorBudgetOperation === "add" && calculatorBudgetStep === "method") return "amount";
-    if (calculatorBudgetOperation === "add" && calculatorBudgetStep === "amount") return "menu";
-    return "menu";
-  }
-
-  function calculatorBudgetScreenTitle() {
-    if (calculatorBudgetStep === "confirm") return "内容の確認";
-    if (calculatorBudgetStep === "final") return "最終確認";
-    if (calculatorBudgetStep === "complete") return "完了";
-    if (calculatorBudgetOperation === "return") return "返納する金額を入力";
-    if (calculatorBudgetOperation === "shift") return "シフト元・シフト先を設定";
-    if (calculatorBudgetOperation === "add") {
-      if (calculatorBudgetStep === "method") return "追加方法を選択";
-      if (calculatorBudgetStep === "source") return calculatorBudgetOperationMeta().detail;
-      return "予算を追加";
-    }
-    return "";
   }
 
   function updateCalculatorBudgetStageUi() {
     const isDetail = ["return", "add", "shift"].includes(calculatorBudgetOperation);
     const progress = document.querySelector("#calculator-budget-progress");
     const confirmation = document.querySelector("#calculator-budget-confirmation");
-    const finalReview = document.querySelector("#calculator-budget-final-review");
     const completion = document.querySelector("#calculator-budget-completion");
     progress.hidden = !isDetail;
     confirmation.hidden = !(isDetail && calculatorBudgetStep === "confirm");
-    finalReview.hidden = !(isDetail && calculatorBudgetStep === "final");
     completion.hidden = !(isDetail && calculatorBudgetStep === "complete");
     calculatorDialog.dataset.budgetOperation = isDetail ? calculatorBudgetOperation : "";
     calculatorDialog.dataset.budgetStep = calculatorBudgetStep;
-    if (calculatorBudgetStep === "complete") document.querySelector("#calculator-budget-back").hidden = true;
-    if (!isDetail) {
-      const category = calculatorContext && categoryById(calculatorContext.categoryId);
-      if (category) document.querySelector("#calculator-category").textContent = category.name;
-      if (calculatorContext) {
-        document.querySelector("#calculator-kind").textContent = calculatorContext.isUnexpectedExpense ? "想定外支出を入力" : calculatorContext.isUnexpectedIncome ? "想定外収入を入力" : calculatorContext.allowsNegative ? "収入（マイナス込み）を入力" : calculatorContext.direction === "income" ? "収入を入力" : "支出を入力";
-      }
-      return;
-    }
+    if (!isDetail) return;
 
-    const stepOrder = ["setup", "confirm", "final", "complete"];
-    const visibleStep = calculatorBudgetProgressStep();
-    const activeStepIndex = Math.max(0, stepOrder.indexOf(visibleStep));
+    const stepOrder = ["setup", "confirm", "complete"];
+    const activeStepIndex = Math.max(0, stepOrder.indexOf(calculatorBudgetStep));
     document.querySelectorAll("[data-budget-progress-step]").forEach((element, index) => {
       const step = element.dataset.budgetProgressStep;
-      element.classList.toggle("is-current", step === visibleStep);
+      element.classList.toggle("is-current", step === calculatorBudgetStep);
       element.classList.toggle("is-complete", index < activeStepIndex);
-      if (step === visibleStep) element.setAttribute("aria-current", "step");
+      if (step === calculatorBudgetStep) element.setAttribute("aria-current", "step");
       else element.removeAttribute("aria-current");
     });
     const meta = calculatorBudgetOperationMeta();
-    const progressLabel = calculatorBudgetOperation === "add" && calculatorBudgetStep === "amount"
-      ? "まず追加金額を入力"
-      : calculatorBudgetOperation === "add" && calculatorBudgetStep === "method"
-        ? "追加方法を選択"
-        : calculatorBudgetOperation === "add" && meta.detail
-          ? meta.detail
-          : meta.label;
-    document.querySelector("#calculator-budget-progress-operation").textContent = progressLabel;
-    const category = calculatorContext && categoryById(calculatorContext.categoryId);
-    document.querySelector("#calculator-kind").textContent = category ? category.name : "予算調整";
-    document.querySelector("#calculator-category").textContent = calculatorBudgetScreenTitle();
+    document.querySelector("#calculator-budget-progress-operation").textContent = calculatorBudgetOperation === "add" && meta.detail ? meta.detail : meta.label;
     if (calculatorBudgetStep === "confirm") updateCalculatorBudgetReview();
-    if (calculatorBudgetStep === "final") updateCalculatorBudgetFinalReview();
     if (calculatorBudgetStep === "complete" && calculatorBudgetCompletion) {
       document.querySelector("#calculator-budget-completion-title").textContent = calculatorBudgetCompletion.title || meta.completionTitle;
       document.querySelector("#calculator-budget-completion-copy").textContent = calculatorBudgetCompletion.copy || "予算の状態を更新しました。";
@@ -5422,15 +5348,11 @@
       showToast("金額と配分を確認してください");
       return;
     }
-    if (calculatorBudgetOperation === "add" && calculatorBudgetStep === "amount") {
-      setCalculatorBudgetOperation("add", "method");
-      return;
-    }
     setCalculatorBudgetOperation(calculatorBudgetOperation, "confirm");
   }
 
   function completeCalculatorBudgetOperation(completion) {
-    const review = document.querySelector("#calculator-budget-final-review-summary");
+    const review = document.querySelector("#calculator-budget-confirmation-summary");
     calculatorBudgetCompletion = {
       ...completion,
       reviewHtml: review ? review.innerHTML : ""
@@ -5457,20 +5379,18 @@
     const returnPanel = document.querySelector("#calculator-return-panel");
     const addPanel = document.querySelector("#calculator-add-budget-panel");
     const shiftPanel = document.querySelector("#calculator-shift-panel");
-    const addMethods = document.querySelector("#calculator-add-budget-methods");
     const entry = document.querySelector("#calculator-budget-entry");
     const actions = document.querySelector("#calculator-budget-actions");
     const back = document.querySelector("#calculator-budget-back");
     const isMenu = operation === "menu";
     const isDetail = ["return", "add", "shift"].includes(operation);
     const isInput = !isMenu && !isDetail;
-    const nextStep = step || (operation === "add" ? "amount" : isDetail ? "setup" : isMenu ? "menu" : "input");
+    const nextStep = step || (isDetail ? "setup" : isMenu ? "menu" : "input");
     calculatorBudgetOperation = operation;
     calculatorBudgetStep = nextStep;
     if (nextStep !== "complete") calculatorBudgetCompletion = null;
     returnPanel.hidden = operation !== "return" || nextStep !== "setup";
-    addPanel.hidden = operation !== "add" || !["amount", "source"].includes(nextStep);
-    addMethods.hidden = operation !== "add" || nextStep !== "method";
+    addPanel.hidden = operation !== "add" || nextStep !== "setup";
     shiftPanel.hidden = operation !== "shift" || nextStep !== "setup";
     entry.hidden = !calculatorContext || !calculatorContext.canShiftBudget || !isInput;
     actions.hidden = !isMenu;
@@ -5478,24 +5398,14 @@
     document.querySelector("#calculator-display").hidden = !isInput;
     document.querySelector("#calculator-keys").hidden = !isInput;
     back.hidden = isInput || nextStep === "complete";
-    back.textContent = nextStep === "final" ? "‹ 内容の確認へ戻る" : nextStep === "confirm" ? "‹ 設定を修正する" : isDetail ? "‹ 戻る" : "‹ 金額の入力に戻る";
-    actions.classList.toggle("is-adjusting", isDetail || ["confirm", "final"].includes(nextStep));
+    back.textContent = nextStep === "confirm" ? "‹ 設定を修正する" : isDetail ? "‹ 予算操作を選び直す" : "‹ 金額の入力に戻る";
+    actions.classList.toggle("is-adjusting", isDetail || nextStep === "confirm");
     document.querySelectorAll("[data-budget-operation]").forEach((button) => {
       const isActive = button.dataset.budgetOperation === operation;
       button.classList.toggle("is-active", isActive);
       button.setAttribute("aria-pressed", String(isActive));
     });
     updateCalculatorBudgetStageUi();
-    if (operation === "add" && nextStep === "amount") {
-      document.querySelector("#calculator-add-budget-title").textContent = "予算を追加";
-      document.querySelector("#calculator-add-budget-amount-label").textContent = "追加する予算";
-      document.querySelector("#calculator-add-budget-impact-label").textContent = "追加後の状態";
-      document.querySelector("#calculator-add-budget-confirm").textContent = "次へ（追加方法を選択）";
-    } else if (operation === "add" && nextStep === "method") {
-      document.querySelector("#calculator-add-budget-methods-amount").textContent = formatCurrency(Math.max(0, toInteger(document.querySelector("#calculator-add-budget-amount").value)));
-    } else if (operation === "add" && nextStep === "source") {
-      document.querySelector("#calculator-add-budget-confirm").textContent = "次へ（内容を確認）";
-    }
   }
 
   async function runCalculatorBudgetMutation(task) {
@@ -5504,8 +5414,7 @@
     const confirmButtons = [
       document.querySelector("#calculator-shift-confirm"),
       document.querySelector("#calculator-return-confirm"),
-      document.querySelector("#calculator-add-budget-confirm"),
-      document.querySelector("#calculator-budget-final-confirm")
+      document.querySelector("#calculator-add-budget-confirm")
     ].filter(Boolean);
     confirmButtons.forEach((button) => { button.disabled = true; });
     try {
@@ -5513,7 +5422,7 @@
     } finally {
       calculatorBudgetSaving = false;
       if (!calculatorDialog.open) return;
-      if (!["setup", "amount", "source"].includes(calculatorBudgetStep)) return;
+      if (calculatorBudgetStep !== "setup") return;
       if (calculatorBudgetOperation === "shift") updateCalculatorShiftTargetSummary();
       else if (calculatorBudgetOperation === "return") updateCalculatorReturnSummary();
       else if (calculatorBudgetOperation === "add") updateCalculatorAddBudgetSummary();
@@ -7018,26 +6927,19 @@
   });
   document.querySelector("#calculator-add-budget-toggle").addEventListener("click", () => {
     if (!calculatorContext || !calculatorContext.canShiftBudget) return;
-    calculatorAddBudgetMode = "new";
-    updateCalculatorAddBudgetMode(false);
-    setCalculatorBudgetOperation("add", "amount");
+    setCalculatorBudgetOperation("add");
     updateCalculatorAddBudgetSummary();
-    document.querySelector("#calculator-add-budget-confirm").textContent = "次へ（追加方法を選択）";
   });
   document.querySelector("#calculator-budget-back").addEventListener("click", () => {
-    if (calculatorBudgetOperation === "menu") {
-      setCalculatorBudgetOperation("");
+    if (calculatorBudgetStep === "confirm") {
+      setCalculatorBudgetOperation(calculatorBudgetOperation, "setup");
       return;
     }
-    const backStep = calculatorBudgetBackStep();
-    if (backStep === "menu") setCalculatorBudgetOperation("menu");
-    else setCalculatorBudgetOperation(calculatorBudgetOperation, backStep);
+    setCalculatorBudgetOperation(calculatorBudgetOperation === "menu" ? "" : "menu");
   });
   document.querySelector("#calculator-budget-confirm-back").addEventListener("click", () => {
-    setCalculatorBudgetOperation(calculatorBudgetOperation, calculatorBudgetBackStep());
+    setCalculatorBudgetOperation(calculatorBudgetOperation, "setup");
   });
-  document.querySelector("#calculator-budget-review-next").addEventListener("click", () => setCalculatorBudgetOperation(calculatorBudgetOperation, "final"));
-  document.querySelector("#calculator-budget-final-back").addEventListener("click", () => setCalculatorBudgetOperation(calculatorBudgetOperation, "confirm"));
   document.querySelector("#calculator-budget-final-confirm").addEventListener("click", () => {
     const task = calculatorBudgetOperation === "shift"
       ? shiftCalculatorBudget
@@ -7081,17 +6983,6 @@
       ? event.target.value
       : "new";
     updateCalculatorAddBudgetMode();
-  });
-  document.querySelector("#calculator-add-budget-methods").addEventListener("click", (event) => {
-    const method = event.target.closest("[data-add-budget-method]");
-    if (!method) return;
-    calculatorAddBudgetMode = method.dataset.addBudgetMethod;
-    updateCalculatorAddBudgetMode();
-    if (calculatorAddBudgetMode === "new") {
-      setCalculatorBudgetOperation("add", "confirm");
-      return;
-    }
-    setCalculatorBudgetOperation("add", "source");
   });
   document.querySelector("#calculator-add-budget-carry-sources").addEventListener("click", (event) => {
     const toggle = event.target.closest("[data-carry-source-select]");
