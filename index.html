@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=100">
-  <link rel="icon" href="icons/icon.svg?v=100" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=100">
-  <link rel="stylesheet" href="styles.css?v=100">
-  <script src="db.js?v=100" defer></script>
-  <script src="app.js?v=100" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=101">
+  <link rel="icon" href="icons/icon.svg?v=101" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=101">
+  <link rel="stylesheet" href="styles.css?v=101">
+  <script src="db.js?v=101" defer></script>
+  <script src="app.js?v=101" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -252,8 +252,12 @@
         <option value="income">収入</option>
         <option value="income-signed">収入（マイナス込み）</option>
       </select>
-      <label class="field-label" for="category-color">表示色</label>
-      <input id="category-color" type="color" value="#3f7d5b">
+      <section id="category-icon-field" class="category-icon-field" hidden>
+        <div class="category-icon-field-head"><span class="field-label">アイコン</span><span>選ぶと表示色も自動で変わります</span></div>
+        <input id="category-icon" type="hidden" value="🧾">
+        <div id="category-icon-picker" class="category-icon-picker" role="listbox" aria-label="支出項目のアイコンを選択"></div>
+      </section>
+      <label id="category-color-field"><span class="field-label">表示色</span><input id="category-color" type="color" value="#3f7d5b"></label>
       <div class="dialog-actions">
         <button type="button" class="button secondary" data-close="category-dialog">キャンセル</button>
         <button type="submit" class="button primary">追加</button>
@@ -268,12 +272,17 @@
         <button type="button" class="icon-button" data-close="plan-dialog" aria-label="閉じる">×</button>
       </div>
       <section class="plan-category-panel" aria-labelledby="plan-category-settings-title">
-        <div class="section-copy"><h3 id="plan-category-settings-title">項目を編集</h3><p>名称・区分・表示色を変更できます。</p></div>
+        <div class="section-copy"><h3 id="plan-category-settings-title">項目を編集</h3><p>支出項目はアイコンを選ぶと、カードとステータスバーの色も自動で変わります。</p></div>
         <div class="form-grid plan-category-controls">
           <label><span class="field-label">項目名</span><input id="plan-category-name-input" type="text" maxlength="20" required></label>
           <label><span class="field-label">区分</span><select id="plan-category-group" required><option value="variable">変動支出</option><option value="fixed">固定支出</option><option value="income">収入</option><option value="income-signed">収入（マイナス込み）</option></select></label>
-          <label><span class="field-label">表示色</span><input id="plan-category-color" type="color" value="#3f7d5b"></label>
+          <label id="plan-category-color-field"><span class="field-label">表示色</span><input id="plan-category-color" type="color" value="#3f7d5b"></label>
         </div>
+        <section id="plan-category-icon-field" class="category-icon-field" hidden>
+          <div class="category-icon-field-head"><span class="field-label">アイコン</span><span>選ぶと表示色も自動で変わります</span></div>
+          <input id="plan-category-icon" type="hidden" value="🧾">
+          <div id="plan-category-icon-picker" class="category-icon-picker" role="listbox" aria-label="支出項目のアイコンを選択"></div>
+        </section>
       </section>
       <section class="bulk-plan-panel" aria-labelledby="bulk-plan-title">
         <div class="section-copy">
@@ -342,7 +351,7 @@
       </div>
       <div class="version-summary">
         <span class="version-mark" aria-hidden="true">B−</span>
-        <div><span>アプリバージョン</span><strong id="app-version-name">v0.5.90</strong></div>
+        <div><span>アプリバージョン</span><strong id="app-version-name">v0.5.91</strong></div>
       </div>
       <p class="help-text">端末内のデータだけで動作する、オフライン対応の予算ベース家計簿です。</p>
       <p id="app-update-status" class="app-update-status" role="status">更新を確認できます。</p>
