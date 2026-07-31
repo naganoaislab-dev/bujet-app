@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.90";
+  const APP_VERSION = "0.5.91";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -18,6 +18,28 @@
     income: "収入",
     [SIGNED_INCOME_GROUP]: "収入（マイナス込み）"
   });
+  // 支出項目は、色を直接選ぶ代わりにアイコンのイメージカラーを使います。
+  // 食事・住まい・移動などから選びやすいよう、216個を12系統に整理しています。
+  const EXPENSE_ICON_GROUPS = Object.freeze([
+    { label: "食事", color: "#df773e", icons: ["🍚", "🍙", "🍜", "🍣", "🍛", "🍞", "🥐", "🥗", "🍔", "🍕", "🍝", "🍖", "🍰", "☕", "🍺", "🍷", "🧃", "🍎"] },
+    { label: "住まい", color: "#4f866d", icons: ["🏠", "🏡", "🛋️", "🛏️", "🪑", "🪴", "🧹", "🧺", "🧻", "🧼", "🛁", "🚿", "🛠️", "🔑", "🏗️", "🪟", "🧯", "🔌"] },
+    { label: "移動", color: "#4b86a8", icons: ["🚃", "🚇", "🚌", "🚕", "🚙", "🏍️", "🚲", "✈️", "🚄", "⛽", "🅿️", "🛣️", "🗺️", "🎫", "🚢", "🚶", "🧳", "🚉"] },
+    { label: "健康", color: "#c85f6a", icons: ["🏥", "💊", "🩺", "🦷", "👓", "🧴", "🧘", "🩹", "🧬", "🏃", "🥼", "🩻", "🩸", "🧠", "❤️", "🦴", "😷", "🦻"] },
+    { label: "趣味", color: "#805ea3", icons: ["🎮", "🎬", "🎵", "🎨", "📚", "🎤", "🎸", "🎹", "🎻", "🎲", "🧩", "⚽", "🏀", "🎾", "⛳", "🏕️", "🎣", "🕹️"] },
+    { label: "お金", color: "#b9862d", icons: ["💰", "💳", "🏦", "🪙", "📈", "📉", "🧾", "💴", "💵", "💶", "💷", "💹", "🔒", "📊", "🧮", "🤝", "🎁", "🪪"] },
+    { label: "家族", color: "#ba6171", icons: ["👪", "👶", "🧒", "🧑", "👵", "👴", "💐", "🎂", "🎈", "🧸", "🎒", "🍼", "👕", "👗", "🧦", "👟", "💍", "💌"] },
+    { label: "学び", color: "#6875b9", icons: ["📖", "✏️", "📝", "📐", "🔬", "🧪", "🎓", "🏫", "🧑‍🏫", "🧑‍🔬", "⌨️", "🖊️", "📒", "📎", "📌", "🗂️", "🔖", "🧑‍🎓"] },
+    { label: "仕事", color: "#5d7789", icons: ["💼", "🏢", "📞", "📠", "🖨️", "📦", "📇", "🧑‍💼", "👔", "🧑‍💻", "📣", "📋", "🗓️", "⏰", "🔧", "🧰", "🛒", "📬"] },
+    { label: "ペット", color: "#9b734e", icons: ["🐶", "🐱", "🐰", "🐹", "🐦", "🐠", "🐢", "🐾", "🦫", "🪶", "🐕", "🐈", "🦮", "🐩", "🦜", "🐟", "🦎", "🪺"] },
+    { label: "デジタル", color: "#3e8ca0", icons: ["📱", "📲", "📟", "🖥️", "⌚", "🎧", "📷", "🎥", "📺", "📡", "🌐", "☁️", "🔋", "🔐", "💾", "🖲️", "🛰️", "🤖"] },
+    { label: "イベント", color: "#b85d8f", icons: ["🎠", "🏨", "🎪", "🎉", "🎊", "🎄", "🎃", "🎎", "🎋", "🌸", "💄", "👜", "👑", "🕶️", "👠", "💇", "🧁", "🎇"] }
+  ]);
+  const EXPENSE_ICON_LIBRARY = Object.freeze(EXPENSE_ICON_GROUPS.flatMap((group) => group.icons.map((icon) => ({
+    icon,
+    color: group.color,
+    label: group.label
+  }))));
+  const EXPENSE_ICON_BY_VALUE = new Map(EXPENSE_ICON_LIBRARY.map((item) => [item.icon, item]));
   const REMINDER_SCHEDULE_DAY = "day";
   const REMINDER_SCHEDULE_WEEKDAY = "weekday";
   const OVERAGE_PLAN_HANDLING_FORECAST = "forecast";
@@ -188,6 +210,41 @@
 
   function themePresetFor(themeId) {
     return THEME_PRESETS.find((preset) => preset.id === themeId) || THEME_PRESETS[0];
+  }
+
+  function isExpenseIconCategory(category) {
+    return Boolean(category && EXPENSE_CATEGORY_GROUPS.includes(category.group));
+  }
+
+  function expenseIconDefinition(icon) {
+    return EXPENSE_ICON_BY_VALUE.get(String(icon || "")) || null;
+  }
+
+  function categoryIconDefinition(category) {
+    return isExpenseIconCategory(category) ? expenseIconDefinition(category.icon) : null;
+  }
+
+  function defaultExpenseCategoryColor(category) {
+    const preset = themePresetFor(state && state.settings && state.settings.themeId);
+    return category && category.group === "fixed" ? preset.strong : preset.primary;
+  }
+
+  function categoryDisplayColor(category) {
+    const icon = categoryIconDefinition(category);
+    if (icon) return icon.color;
+    if (isExpenseIconCategory(category)) return defaultExpenseCategoryColor(category);
+    return /^#[0-9a-f]{6}$/i.test(String(category && category.color || "")) ? category.color : "#3f7d5b";
+  }
+
+  function renderCategoryIcon(category, className = "category-icon") {
+    const icon = categoryIconDefinition(category);
+    if (!icon) return "";
+    return `<span class="${className}" style="--category-color:${escapeHtml(icon.color)}" aria-hidden="true">${escapeHtml(icon.icon)}</span>`;
+  }
+
+  function renderBudgetCardName(category, suffix = "") {
+    const icon = renderCategoryIcon(category, "budget-card-icon");
+    return `<span class="budget-card-name${icon ? " has-category-icon" : ""}">${icon}<span class="budget-card-name-text">${escapeHtml(category.name)}${suffix}</span></span>`;
   }
 
   function applyThemePreset(preset) {
@@ -2741,8 +2798,8 @@
         ? `<span class="budget-card-footer">${carryLabel}${progressBar}</span>`
         : "";
       if (dailyStats) {
-        return `<button type="button" class="budget-card daily-budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
-          <span class="budget-card-name">${escapeHtml(category.name)}</span>
+        return `<button type="button" class="budget-card daily-budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(categoryDisplayColor(category))}">
+          ${renderBudgetCardName(category)}
           ${overageHandlingBadge}
           <span class="daily-budget-main">
             <span class="daily-budget-value"><span>${dailyStats.dailyLabel}</span><strong data-entry-budget-value="${escapeHtml(category.id)}" data-entry-amount="${dailyStats.dailyRemaining}" class="daily-budget-amount ${budgetCardAmountSizeClass(dailyStats.dailyRemaining)} ${dailyStats.dailyRemaining < 0 ? "negative" : ""}">${remainingAmountLabel(dailyStats.dailyRemaining)}</strong></span>
@@ -2755,8 +2812,8 @@
           ${progressBar}
         </button>`;
       }
-      return `<button type="button" class="budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
-        <span class="budget-card-name">${escapeHtml(category.name)}${fixedExpenseStatus ? `<em class="budget-card-status ${fixedExpenseStatus.tone}">${fixedExpenseStatus.label}</em>` : ""}</span>
+      return `<button type="button" class="budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(categoryDisplayColor(category))}">
+        ${renderBudgetCardName(category, fixedExpenseStatus ? `<em class="budget-card-status ${fixedExpenseStatus.tone}">${fixedExpenseStatus.label}</em>` : "")}
         ${overageHandlingBadge}
         ${budgetSummary}
         ${cardFooter}
@@ -2771,7 +2828,7 @@
       const planned = planAmount(category.id, month);
       const actual = actualAmount(category.id, month);
       const reminderDue = needsEntryReminder(category, month);
-      return `<button type="button" class="budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
+      return `<button type="button" class="budget-card${reminderDue ? " needs-entry-reminder" : ""}" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(categoryDisplayColor(category))}">
         <span class="budget-card-name">${escapeHtml(category.name)}</span>
         <span class="budget-card-label">今月の収入実績</span>
         <strong data-entry-budget-value="${escapeHtml(category.id)}" data-entry-amount="${actual}" class="budget-card-amount ${actual < 0 ? "negative" : "positive"}">${formatSignedCurrency(actual)}</strong>
@@ -2870,8 +2927,8 @@
 
   function renderUnexpectedExpenseCard(category, month) {
     const actual = actualAmount(category.id, month);
-    return `<button type="button" class="budget-card unexpected-expense-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
-      <span class="budget-card-name">${escapeHtml(category.name)}</span>
+    return `<button type="button" class="budget-card unexpected-expense-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(categoryDisplayColor(category))}">
+      ${renderBudgetCardName(category)}
       <span class="unexpected-expense-copy">予算外の支出として、プロジェクト終了時の見込み収支から直接差し引きます。</span>
       <span class="unexpected-expense-total"><span>今月の入力額</span><strong data-entry-budget-value="${escapeHtml(category.id)}" data-entry-amount="${actual}" class="${actual > 0 ? "negative" : ""}">${formatCurrency(actual)}</strong></span>
     </button>`;
@@ -2879,7 +2936,7 @@
 
   function renderUnexpectedIncomeCard(category, month) {
     const actual = actualAmount(category.id, month);
-    return `<button type="button" class="budget-card unexpected-income-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(category.color)}">
+    return `<button type="button" class="budget-card unexpected-income-card" data-category-id="${escapeHtml(category.id)}" style="--category-color:${escapeHtml(categoryDisplayColor(category))}">
       <span class="budget-card-name">${escapeHtml(category.name)}</span>
       <span class="unexpected-expense-copy">計画外の収入として、プロジェクト終了時の見込み収支へ直接加算します。</span>
       <span class="unexpected-expense-total"><span>今月の入力額</span><strong data-entry-budget-value="${escapeHtml(category.id)}" data-entry-amount="${actual}" class="${actual < 0 ? "negative" : "positive"}">${formatSignedCurrency(actual)}</strong></span>
@@ -3119,7 +3176,7 @@
   function renderTransactionRow(transaction) {
     const category = categoryById(transaction.categoryId);
     const categoryName = category ? category.name : "削除済み種別";
-    const color = category ? category.color : "#777777";
+    const color = category ? categoryDisplayColor(category) : "#777777";
     const signedAmount = transaction.direction === "income" ? transaction.amount : -transaction.amount;
     return `<button type="button" class="transaction-row" data-transaction-id="${escapeHtml(transaction.id)}" style="--category-color:${escapeHtml(color)}">
       <span class="transaction-dot" aria-hidden="true"></span>
@@ -3602,7 +3659,7 @@
         label: row.category.name,
         value: Math.abs(row.actual),
         displayValue: row.actual,
-        color: row.category.color,
+        color: categoryDisplayColor(row.category),
         signed
       }));
   }
@@ -3672,7 +3729,7 @@
       label: row.category.name,
       value: row[field],
       displayValue: row[field],
-      color: row.category.color
+      color: categoryDisplayColor(row.category)
     }));
     const remaining = ranked.slice(5).reduce((sum, row) => sum + row[field], 0);
     if (remaining > 0) leading.push({ label: "その他", value: remaining, displayValue: remaining, color: "#87949d" });
@@ -3700,7 +3757,7 @@
       label: row.category.name,
       value: Math.abs(row[field]),
       displayValue: row[field],
-      color: row.category.color,
+      color: categoryDisplayColor(row.category),
       signed: true
     }));
     const remainingValue = ranked.slice(5).reduce((sum, row) => sum + Math.abs(row[field]), 0);
@@ -3720,7 +3777,7 @@
       const actualWidth = clamp(row.actual / maximum * 100, 0, 100);
       const overspent = row.plan > 0 && row.actual > row.plan;
       const unplanned = row.plan === 0 && row.actual > 0;
-      return `<article class="project-progress-row"><div class="project-progress-row-head"><strong>${escapeHtml(row.category.name)}</strong><span>計画 ${formatCurrency(row.plan)} ／ 実績 <b class="${overspent || unplanned ? "negative" : ""}">${formatCurrency(row.actual)}</b></span></div><div class="project-progress-track" aria-label="${escapeHtml(row.category.name)}。計画 ${formatCurrency(row.plan)}、実績 ${formatCurrency(row.actual)}"><i class="project-progress-plan" style="--width:${planWidth}%;--category-color:${escapeHtml(row.category.color)}"></i><i class="project-progress-actual${overspent || unplanned ? " is-over" : ""}${row.actual > 0 ? " has-value" : ""}" style="--width:${actualWidth}%;--category-color:${escapeHtml(row.category.color)}"></i></div></article>`;
+      return `<article class="project-progress-row"><div class="project-progress-row-head"><strong>${escapeHtml(row.category.name)}</strong><span>計画 ${formatCurrency(row.plan)} ／ 実績 <b class="${overspent || unplanned ? "negative" : ""}">${formatCurrency(row.actual)}</b></span></div><div class="project-progress-track" aria-label="${escapeHtml(row.category.name)}。計画 ${formatCurrency(row.plan)}、実績 ${formatCurrency(row.actual)}"><i class="project-progress-plan" style="--width:${planWidth}%;--category-color:${escapeHtml(categoryDisplayColor(row.category))}"></i><i class="project-progress-actual${overspent || unplanned ? " is-over" : ""}${row.actual > 0 ? " has-value" : ""}" style="--width:${actualWidth}%;--category-color:${escapeHtml(categoryDisplayColor(row.category))}"></i></div></article>`;
     }).join("")}</div>${rows.length > visibleRows.length ? `<p class="chart-note">金額が大きい上位${visibleRows.length}項目を表示しています。</p>` : ""}</section>`;
   }
 
@@ -3740,7 +3797,7 @@
         if (metric === "actual") return actualAmount(category.id, month);
         return isExpense ? activeExpensePlanAmount(category, month) : activeIncomePlanAmount(category, month);
       });
-      return { category, label: category.name, color: category.color, values, total: values.reduce((sum, value) => sum + Math.abs(value), 0) };
+      return { category, label: category.name, color: categoryDisplayColor(category), values, total: values.reduce((sum, value) => sum + Math.abs(value), 0) };
     }).filter((row) => row.total > 0).sort((left, right) => right.total - left.total);
     const leading = rows.slice(0, 10);
     const rest = rows.slice(10);
@@ -3959,7 +4016,7 @@
     else if (incomeMode && row.variance < 0) { difference = `${formatCurrency(Math.abs(row.variance))}上振れ`; tone = "positive"; }
     else if (!incomeMode && row.variance < 0) { difference = `${formatCurrency(Math.abs(row.variance))}超過`; tone = "negative"; }
     else if (!incomeMode && row.variance > 0) difference = `${formatCurrency(row.variance)}残り`;
-    return `<div class="analysis-row"><div class="analysis-row-head"><span><strong>${escapeHtml(row.category.name)}</strong>・実績 ${incomeMode ? formatSignedCurrency(row.actual) : formatCurrency(row.actual)}</span><strong class="${tone}">${difference}</strong></div><div class="analysis-track"><span style="--category-color:${escapeHtml(row.category.color)};--progress:${clamp(row.ratio * 100, 0, 100)}%"></span></div></div>`;
+    return `<div class="analysis-row"><div class="analysis-row-head"><span><strong>${escapeHtml(row.category.name)}</strong>・実績 ${incomeMode ? formatSignedCurrency(row.actual) : formatCurrency(row.actual)}</span><strong class="${tone}">${difference}</strong></div><div class="analysis-track"><span style="--category-color:${escapeHtml(categoryDisplayColor(row.category))};--progress:${clamp(row.ratio * 100, 0, 100)}%"></span></div></div>`;
   }
 
   function planProgressRatio(plan, actual) {
@@ -4096,13 +4153,15 @@
   function renderCategoryRows(categories) {
     if (!categories.length) return '<div class="empty-state">種別がありません。</div>';
     return categories.map((category) => {
+      const displayColor = categoryDisplayColor(category);
+      const categoryVisual = renderCategoryIcon(category, "category-setting-icon") || `<span class="color-dot" aria-hidden="true"></span>`;
       const dailyToggle = category.group === "variable" ? `<label class="category-daily-toggle">
         <span class="category-daily-copy"><strong>日毎に予算管理</strong><span>当月の残予算を締日までの日数で割って表示</span></span>
         <input class="daily-budget-toggle-input" type="checkbox" role="switch" data-daily-budget-category="${escapeHtml(category.id)}"${category.dailyBudgetEnabled === true ? " checked" : ""}${category.active === false ? " disabled" : ""}>
         <span class="daily-budget-switch" aria-hidden="true"></span>
       </label>` : "";
-      return `<article class="category-setting-row" style="--category-color:${escapeHtml(category.color)}">
-        <span class="color-dot" aria-hidden="true"></span>
+      return `<article class="category-setting-row" style="--category-color:${escapeHtml(displayColor)}">
+        ${categoryVisual}
         <span class="category-meta"><strong>${escapeHtml(category.name)}${category.active === false ? "（無効）" : ""}</strong><span>${monthLabel(currentPeriod)} ${isSignedIncomeCategory(category) ? formatSignedCurrency(planAmount(category.id, currentPeriod)) : formatCurrency(planAmount(category.id, currentPeriod))}</span><span>計画合計 ${isSignedIncomeCategory(category) ? formatSignedCurrency(periodPlanTotal(category.id)) : formatCurrency(periodPlanTotal(category.id))}</span></span>
         <button type="button" class="row-action" data-edit-category="${escapeHtml(category.id)}">編集</button>
         <button type="button" class="row-action category-active-toggle ${category.active === false ? "is-inactive" : ""}" data-toggle-category-active="${escapeHtml(category.id)}">${category.active === false ? "有効にする" : "無効にする"}</button>
@@ -6002,6 +6061,57 @@
     select.innerHTML = groups.map((value) => `<option value="${value}">${CATEGORY_GROUP_LABELS[value]}</option>`).join("");
   }
 
+  function renderExpenseIconPicker(pickerId, selectedIcon = "") {
+    const picker = document.querySelector(`#${pickerId}`);
+    if (!picker) return;
+    const selected = expenseIconDefinition(selectedIcon)?.icon || "";
+    picker.innerHTML = `<button type="button" class="expense-icon-choice is-clear${selected ? "" : " selected"}" data-expense-icon-choice="${pickerId}" data-expense-icon="" role="option" aria-selected="${selected ? "false" : "true"}" title="アイコンなし"><span aria-hidden="true">×</span><small>なし</small></button>${EXPENSE_ICON_GROUPS.map((group) => `<section class="expense-icon-group"><h4>${escapeHtml(group.label)}</h4><div>${group.icons.map((icon) => {
+      const isSelected = icon === selected;
+      return `<button type="button" class="expense-icon-choice${isSelected ? " selected" : ""}" data-expense-icon-choice="${pickerId}" data-expense-icon="${escapeHtml(icon)}" role="option" aria-selected="${isSelected}" title="${escapeHtml(group.label)}"><span aria-hidden="true">${escapeHtml(icon)}</span></button>`;
+    }).join("")}</div></section>`).join("")}`;
+  }
+
+  function updateExpenseIconControls(scope, group, preferredIcon = "") {
+    const isExpense = EXPENSE_CATEGORY_GROUPS.includes(group);
+    const ids = scope === "plan"
+      ? { iconField: "plan-category-icon-field", colorField: "plan-category-color-field", icon: "plan-category-icon", color: "plan-category-color", group: "plan-category-group", picker: "plan-category-icon-picker" }
+      : { iconField: "category-icon-field", colorField: "category-color-field", icon: "category-icon", color: "category-color", group: "category-group", picker: "category-icon-picker" };
+    const iconField = document.querySelector(`#${ids.iconField}`);
+    const colorField = document.querySelector(`#${ids.colorField}`);
+    const iconInput = document.querySelector(`#${ids.icon}`);
+    const colorInput = document.querySelector(`#${ids.color}`);
+    const pickerId = ids.picker;
+    if (!iconField || !colorField || !iconInput || !colorInput) return;
+    iconField.hidden = !isExpense;
+    colorField.hidden = isExpense;
+    if (!isExpense) return;
+    const icon = expenseIconDefinition(preferredIcon)?.icon || "";
+    iconInput.value = icon;
+    colorInput.value = icon ? expenseIconDefinition(icon).color : defaultExpenseCategoryColor({ group });
+    renderExpenseIconPicker(pickerId, icon);
+  }
+
+  function setExpenseIconChoice(pickerId, icon) {
+    const scope = pickerId === "plan-category-icon-picker" ? "plan" : "category";
+    const ids = scope === "plan"
+      ? { icon: "plan-category-icon", color: "plan-category-color", group: "plan-category-group" }
+      : { icon: "category-icon", color: "category-color", group: "category-group" };
+    const iconInput = document.querySelector(`#${ids.icon}`);
+    const colorInput = document.querySelector(`#${ids.color}`);
+    const group = document.querySelector(`#${ids.group}`).value;
+    const definition = expenseIconDefinition(icon);
+    if (!iconInput || !colorInput || !EXPENSE_CATEGORY_GROUPS.includes(group)) return;
+    iconInput.value = definition ? definition.icon : "";
+    colorInput.value = definition ? definition.color : defaultExpenseCategoryColor({ group });
+    renderExpenseIconPicker(pickerId, iconInput.value);
+  }
+
+  function iconForCategoryForm(scope, group) {
+    if (!EXPENSE_CATEGORY_GROUPS.includes(group)) return "";
+    const inputId = scope === "plan" ? "plan-category-icon" : "category-icon";
+    return expenseIconDefinition(document.querySelector(`#${inputId}`).value)?.icon || "";
+  }
+
   function updatePlanReminderControls() {
     const enabled = document.querySelector("#plan-reminder-enabled").checked;
     const schedule = document.querySelector("#plan-reminder-schedule").value;
@@ -6046,7 +6156,8 @@
     const groupSelect = document.querySelector("#category-group");
     limitCategoryGroupOptions(groupSelect, group);
     groupSelect.value = group;
-    document.querySelector("#category-color").value = isIncomeCategory({ group }) ? "#2b8a63" : "#3f7d5b";
+    document.querySelector("#category-color").value = isIncomeCategory({ group }) ? "#2b8a63" : defaultExpenseCategoryColor({ group });
+    updateExpenseIconControls("category", group, "");
     openDialog(categoryDialog);
   }
 
@@ -6095,7 +6206,8 @@
     const groupSelect = document.querySelector("#plan-category-group");
     limitCategoryGroupOptions(groupSelect, category.group);
     groupSelect.value = category.group;
-    document.querySelector("#plan-category-color").value = category.color;
+    document.querySelector("#plan-category-color").value = categoryDisplayColor(category);
+    updateExpenseIconControls("plan", category.group, category.icon);
     document.querySelector("#plan-overage-handling").value = categoryOveragePlanHandling(category);
     document.querySelector("#plan-overage-locked").checked = category.overageHandlingLocked === true;
     setPlanReminderControls(category.reminder);
@@ -6120,7 +6232,7 @@
       const sliderValue = planBarPositionAmount(amount, planScaleDraft, allowsNegative);
       const valueText = `${formatPlanAmount(amount)}${overScale ? `（棒の上限 ${formatCurrency(planScaleDraft)}を超過）` : ""}`;
       const selected = month === selectedPlanMonth;
-      return `<article class="month-plan-column ${selected ? "selected" : ""} ${overScale ? "over-scale" : ""} ${allowsNegative ? "signed-plan" : ""}" data-plan-column="${month}" style="--category-color:${escapeHtml(category.color)}">
+      return `<article class="month-plan-column ${selected ? "selected" : ""} ${overScale ? "over-scale" : ""} ${allowsNegative ? "signed-plan" : ""}" data-plan-column="${month}" style="--category-color:${escapeHtml(categoryDisplayColor(category))}">
         <button type="button" class="month-plan-label" data-plan-select="${month}" aria-pressed="${selected}">${monthLabel(month, false)}<br>${monthParts(month).year}<span class="month-plan-selected-indicator"${selected ? "" : " hidden"}>選択中</span></button>
         <div class="month-plan-bar-area${allowsNegative ? " is-signed" : ""}" data-plan-slider="${month}" role="slider" tabindex="0" aria-label="${monthLabel(month)}の計画金額" aria-describedby="plan-scale-step" aria-orientation="vertical" aria-valuemin="${allowsNegative ? -planScaleDraft : 0}" aria-valuemax="${planScaleDraft}" aria-valuenow="${sliderValue}" aria-valuetext="${escapeHtml(valueText)}"${selected ? ' aria-current="true"' : ""}>
           <span class="month-plan-overflow"${overScale ? "" : " hidden"}>上限超過</span>
@@ -7075,7 +7187,12 @@
     const id = document.querySelector("#category-id").value;
     const name = document.querySelector("#category-name").value.trim();
     const group = document.querySelector("#category-group").value;
-    const color = document.querySelector("#category-color").value;
+    const icon = iconForCategoryForm("category", group);
+    const color = icon
+      ? expenseIconDefinition(icon).color
+      : EXPENSE_CATEGORY_GROUPS.includes(group)
+        ? defaultExpenseCategoryColor({ group })
+        : document.querySelector("#category-color").value;
     if (!name) return;
     if (id) {
       const category = categoryById(id);
@@ -7088,6 +7205,8 @@
       category.name = name;
       category.group = group;
       category.color = color;
+      if (icon) category.icon = icon;
+      else delete category.icon;
       category.active = true;
       category.archivedAt = null;
       if (group !== "variable") category.dailyBudgetEnabled = false;
@@ -7106,6 +7225,7 @@
         name,
         group,
         color,
+        ...(icon ? { icon } : {}),
         order,
         active: true,
         defaultAmount: 0,
@@ -7151,7 +7271,18 @@
   document.querySelector("#copy-next-plan").addEventListener("click", copyPlanToNextMonth);
   document.querySelector("#plan-category-group").addEventListener("change", (event) => {
     updatePlanCategoryKind(event.target.value);
+    updateExpenseIconControls("plan", event.target.value, document.querySelector("#plan-category-icon").value);
     renderPlanEditor();
+  });
+  document.querySelector("#category-group").addEventListener("change", (event) => {
+    updateExpenseIconControls("category", event.target.value, document.querySelector("#category-icon").value);
+  });
+  ["category-icon-picker", "plan-category-icon-picker"].forEach((pickerId) => {
+    document.querySelector(`#${pickerId}`).addEventListener("click", (event) => {
+      const choice = event.target.closest("[data-expense-icon-choice]");
+      if (!choice || choice.dataset.expenseIconChoice !== pickerId) return;
+      setExpenseIconChoice(pickerId, choice.dataset.expenseIcon || "");
+    });
   });
   document.querySelector("#plan-reminder-enabled").addEventListener("change", updatePlanReminderControls);
   document.querySelector("#plan-reminder-schedule").addEventListener("change", updatePlanReminderControls);
@@ -7236,7 +7367,12 @@
     if (!category || !planDraft) return;
     const name = document.querySelector("#plan-category-name-input").value.trim();
     const group = document.querySelector("#plan-category-group").value;
-    const color = document.querySelector("#plan-category-color").value;
+    const icon = iconForCategoryForm("plan", group);
+    const color = icon
+      ? expenseIconDefinition(icon).color
+      : EXPENSE_CATEGORY_GROUPS.includes(group)
+        ? defaultExpenseCategoryColor({ group })
+        : document.querySelector("#plan-category-color").value;
     if (!name) {
       showToast("項目名を入力してください");
       return;
@@ -7282,6 +7418,8 @@
       category.name = name;
       category.group = group;
       category.color = color;
+      if (icon) category.icon = icon;
+      else delete category.icon;
       category.active = true;
       category.archivedAt = null;
       if (group !== "variable") category.dailyBudgetEnabled = false;
