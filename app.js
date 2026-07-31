@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "Budget Minus";
-  const APP_VERSION = "0.5.91";
+  const APP_VERSION = "0.5.92";
   const BACKUP_VERSION = 2;
   const SIGNED_INCOME_GROUP = "income-signed";
   const UNEXPECTED_EXPENSE_CATEGORY_ID = "expense-unplanned";
@@ -18,28 +18,31 @@
     income: "収入",
     [SIGNED_INCOME_GROUP]: "収入（マイナス込み）"
   });
-  // 支出項目は、色を直接選ぶ代わりにアイコンのイメージカラーを使います。
-  // 食事・住まい・移動などから選びやすいよう、216個を12系統に整理しています。
+  // 支出項目は、同一テイストのHeroicons 24px solid SVGから選択します。
+  // 未選択の項目はアイコンを表示せず、テーマに沿った色だけを使います。
   const EXPENSE_ICON_GROUPS = Object.freeze([
-    { label: "食事", color: "#df773e", icons: ["🍚", "🍙", "🍜", "🍣", "🍛", "🍞", "🥐", "🥗", "🍔", "🍕", "🍝", "🍖", "🍰", "☕", "🍺", "🍷", "🧃", "🍎"] },
-    { label: "住まい", color: "#4f866d", icons: ["🏠", "🏡", "🛋️", "🛏️", "🪑", "🪴", "🧹", "🧺", "🧻", "🧼", "🛁", "🚿", "🛠️", "🔑", "🏗️", "🪟", "🧯", "🔌"] },
-    { label: "移動", color: "#4b86a8", icons: ["🚃", "🚇", "🚌", "🚕", "🚙", "🏍️", "🚲", "✈️", "🚄", "⛽", "🅿️", "🛣️", "🗺️", "🎫", "🚢", "🚶", "🧳", "🚉"] },
-    { label: "健康", color: "#c85f6a", icons: ["🏥", "💊", "🩺", "🦷", "👓", "🧴", "🧘", "🩹", "🧬", "🏃", "🥼", "🩻", "🩸", "🧠", "❤️", "🦴", "😷", "🦻"] },
-    { label: "趣味", color: "#805ea3", icons: ["🎮", "🎬", "🎵", "🎨", "📚", "🎤", "🎸", "🎹", "🎻", "🎲", "🧩", "⚽", "🏀", "🎾", "⛳", "🏕️", "🎣", "🕹️"] },
-    { label: "お金", color: "#b9862d", icons: ["💰", "💳", "🏦", "🪙", "📈", "📉", "🧾", "💴", "💵", "💶", "💷", "💹", "🔒", "📊", "🧮", "🤝", "🎁", "🪪"] },
-    { label: "家族", color: "#ba6171", icons: ["👪", "👶", "🧒", "🧑", "👵", "👴", "💐", "🎂", "🎈", "🧸", "🎒", "🍼", "👕", "👗", "🧦", "👟", "💍", "💌"] },
-    { label: "学び", color: "#6875b9", icons: ["📖", "✏️", "📝", "📐", "🔬", "🧪", "🎓", "🏫", "🧑‍🏫", "🧑‍🔬", "⌨️", "🖊️", "📒", "📎", "📌", "🗂️", "🔖", "🧑‍🎓"] },
-    { label: "仕事", color: "#5d7789", icons: ["💼", "🏢", "📞", "📠", "🖨️", "📦", "📇", "🧑‍💼", "👔", "🧑‍💻", "📣", "📋", "🗓️", "⏰", "🔧", "🧰", "🛒", "📬"] },
-    { label: "ペット", color: "#9b734e", icons: ["🐶", "🐱", "🐰", "🐹", "🐦", "🐠", "🐢", "🐾", "🦫", "🪶", "🐕", "🐈", "🦮", "🐩", "🦜", "🐟", "🦎", "🪺"] },
-    { label: "デジタル", color: "#3e8ca0", icons: ["📱", "📲", "📟", "🖥️", "⌚", "🎧", "📷", "🎥", "📺", "📡", "🌐", "☁️", "🔋", "🔐", "💾", "🖲️", "🛰️", "🤖"] },
-    { label: "イベント", color: "#b85d8f", icons: ["🎠", "🏨", "🎪", "🎉", "🎊", "🎄", "🎃", "🎎", "🎋", "🌸", "💄", "👜", "👑", "🕶️", "👠", "💇", "🧁", "🎇"] }
+    { label: "食費・買い物", color: "#df773e", icons: ["cake", "fire", "shopping-bag", "shopping-cart", "receipt-percent", "receipt-refund", "banknotes", "credit-card", "currency-yen", "wallet", "building-storefront", "gift", "gift-top", "heart", "tag", "scale", "beaker", "queue-list"] },
+    { label: "住まい・暮らし", color: "#4f866d", icons: ["home", "home-modern", "building-office", "building-office-2", "building-library", "archive-box", "archive-box-arrow-down", "archive-box-x-mark", "bolt", "light-bulb", "paint-brush", "wrench", "wrench-screwdriver", "window", "swatch", "cube", "cube-transparent", "key"] },
+    { label: "交通・旅行", color: "#4b86a8", icons: ["truck", "paper-airplane", "rocket-launch", "map", "map-pin", "globe-alt", "globe-americas", "globe-asia-australia", "globe-europe-africa", "device-phone-mobile", "device-tablet", "computer-desktop", "signal", "wifi", "radio", "arrow-right", "arrows-right-left", "arrow-uturn-left"] },
+    { label: "健康・安心", color: "#c85f6a", icons: ["lifebuoy", "shield-check", "shield-exclamation", "face-smile", "face-frown", "hand-thumb-up", "hand-thumb-down", "hand-raised", "eye", "eye-slash", "eye-dropper", "bolt-slash", "bell", "bell-alert", "bell-snooze", "bell-slash", "sun", "moon"] },
+    { label: "趣味・娯楽", color: "#805ea3", icons: ["musical-note", "film", "camera", "photo", "video-camera", "video-camera-slash", "microphone", "speaker-wave", "speaker-x-mark", "tv", "play", "play-circle", "pause", "pause-circle", "play-pause", "puzzle-piece", "trophy", "star"] },
+    { label: "お金・手続き", color: "#b9862d", icons: ["calculator", "currency-dollar", "currency-euro", "currency-pound", "currency-rupee", "currency-bangladeshi", "chart-bar", "chart-bar-square", "chart-pie", "presentation-chart-bar", "presentation-chart-line", "document-chart-bar", "document-currency-yen", "document-currency-dollar", "document-currency-euro", "document-currency-pound", "document-currency-rupee", "document-currency-bangladeshi"] },
+    { label: "家族・人とのつながり", color: "#ba6171", icons: ["user", "user-circle", "user-group", "user-plus", "user-minus", "users", "identification", "finger-print", "phone", "phone-arrow-down-left", "phone-arrow-up-right", "phone-x-mark", "chat-bubble-bottom-center", "chat-bubble-bottom-center-text", "chat-bubble-left", "chat-bubble-left-ellipsis", "chat-bubble-left-right", "chat-bubble-oval-left"] },
+    { label: "学び・仕事", color: "#6875b9", icons: ["academic-cap", "book-open", "newspaper", "language", "pencil", "pencil-square", "document", "document-text", "document-check", "document-duplicate", "document-magnifying-glass", "document-minus", "document-plus", "document-arrow-down", "document-arrow-up", "clipboard-document", "clipboard-document-check", "clipboard-document-list"] },
+    { label: "仕事・予定", color: "#5d7789", icons: ["briefcase", "calendar", "calendar-date-range", "calendar-days", "clock", "folder", "folder-open", "folder-plus", "folder-minus", "folder-arrow-down", "inbox", "inbox-arrow-down", "inbox-stack", "printer", "paper-clip", "envelope", "envelope-open", "link"] },
+    { label: "ペット・自然", color: "#9b734e", icons: ["bug-ant", "sparkles", "cloud", "cloud-arrow-down", "cloud-arrow-up", "cursor-arrow-rays", "cursor-arrow-ripple", "viewfinder-circle", "magnifying-glass", "magnifying-glass-circle", "magnifying-glass-minus", "magnifying-glass-plus", "code-bracket", "code-bracket-square", "command-line", "cpu-chip", "server", "server-stack"] },
+    { label: "デジタル", color: "#3e8ca0", icons: ["at-symbol", "hashtag", "variable", "signal-slash", "gif", "arrow-top-right-on-square", "arrow-down-on-square", "arrow-up-on-square", "arrow-down-on-square-stack", "arrow-up-on-square-stack", "link-slash", "lock-closed", "lock-open", "power", "battery-0", "battery-50", "battery-100", "rectangle-stack"] },
+    { label: "イベント・その他", color: "#b85d8f", icons: ["flag", "ticket", "bookmark", "bookmark-square", "bookmark-slash", "megaphone", "information-circle", "exclamation-circle", "exclamation-triangle", "question-mark-circle", "check", "check-badge", "check-circle", "plus", "plus-circle", "minus", "minus-circle", "x-circle"] }
   ]);
-  const EXPENSE_ICON_LIBRARY = Object.freeze(EXPENSE_ICON_GROUPS.flatMap((group) => group.icons.map((icon) => ({
-    icon,
+  const EXPENSE_ICON_LIBRARY = Object.freeze(EXPENSE_ICON_GROUPS.flatMap((group) => group.icons.map((id) => ({
+    id,
     color: group.color,
     label: group.label
   }))));
-  const EXPENSE_ICON_BY_VALUE = new Map(EXPENSE_ICON_LIBRARY.map((item) => [item.icon, item]));
+  const EXPENSE_ICON_BY_ID = new Map(EXPENSE_ICON_LIBRARY.map((item) => [item.id, item]));
+  // PR #89で保存された絵文字は、表示時だけ共通のフラットアイコンへ読み替えます。
+  // 次回その項目を保存すると、選択したSVGのIDで保存されます。
+  const LEGACY_EXPENSE_ICON_FALLBACK_ID = "tag";
   const REMINDER_SCHEDULE_DAY = "day";
   const REMINDER_SCHEDULE_WEEKDAY = "weekday";
   const OVERAGE_PLAN_HANDLING_FORECAST = "forecast";
@@ -217,7 +220,13 @@
   }
 
   function expenseIconDefinition(icon) {
-    return EXPENSE_ICON_BY_VALUE.get(String(icon || "")) || null;
+    const value = String(icon || "");
+    if (!value) return null;
+    return EXPENSE_ICON_BY_ID.get(value)
+      // Older projects can keep using their saved emoji without showing an
+      // inconsistent glyph beside the new SVG system.
+      || EXPENSE_ICON_BY_ID.get(LEGACY_EXPENSE_ICON_FALLBACK_ID)
+      || null;
   }
 
   function categoryIconDefinition(category) {
@@ -231,15 +240,25 @@
 
   function categoryDisplayColor(category) {
     const icon = categoryIconDefinition(category);
-    if (icon) return icon.color;
+    const savedIconId = String(category && category.icon || "");
+    if (icon && EXPENSE_ICON_BY_ID.has(savedIconId)) return icon.color;
+    // Keep the color previously saved for an emoji selection until the user
+    // intentionally chooses one of the new SVG icons and saves the item.
+    if (icon && /^#[0-9a-f]{6}$/i.test(String(category && category.color || ""))) return category.color;
     if (isExpenseIconCategory(category)) return defaultExpenseCategoryColor(category);
     return /^#[0-9a-f]{6}$/i.test(String(category && category.color || "")) ? category.color : "#3f7d5b";
+  }
+
+  function renderExpenseIconSvg(iconId, className = "") {
+    const icon = expenseIconDefinition(iconId);
+    if (!icon) return "";
+    return `<svg class="${escapeHtml(className)}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="icons/expense-icons.svg?v=103#${escapeHtml(icon.id)}"></use></svg>`;
   }
 
   function renderCategoryIcon(category, className = "category-icon") {
     const icon = categoryIconDefinition(category);
     if (!icon) return "";
-    return `<span class="${className}" style="--category-color:${escapeHtml(icon.color)}" aria-hidden="true">${escapeHtml(icon.icon)}</span>`;
+    return `<span class="${className}" style="--category-color:${escapeHtml(categoryDisplayColor(category))}" aria-hidden="true">${renderExpenseIconSvg(icon.id)}</span>`;
   }
 
   function renderBudgetCardName(category, suffix = "") {
@@ -6064,10 +6083,10 @@
   function renderExpenseIconPicker(pickerId, selectedIcon = "") {
     const picker = document.querySelector(`#${pickerId}`);
     if (!picker) return;
-    const selected = expenseIconDefinition(selectedIcon)?.icon || "";
+    const selected = expenseIconDefinition(selectedIcon)?.id || "";
     picker.innerHTML = `<button type="button" class="expense-icon-choice is-clear${selected ? "" : " selected"}" data-expense-icon-choice="${pickerId}" data-expense-icon="" role="option" aria-selected="${selected ? "false" : "true"}" title="アイコンなし"><span aria-hidden="true">×</span><small>なし</small></button>${EXPENSE_ICON_GROUPS.map((group) => `<section class="expense-icon-group"><h4>${escapeHtml(group.label)}</h4><div>${group.icons.map((icon) => {
       const isSelected = icon === selected;
-      return `<button type="button" class="expense-icon-choice${isSelected ? " selected" : ""}" data-expense-icon-choice="${pickerId}" data-expense-icon="${escapeHtml(icon)}" role="option" aria-selected="${isSelected}" title="${escapeHtml(group.label)}"><span aria-hidden="true">${escapeHtml(icon)}</span></button>`;
+      return `<button type="button" class="expense-icon-choice${isSelected ? " selected" : ""}" data-expense-icon-choice="${pickerId}" data-expense-icon="${escapeHtml(icon)}" role="option" aria-selected="${isSelected}" aria-label="${escapeHtml(group.label)}: ${escapeHtml(icon)}" title="${escapeHtml(group.label)}"><span aria-hidden="true">${renderExpenseIconSvg(icon, "expense-icon-choice-mark")}</span></button>`;
     }).join("")}</div></section>`).join("")}`;
   }
 
@@ -6085,7 +6104,7 @@
     iconField.hidden = !isExpense;
     colorField.hidden = isExpense;
     if (!isExpense) return;
-    const icon = expenseIconDefinition(preferredIcon)?.icon || "";
+    const icon = expenseIconDefinition(preferredIcon)?.id || "";
     iconInput.value = icon;
     colorInput.value = icon ? expenseIconDefinition(icon).color : defaultExpenseCategoryColor({ group });
     renderExpenseIconPicker(pickerId, icon);
@@ -6101,7 +6120,7 @@
     const group = document.querySelector(`#${ids.group}`).value;
     const definition = expenseIconDefinition(icon);
     if (!iconInput || !colorInput || !EXPENSE_CATEGORY_GROUPS.includes(group)) return;
-    iconInput.value = definition ? definition.icon : "";
+    iconInput.value = definition ? definition.id : "";
     colorInput.value = definition ? definition.color : defaultExpenseCategoryColor({ group });
     renderExpenseIconPicker(pickerId, iconInput.value);
   }
@@ -6109,7 +6128,7 @@
   function iconForCategoryForm(scope, group) {
     if (!EXPENSE_CATEGORY_GROUPS.includes(group)) return "";
     const inputId = scope === "plan" ? "plan-category-icon" : "category-icon";
-    return expenseIconDefinition(document.querySelector(`#${inputId}`).value)?.icon || "";
+    return expenseIconDefinition(document.querySelector(`#${inputId}`).value)?.id || "";
   }
 
   function updatePlanReminderControls() {
