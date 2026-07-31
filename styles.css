@@ -825,6 +825,15 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 .calculator-shift-target-summary { padding: 0.65rem; border: 1px solid color-mix(in srgb, var(--budget-operation-color) 32%, var(--line)); border-radius: 0.65rem; color: color-mix(in srgb, var(--budget-operation-color) 82%, var(--ink)); background: color-mix(in srgb, var(--budget-operation-color) 10%, var(--surface)); font-size: 0.74rem; font-weight: 800; line-height: 1.45; }
 .calculator-budget-change { padding: 0.68rem; border: 1px solid color-mix(in srgb, var(--budget-operation-color) 22%, var(--line)); border-radius: 0.65rem; color: var(--ink); background: var(--surface); font-size: 0.74rem; font-weight: 800; line-height: 1.5; white-space: pre-line; }
 .calculator-budget-change.is-invalid { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface)); }
+.calculator-funding-progress-values { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.calculator-funding-progress-values strong { color: var(--primary); font-size: .78rem; }
+.calculator-funding-progress-values span { color: var(--muted); font-size: .68rem; }
+.calculator-funding-progress-bar { display: block; height: .34rem; margin: .45rem 0; overflow: hidden; border-radius: 99px; background: var(--line); }
+.calculator-funding-progress-bar i { display: block; height: 100%; border-radius: inherit; background: var(--budget-operation-color); transition: width 180ms ease; }
+.calculator-budget-change > small { display: block; color: var(--muted); font-size: .65rem; font-weight: 650; line-height: 1.45; }
+.calculator-budget-change.is-invalid .calculator-funding-progress-values strong,
+.calculator-budget-change.is-invalid > small { color: var(--danger); }
+.calculator-budget-change.is-invalid .calculator-funding-progress-bar i { background: var(--danger); }
 .calculator-return-forecast { padding: 0.68rem; border: 1px solid color-mix(in srgb, var(--budget-operation-color) 28%, var(--line)); border-radius: 0.65rem; color: color-mix(in srgb, var(--budget-operation-color) 84%, var(--ink)); background: color-mix(in srgb, var(--budget-operation-color) 10%, var(--surface)); font-size: 0.74rem; font-weight: 850; line-height: 1.5; }
 .calculator-shift-forecast { white-space: pre-line; }
 .calculator-return-forecast.is-invalid { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface)); }
@@ -1095,4 +1104,384 @@ dialog::backdrop { background: rgba(8, 13, 10, 0.48); -webkit-backdrop-filter: b
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
   .budget-card.needs-entry-reminder, .income-entry-card.needs-entry-reminder { animation: none; border-color: color-mix(in srgb, var(--danger) 62%, var(--line)); box-shadow: 0 0 0 0.3rem color-mix(in srgb, var(--danger) 11%, transparent); }
+}
+
+/* Budget adjustment wizard: one screen, one decision. */
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .calculator-card {
+  width: min(100%, 31rem);
+  padding: 0 max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  background: color-mix(in srgb, var(--surface) 96%, var(--bg));
+}
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .sheet-handle,
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .calculator-budget-progress,
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .calculator-budget-panel-heading > .eyebrow,
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .calculator-budget-confirmation-heading > .eyebrow {
+  display: none !important;
+}
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]):not([data-budget-operation="menu"]) #calculator-kind { display: none !important; }
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .dialog-heading {
+  position: sticky;
+  z-index: 8;
+  top: 0;
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr) 2.5rem;
+  align-items: center;
+  gap: .55rem;
+  min-height: 4rem;
+  margin: 0 -1rem .85rem;
+  padding: .65rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .dialog-heading > div { grid-column: 2; min-width: 0; text-align: center; }
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .dialog-heading h2 {
+  overflow: hidden;
+  font-size: 1rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .dialog-heading .icon-button {
+  position: static;
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  min-width: 0;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-size: 1.65rem;
+}
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .calculator-budget-back { grid-column: 1; justify-self: start; }
+.calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .dialog-heading [data-close] { grid-column: 3; justify-self: end; border-color: var(--line); background: var(--surface-2); font-size: 1.15rem; }
+
+.calculator-dialog[data-budget-operation="menu"] .calculator-budget-actions,
+.calculator-add-budget-methods,
+.calculator-return-panel,
+.calculator-add-budget-panel,
+.calculator-shift-panel,
+.calculator-budget-confirmation,
+.calculator-budget-final-review,
+.calculator-budget-completion {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.calculator-budget-actions { gap: .8rem; }
+.calculator-budget-actions-heading strong { font-size: 1.06rem; }
+.calculator-budget-actions-heading span { margin-top: .3rem; font-size: .74rem; font-weight: 650; }
+.calculator-budget-action-summary { display: none; }
+.calculator-budget-action-list { gap: .65rem; }
+.calculator-budget-action {
+  grid-template-columns: 2.45rem minmax(0, 1fr) auto !important;
+  min-height: 4.45rem;
+  padding: .72rem .8rem !important;
+  border: 1px solid var(--line) !important;
+  border-radius: .78rem !important;
+  background: var(--surface-2) !important;
+  box-shadow: none !important;
+}
+.calculator-budget-action b { width: 2.3rem; height: 2.3rem; border-radius: .62rem; }
+.calculator-budget-action strong { font-size: .88rem; }
+.calculator-budget-action small { margin-top: .18rem; font-size: .67rem; font-weight: 650; }
+.calculator-budget-action em { display: none; }
+.calculator-budget-action > i { font-size: 1.3rem; }
+
+.calculator-add-budget-methods,
+.calculator-return-panel,
+.calculator-add-budget-panel,
+.calculator-shift-panel,
+.calculator-budget-confirmation,
+.calculator-budget-final-review { gap: .72rem; padding-bottom: .65rem; }
+.calculator-budget-panel-heading { gap: .25rem; padding: 0; border: 0; }
+.calculator-budget-panel-heading h3 { display: none; }
+.calculator-budget-panel-heading .help-text {
+  margin: 0;
+  padding: .7rem .78rem;
+  border: 1px solid var(--line);
+  border-radius: .72rem;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: .72rem;
+  font-weight: 650;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+.calculator-budget-amount-field {
+  grid-template-columns: 1fr;
+  gap: .45rem;
+  padding: .8rem;
+  border: 1px solid var(--line);
+  border-radius: .78rem;
+  background: var(--surface-2);
+}
+.calculator-budget-amount-field .field-label,
+.calculator-budget-amount-field .field-label > span { color: var(--muted); font-size: .72rem; font-weight: 750; letter-spacing: 0; }
+.calculator-budget-amount-field .field-label small { margin-top: .2rem; font-size: .66rem; }
+.calculator-budget-amount-input input,
+.calculator-dialog[data-budget-operation="add"][data-budget-step="amount"] .calculator-add-budget-amount-field input {
+  height: 3.25rem;
+  padding: .3rem 2.1rem .3rem .3rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  font-size: 1.65rem;
+  font-weight: 780;
+  text-align: left;
+}
+.calculator-budget-amount-input i { right: .45rem; font-size: .8rem; }
+.calculator-operation-step { color: var(--muted); font-size: .7rem; font-weight: 750; letter-spacing: 0; }
+.calculator-budget-priority { gap: .38rem; padding: .72rem; border: 1px solid var(--line); border-radius: .72rem; background: var(--surface-2); }
+.calculator-budget-priority select { height: 2.8rem; margin: 0; font-size: 16px; }
+.calculator-impact-label { margin: .08rem 0 -.2rem !important; color: var(--muted); font-size: .69rem; letter-spacing: 0; }
+.calculator-budget-change,
+.calculator-return-forecast,
+.calculator-add-budget-forecast,
+.calculator-shift-target-summary {
+  margin: 0;
+  padding: .7rem .76rem;
+  border: 1px solid var(--line);
+  border-radius: .72rem;
+  background: var(--surface-2);
+  font-size: .72rem;
+  line-height: 1.5;
+}
+.calculator-budget-operation-note { display: none; }
+.calculator-return-panel > .calculator-budget-change,
+.calculator-return-panel > .calculator-return-forecast,
+.calculator-shift-panel > .calculator-budget-change,
+.calculator-shift-panel > .calculator-shift-forecast,
+.calculator-add-budget-panel > #calculator-add-budget-forecast { display: none; }
+
+.calculator-budget-visual {
+  display: grid;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: .78rem;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.calculator-simple-change-heading { display: none; }
+.calculator-simple-change-list { display: grid; }
+.calculator-simple-change-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .65rem;
+  min-height: 3.2rem;
+  padding: .65rem .75rem;
+  border-bottom: 1px solid var(--line);
+}
+.calculator-simple-change-row > span { color: var(--muted); font-size: .69rem; font-weight: 700; }
+.calculator-simple-change-row > strong { display: flex; align-items: baseline; gap: .35rem; font-size: .76rem; white-space: nowrap; }
+.calculator-simple-change-row del { color: var(--muted); font-weight: 700; text-decoration: none; }
+.calculator-simple-change-row i { color: var(--muted); font-style: normal; }
+.calculator-simple-change-row b { color: var(--primary); font-size: .86rem; }
+.calculator-simple-forecast {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .5rem;
+  padding: .72rem .75rem;
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 700;
+}
+.calculator-simple-forecast strong { color: var(--ink); font-size: .76rem; text-align: right; }
+.calculator-simple-forecast small { grid-column: 1 / -1; color: var(--muted); font-size: .63rem; text-align: right; }
+.calculator-simple-forecast.is-positive strong { color: var(--success); }
+.calculator-simple-forecast.is-negative strong { color: var(--danger); }
+.calculator-budget-visual-warning { padding: .62rem .75rem; border-top: 1px solid var(--line); }
+
+.calculator-add-budget-methods .calculator-budget-panel-heading { padding: 0 0 .15rem; }
+.calculator-add-budget-methods .calculator-budget-panel-heading h3 { display: none; }
+.calculator-add-budget-methods .calculator-budget-panel-heading .help-text { padding: 0; border: 0; background: transparent; }
+.calculator-add-budget-method-list { gap: .62rem; }
+.calculator-add-budget-method-list > button {
+  grid-template-columns: 2.35rem minmax(0, 1fr) auto;
+  min-height: 4.35rem;
+  padding: .7rem .75rem;
+  border-radius: .78rem;
+  background: var(--surface-2);
+}
+.calculator-add-budget-method-list b { width: 2.2rem; height: 2.2rem; border-radius: .6rem; }
+.calculator-add-budget-method-list strong { font-size: .84rem; }
+.calculator-add-budget-method-list small { font-size: .65rem; }
+.calculator-add-budget-method-list em { display: none; }
+
+.calculator-add-budget-carry-panel,
+.calculator-shift-distribution-panel {
+  gap: .6rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.calculator-add-budget-carry-heading { padding: .7rem .75rem; border: 1px solid var(--line); border-radius: .72rem; background: var(--surface-2); }
+.calculator-add-budget-carry-heading h4 { font-size: .86rem; }
+.calculator-add-budget-carry-heading p { font-size: .68rem; }
+.calculator-add-budget-carry-heading .calculator-operation-step { display: none; }
+.calculator-add-budget-carry-sources { gap: 0; overflow: hidden; border: 1px solid var(--line); border-radius: .75rem; background: var(--surface-2); }
+.calculator-budget-year-tabs {
+  display: flex;
+  gap: .3rem;
+  padding: .35rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: none;
+}
+.calculator-budget-year-tabs::-webkit-scrollbar { display: none; }
+.calculator-budget-year-tabs button {
+  flex: 1 0 4.8rem;
+  min-height: 2.35rem;
+  padding: .35rem .6rem;
+  border: 1px solid transparent;
+  border-radius: .55rem;
+  color: var(--muted);
+  background: transparent;
+  font-size: .72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.calculator-budget-year-tabs button.is-active { border-color: color-mix(in srgb, var(--budget-operation-color) 35%, var(--line)); color: var(--ink); background: color-mix(in srgb, var(--budget-operation-color) 13%, var(--surface)); }
+.calculator-budget-source-scroll {
+  max-height: min(19rem, 39dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: color-mix(in srgb, var(--budget-operation-color) 35%, var(--line)) transparent;
+}
+.calculator-budget-funding-source[hidden] { display: none !important; }
+.calculator-budget-funding-source {
+  gap: .48rem;
+  padding: .68rem .72rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.calculator-budget-funding-source:last-child { border-bottom: 0; }
+.calculator-budget-funding-source.is-selected { border-color: var(--line); background: color-mix(in srgb, var(--budget-operation-color) 8%, var(--surface-2)); }
+.calculator-budget-funding-source-head { display: grid; grid-template-columns: auto minmax(0, 1fr); justify-content: start; }
+.calculator-budget-funding-source-copy { grid-column: 2; }
+.calculator-budget-funding-source-copy strong { font-size: .77rem; }
+.calculator-budget-funding-source-copy span { font-size: .66rem; }
+.calculator-budget-funding-toggle {
+  grid-column: 1;
+  grid-row: 1;
+  width: 1.35rem;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  min-height: 0;
+  padding: 0;
+  border-radius: .28rem;
+  font-size: 0;
+}
+.calculator-budget-funding-toggle::after { color: #fff; font-size: .8rem; font-weight: 900; content: "✓"; opacity: 0; }
+.calculator-budget-funding-toggle[aria-pressed="true"]::after { opacity: 1; }
+.calculator-budget-funding-amount { grid-template-columns: minmax(0, 1fr) minmax(7.2rem, .8fr); }
+.calculator-budget-funding-amount input { height: 2.45rem; font-size: 16px; }
+.calculator-dialog[data-budget-operation="add"][data-budget-step="source"] .calculator-budget-funding-amount,
+.calculator-dialog[data-budget-operation="add"][data-budget-step="source"] .calculator-add-budget-carry-heading .button,
+.calculator-dialog[data-budget-operation="add"][data-budget-step="source"] #calculator-add-budget-impact-label,
+.calculator-dialog[data-budget-operation="add"][data-budget-step="source"] #calculator-add-budget-forecast,
+.calculator-dialog[data-budget-operation="add"][data-budget-step="source"] #calculator-add-budget-visual,
+.calculator-dialog[data-budget-operation="add"][data-budget-step="source"] .calculator-budget-change { display: none !important; }
+.calculator-dialog[data-budget-operation="add"][data-budget-step="amount"] .calculator-simple-forecast { display: none; }
+.calculator-dialog[data-budget-operation="add"][data-budget-step="allocation"] .calculator-budget-funding-toggle,
+.calculator-dialog[data-budget-operation="add"][data-budget-step="allocation"] .calculator-budget-year-tabs { display: none !important; }
+.calculator-dialog[data-budget-operation="add"][data-budget-step="allocation"] .calculator-add-budget-amount-field { padding: .62rem .72rem; }
+.calculator-dialog[data-budget-operation="add"][data-budget-step="allocation"] .calculator-add-budget-amount-field input { height: 2.45rem; color: var(--ink); font-size: 1.18rem; pointer-events: none; }
+.calculator-dialog[data-budget-operation="add"][data-budget-step="allocation"] .calculator-budget-funding-source:not(.is-selected) { display: none; }
+.calculator-dialog[data-budget-operation="add"][data-budget-step="allocation"] .calculator-budget-source-scroll { max-height: min(18rem, 36dvh); }
+
+.calculator-shift-mode { padding: .3rem; border-radius: .7rem; }
+.calculator-shift-mode button { min-height: 2.6rem; font-size: .72rem; }
+.calculator-shift-panel > label:not(.calculator-budget-amount-field):not(.calculator-budget-priority) { display: grid; gap: .38rem; padding: .72rem; border: 1px solid var(--line); border-radius: .72rem; background: var(--surface-2); }
+.calculator-shift-panel select { height: 2.8rem; margin: 0; font-size: 16px; }
+
+.calculator-budget-confirmation-heading { gap: .28rem; padding: 0; border: 0; }
+.calculator-budget-confirmation-heading h3 { display: none; }
+.calculator-budget-confirmation-heading p:last-child { font-size: .74rem; }
+.calculator-budget-confirmation-summary,
+.calculator-budget-completion-summary {
+  gap: .62rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.calculator-review-amount,
+.calculator-review-card,
+.calculator-review-impact {
+  display: grid;
+  gap: .35rem;
+  padding: .76rem;
+  border: 1px solid var(--line);
+  border-radius: .75rem;
+  background: var(--surface-2);
+}
+.calculator-review-amount span,
+.calculator-review-card span,
+.calculator-review-impact span { color: var(--muted); font-size: .68rem; font-weight: 700; }
+.calculator-review-amount strong { font-size: 1.35rem; font-weight: 800; }
+.calculator-review-card strong,
+.calculator-review-impact strong { font-size: .74rem; line-height: 1.55; text-align: left; white-space: pre-line; }
+.calculator-review-impact.is-positive strong { color: var(--success); }
+.calculator-review-impact.is-negative strong { color: var(--danger); }
+.calculator-budget-confirmation-visual { display: none !important; }
+.calculator-budget-final-review-warning { padding: .72rem; border-radius: .72rem; font-size: .7rem; }
+.calculator-budget-confirmation-actions {
+  position: sticky;
+  z-index: 5;
+  bottom: 0;
+  grid-template-columns: 1fr;
+  gap: .5rem;
+  margin-top: .2rem;
+  padding: .7rem 0 max(.1rem, env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, transparent, var(--surface) 24%);
+}
+.calculator-budget-confirmation-actions .primary,
+.calculator-budget-final-review .danger { order: -1; }
+.calculator-budget-confirmation-actions .button,
+.calculator-budget-confirm {
+  min-height: 3.2rem;
+  border-radius: .7rem;
+  font-size: .82rem;
+  box-shadow: none;
+}
+.calculator-budget-confirm {
+  position: sticky;
+  z-index: 5;
+  bottom: 0;
+  width: 100%;
+  margin: .15rem 0 0;
+  padding: .7rem;
+  background: var(--budget-operation-color);
+}
+
+.calculator-budget-completion {
+  align-content: center;
+  justify-items: stretch;
+  gap: 1rem;
+  min-height: calc(100dvh - 6rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  padding: 1rem 0;
+}
+.calculator-budget-completion-mark { width: 4.2rem; height: 4.2rem; margin-bottom: .25rem; box-shadow: none; }
+.calculator-budget-completion h3 { font-size: 1.05rem; }
+.calculator-budget-completion > p { margin: -.35rem 0 .2rem !important; }
+.calculator-budget-completion .button { min-height: 3.2rem; margin-top: auto; box-shadow: none; }
+
+@media (max-width: 42rem) {
+  .calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .calculator-card {
+    min-height: calc(100dvh - env(safe-area-inset-top));
+    max-height: calc(100dvh - env(safe-area-inset-top));
+    border-radius: 0;
+  }
+  .calculator-dialog[data-budget-operation]:not([data-budget-operation=""]) .dialog-heading { top: 0; margin-right: -1rem; margin-left: -1rem; padding-right: 1rem; padding-left: 1rem; }
 }

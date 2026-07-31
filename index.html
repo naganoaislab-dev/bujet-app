@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-title" content="Budget Minus">
   <meta name="description" content="予算から使えるお金を考える、オフライン対応の家計簿">
   <title>Budget Minus</title>
-  <link rel="manifest" href="manifest.webmanifest?v=104">
-  <link rel="icon" href="icons/icon.svg?v=104" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg?v=104">
-  <link rel="stylesheet" href="styles.css?v=104">
-  <script src="db.js?v=104" defer></script>
-  <script src="app.js?v=104" defer></script>
+  <link rel="manifest" href="manifest.webmanifest?v=105">
+  <link rel="icon" href="icons/icon.svg?v=105" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg?v=105">
+  <link rel="stylesheet" href="styles.css?v=105">
+  <script src="db.js?v=105" defer></script>
+  <script src="app.js?v=105" defer></script>
 </head>
 <body>
   <div class="app-frame">
@@ -57,6 +57,7 @@
     <form id="calculator-form" method="dialog" class="sheet-card calculator-card">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="dialog-heading">
+        <button id="calculator-budget-back" type="button" class="icon-button calculator-budget-back" aria-label="戻る" hidden>‹</button>
         <div>
           <p id="calculator-kind" class="eyebrow">支出を入力</p>
           <h2 id="calculator-category">食費</h2>
@@ -70,15 +71,14 @@
         <button id="calculator-budget-entry-button" type="button" class="button secondary calculator-budget-entry-button"><span class="calculator-budget-entry-icon" aria-hidden="true">◎</span><span><strong>予算を調整</strong><small>返納・追加・別の月への移動</small></span><i aria-hidden="true">›</i></button>
       </div>
       <div id="calculator-budget-actions" class="calculator-budget-actions" hidden>
-        <div class="calculator-budget-actions-heading"><div><p class="eyebrow">BUDGET ACTION</p><strong>予算をどう調整しますか？</strong><span>操作を選ぶと、金額と見込み収支への影響を確認できます。</span></div></div>
+        <div class="calculator-budget-actions-heading"><div><strong>予算をどう調整しますか？</strong><span>操作を選んでください。</span></div></div>
         <p id="calculator-budget-action-summary" class="calculator-budget-action-summary" aria-live="polite"></p>
         <div class="calculator-budget-action-list" role="group" aria-label="予算の操作">
-          <button id="calculator-return-toggle" type="button" class="button secondary calculator-budget-action" data-budget-operation="return" aria-pressed="false"><b aria-hidden="true">↩</b><span><strong>返納する</strong><small>使わない予算を計画から外す</small></span><em>見込み収支 +</em><i aria-hidden="true">›</i></button>
-          <button id="calculator-add-budget-toggle" type="button" class="button secondary calculator-budget-action" data-budget-operation="add" aria-pressed="false"><b aria-hidden="true">＋</b><span><strong>追加する</strong><small>純増・持ち越し・前借り・組み換え</small></span><em>方法を選ぶ</em><i aria-hidden="true">›</i></button>
-          <button id="calculator-shift-toggle" type="button" class="button secondary calculator-budget-action" data-budget-operation="shift" aria-pressed="false"><b aria-hidden="true">→</b><span><strong>別の月へ移す</strong><small>余った予算を未来の月へ回す</small></span><em>見込み収支 ±0</em><i aria-hidden="true">›</i></button>
+          <button id="calculator-return-toggle" type="button" class="button secondary calculator-budget-action" data-budget-operation="return" aria-pressed="false"><b aria-hidden="true">↩</b><span><strong>返納する</strong><small>使わない予算を計画から外す</small></span><i aria-hidden="true">›</i></button>
+          <button id="calculator-add-budget-toggle" type="button" class="button secondary calculator-budget-action" data-budget-operation="add" aria-pressed="false"><b aria-hidden="true">＋</b><span><strong>追加する</strong><small>4つの方法から追加する</small></span><i aria-hidden="true">›</i></button>
+          <button id="calculator-shift-toggle" type="button" class="button secondary calculator-budget-action" data-budget-operation="shift" aria-pressed="false"><b aria-hidden="true">→</b><span><strong>別の月へ移す</strong><small>未来の予算へ移動する</small></span><i aria-hidden="true">›</i></button>
         </div>
       </div>
-      <button id="calculator-budget-back" type="button" class="button small secondary calculator-budget-back" hidden>‹ 金額の入力に戻る</button>
       <section id="calculator-budget-progress" class="calculator-budget-progress" aria-label="予算操作の進行状況" hidden>
         <span class="is-current" data-budget-progress-step="setup"><b>1</b>設定</span>
         <i aria-hidden="true"></i>
@@ -117,11 +117,10 @@
       </section>
       <section id="calculator-budget-completion" class="calculator-budget-completion" aria-labelledby="calculator-budget-completion-title" hidden>
         <span class="calculator-budget-completion-mark" aria-hidden="true">✓</span>
-        <p class="eyebrow">COMPLETED</p>
         <h3 id="calculator-budget-completion-title">予算操作が完了しました</h3>
         <p id="calculator-budget-completion-copy"></p>
         <section id="calculator-budget-completion-summary" class="calculator-budget-completion-summary" aria-live="polite"></section>
-        <button id="calculator-budget-completion-close" type="button" class="button primary">入力画面に戻る</button>
+        <button id="calculator-budget-completion-close" type="button" class="button primary">OK</button>
       </section>
       <section id="calculator-add-budget-methods" class="calculator-add-budget-methods" aria-labelledby="calculator-add-budget-methods-title" hidden>
         <div class="calculator-budget-panel-heading">
